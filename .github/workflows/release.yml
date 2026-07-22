@@ -47,6 +47,8 @@ jobs:
             dist/*.exe
             dist/*.AppImage
             dist/*.deb
+            dist/*.blockmap
+            dist/latest*.yml
 
   release:
     needs: build
@@ -63,7 +65,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          files=(artifacts/*.dmg artifacts/*.zip artifacts/*.exe artifacts/*.AppImage artifacts/*.deb)
+          files=(artifacts/*.dmg artifacts/*.zip artifacts/*.exe artifacts/*.AppImage artifacts/*.deb artifacts/*.blockmap artifacts/latest*.yml)
           echo "Instaladores encontrados (${#files[@]}):"
           printf ' - %s\n' "${files[@]}"
           if [ ${#files[@]} -eq 0 ]; then echo "Nenhum instalador — abortando"; exit 1; fi

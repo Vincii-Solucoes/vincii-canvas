@@ -5,7 +5,11 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app: electronApp, BrowserWindow, shell } = require('electron');
+const { app: electronApp, BrowserWindow, shell, dialog } = require('electron');
+
+// Marca que estamos no app desktop — o servidor usa em /api/update-check para
+// decidir: Mac/web mostram a faixa de aviso; Windows/Linux fazem auto-update.
+process.env.SSHC_DESKTOP = '1';
 
 // Ícone de runtime (dock no macOS, barra de tarefas no Windows/Linux). Fica em
 // public/ porque essa pasta é embarcada no app empacotado — diferente de build/,
@@ -89,7 +93,35 @@ if (!electronApp.requestSingleInstanceLock()) {
     }
   });
 
-  electronApp.whenReady().then(createWindow).catch((err) => {
+  // Auto-update só no Windows/Linux (e só no app empacotado). No macOS a
+  // atualização silenciosa exige assinatura Apple, então lá fica no "avisar".
+  function setupAutoUpdate() {
+    if (!electronApp.isPackaged) return;
+    if (process.platform !== 'win32' && process.platform !== 'linux') return;
+    let autoUpdater;
+    try { ({ autoUpdater } = require('electron-updater')); } catch { return; }
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('update-downloaded', async (info) => {
+      if (!win) { try { autoUpdater.quitAndInstall(); } catch {} return; }
+      try {
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'info',
+          buttons: ['Reiniciar e atualizar', 'Depois'],
+          defaultId: 0,
+          cancelId: 1,
+          title: 'Atualização disponível',
+          message: `Vincii Canvas ${info && info.version ? info.version : ''} foi baixado.`,
+          detail: 'Reiniciar agora para aplicar? A atualização também será aplicada quando você fechar o app.',
+        });
+        if (response === 0) autoUpdater.quitAndInstall();
+      } catch {}
+    });
+    autoUpdater.on('error', (err) => console.error('[updater] erro:', err && err.message));
+    autoUpdater.checkForUpdates().catch((e) => console.error('[updater] verificação falhou:', e && e.message));
+  }
+
+  electronApp.whenReady().then(createWindow).then(setupAutoUpdate).catch((err) => {
     console.error('[desktop] falha ao iniciar:', err);
     electronApp.quit();
   });

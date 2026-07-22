@@ -31,9 +31,12 @@ npm run dist:dir    # gera só o app desempacotado (mais rápido, para testar)
 - **Assinatura**: sem certificado de desenvolvedor o app sai sem assinatura — roda normalmente, mas macOS/Windows podem exibir aviso de segurança na primeira abertura ao distribuir para outras máquinas.
 - **Modo web continua existindo**: `npm start` segue funcionando igual; os dois modos compartilham o mesmo código de servidor.
 
-## Atualizações (avisar via GitHub)
+## Atualizações (via GitHub Releases)
 
-O app pode **avisar** quando há uma versão nova publicada no GitHub (não instala sozinho — mostra um aviso com botão de download; funciona sem certificado de assinatura, no Mac, Windows, Linux e no modo web).
+O comportamento depende da plataforma:
+
+- **Windows e Linux (app empacotado)** — **auto-update completo** via `electron-updater`: o app baixa a nova versão em segundo plano e pergunta se quer reiniciar para aplicar (também aplica ao fechar). Funciona **sem** certificado de assinatura.
+- **macOS e modo web** — **avisar**: o app mostra uma faixa **"Nova versão disponível — Ver / baixar"** e você baixa/instala manualmente. (No macOS, o auto-update silencioso exigiria um certificado Apple Developer ID.)
 
 Para ligar:
 
@@ -47,7 +50,7 @@ Para ligar:
    git tag v1.1.0 && git push origin main --tags
    ```
    O CI compila os instaladores de **macOS, Windows e Linux** (cada um no seu runner) e o `electron-builder` publica tudo num **GitHub Release** `v1.1.0`. Sem certificado, os apps saem sem assinatura (funcionam; só exibem aviso na 1ª abertura).
-3. Pronto: ao abrir, o app consulta o **último release**, compara com a versão instalada e, se houver uma mais nova, mostra a faixa **"Nova versão X disponível — Ver / baixar"** (dispensável; não repete a mesma versão). A verificação é feita pelo servidor local (`GET /api/update-check`), com cache de 1 hora.
+3. Pronto: com uma versão mais nova publicada, no **Windows/Linux** o app baixa e oferece reiniciar para atualizar; no **macOS/web** aparece a faixa de aviso com o link de download. O aviso usa `GET /api/update-check` (cache de 1 hora); o auto-update usa os metadados `latest*.yml` do release (incluídos automaticamente pelo workflow).
 
 > Repositório **público** significa que o **código-fonte fica visível**. Segredos não vão junto: `data.json` (senhas/chave da API) fica só na máquina e já está no `.gitignore` (junto com `node_modules/` e `dist/`).
 

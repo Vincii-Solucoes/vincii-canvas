@@ -81,6 +81,8 @@ app.get('/api/update-check', async (req, res) => {
       url: j.html_url || `https://github.com/${repo.owner}/${repo.repo}/releases/latest`,
       name: j.name || latest,
       notes: String(j.body || '').slice(0, 4000),
+      desktop: process.env.SSHC_DESKTOP === '1',
+      platform: process.platform,
     };
     updateCache = { at: now, data };
     res.json(data);

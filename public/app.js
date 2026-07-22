@@ -1751,6 +1751,9 @@ async function checkForUpdate() {
   let d;
   try { d = await api('/api/update-check'); } catch { return; }
   if (!d || !d.updateAvailable || !d.latest) return;
+  // no app Windows/Linux a atualização é automática (electron-updater); a faixa
+  // de aviso fica só para o Mac e para o modo web.
+  if (d.desktop && (d.platform === 'win32' || d.platform === 'linux')) return;
   let dismissed = '';
   try { dismissed = localStorage.getItem('vc-update-dismissed') || ''; } catch {}
   if (dismissed === d.latest) return; // usuário já dispensou esta versão
