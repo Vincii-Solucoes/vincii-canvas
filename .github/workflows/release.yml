@@ -1,8 +1,9 @@
 name: Release
 
-# Publica os instaladores (mac/Windows/Linux) num GitHub Release quando uma tag
-# "vX.Y.Z" é enviada. Cada SO é compilado no seu próprio runner e o
-# electron-builder sobe os artefatos para o mesmo release.
+# Deploy dos instaladores (mac/Windows/Linux) num GitHub Release ao enviar uma
+# tag "vX.Y.Z". Padrão robusto: cada SO só COMPILA e sobe os arquivos como
+# artifacts (sem tocar no Release); um job final baixa tudo e cria UM Release
+# atômico com todos os instaladores — assim nenhum job sobrescreve o do outro.
 
 on:
   push:
@@ -10,15 +11,12 @@ on:
       - 'v*'
 
 permissions:
-  contents: write # necessário para o electron-builder criar/publicar o Release
+  contents: write # necessário para criar o Release
 
 jobs:
   build:
     strategy:
       fail-fast: false
-      # sequencial: o 1º runner cria o Release e os demais só sobem os artefatos
-      # (em paralelo os 3 tentam criar o mesmo Release e batem 422 already_exists)
-      max-parallel: 1
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -35,7 +33,44 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Build e publicar instaladores
-        run: npx --no-install electron-builder --publish always
+      - name: Compilar instaladores (sem publicar)
+        run: npx --no-install electron-builder --publish never
+
+      - name: Subir artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar todos os artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Criar o Release com todos os instaladores
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(artifacts/*.dmg artifacts/*.zip artifacts/*.exe artifacts/*.AppImage artifacts/*.deb)
+          echo "Instaladores encontrados (${#files[@]}):"
+          printf ' - %s\n' "${files[@]}"
+          if [ ${#files[@]} -eq 0 ]; then echo "Nenhum instalador — abortando"; exit 1; fi
+          # recria o Release do zero (idempotente em re-execuções; mantém a tag)
+          gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "${files[@]}"
