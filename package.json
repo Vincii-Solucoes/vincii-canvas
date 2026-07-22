@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
-  "author": "Vincii (https://vincii.com.br)",
+  "author": "Vincii <contato@vincii.com.br>",
   "repository": {
     "type": "git",
     "url": "https://github.com/Vincii-Solucoes/vincii-canvas"

@@ -16,6 +16,9 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # sequencial: o 1º runner cria o Release e os demais só sobem os artefatos
+      # (em paralelo os 3 tentam criar o mesmo Release e batem 422 already_exists)
+      max-parallel: 1
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
