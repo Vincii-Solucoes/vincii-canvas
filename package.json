@@ -31,6 +31,14 @@
   "build": {
     "appId": "br.com.vincii.canvas",
     "productName": "Vincii Canvas",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Vincii-Solucoes",
+        "repo": "vincii-canvas",
+        "releaseType": "release"
+      }
+    ],
     "directories": {
       "output": "dist",
       "buildResources": "build"

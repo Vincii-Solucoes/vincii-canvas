@@ -1,0 +1,38 @@
+name: Release
+
+# Publica os instaladores (mac/Windows/Linux) num GitHub Release quando uma tag
+# "vX.Y.Z" é enviada. Cada SO é compilado no seu próprio runner e o
+# electron-builder sobe os artefatos para o mesmo release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # necessário para o electron-builder criar/publicar o Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Build e publicar instaladores
+        run: npx --no-install electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

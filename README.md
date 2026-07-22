@@ -42,7 +42,11 @@ Para ligar:
    "repository": { "type": "git", "url": "https://github.com/SEU-USUARIO/SEU-REPO" }
    ```
    Enquanto estiver com `OWNER/REPO`, a verificação fica **desligada** (nenhum aviso aparece).
-2. **Publique uma release** no GitHub para cada versão: suba o `version` do `package.json` (ex.: `1.1.0`), gere os instaladores (`npm run dist`) e crie um **Release** com a tag `v1.1.0` anexando os arquivos de `dist/` (dá para automatizar com GitHub Actions).
+2. **Publique uma release** — o deploy é automatizado por GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml)): suba o `version` do `package.json` (ex.: `1.1.0`), faça commit e rode:
+   ```bash
+   git tag v1.1.0 && git push origin main --tags
+   ```
+   O CI compila os instaladores de **macOS, Windows e Linux** (cada um no seu runner) e o `electron-builder` publica tudo num **GitHub Release** `v1.1.0`. Sem certificado, os apps saem sem assinatura (funcionam; só exibem aviso na 1ª abertura).
 3. Pronto: ao abrir, o app consulta o **último release**, compara com a versão instalada e, se houver uma mais nova, mostra a faixa **"Nova versão X disponível — Ver / baixar"** (dispensável; não repete a mesma versão). A verificação é feita pelo servidor local (`GET /api/update-check`), com cache de 1 hora.
 
 > Repositório **público** significa que o **código-fonte fica visível**. Segredos não vão junto: `data.json` (senhas/chave da API) fica só na máquina e já está no `.gitignore` (junto com `node_modules/` e `dist/`).
