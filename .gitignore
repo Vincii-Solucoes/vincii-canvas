@@ -1,0 +1,10 @@
+node_modules/
+data.json
+data.json.tmp
+data.json.corrompido-*
+test/.host_key
+test/.host_key.pub
+dist/
+.DS_Store
+
+.claude/

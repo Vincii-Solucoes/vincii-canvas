@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vincii Canvas</title>
+<link rel="icon" href="/vincii-logo.png">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('vc-theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+<link rel="stylesheet" href="style.css">
+<script src="/vendor/xterm/lib/xterm.js"></script>
+<script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+<script src="host-icons.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img class="logo-img" src="/vincii-logo.png" alt="Vincii">
+    <div>
+      <h1>Vincii Canvas</h1>
+      <p>SSH em lote · terminal interativo · automação com IA</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <nav class="tabs">
+      <button data-tab="terminal" class="active">Terminal</button>
+      <button data-tab="exec">Executar</button>
+      <button data-tab="hosts">Hosts</button>
+      <button data-tab="playbooks">Playbooks</button>
+      <button data-tab="vars">Variáveis</button>
+      <button data-tab="config">Configurações</button>
+    </nav>
+    <button id="themeToggle" class="theme-toggle" type="button" title="Alternar tema claro/escuro" aria-label="Alternar tema"></button>
+  </div>
+</header>
+
+<div id="updateBanner" class="update-banner" hidden></div>
+
+<main>
+  <section id="tab-exec" class="tab-panel">
+    <div class="exec-grid">
+      <div class="card">
+        <h2>Configuração</h2>
+        <label>Comandos
+          <select id="playbookSelect"></select>
+        </label>
+        <div id="adhocWrap" hidden>
+          <textarea id="adhocCommands" rows="6" class="mono" placeholder="echo Olá {{CLIENTE}}&#10;uptime"></textarea>
+          <p class="hint">Um comando por linha; linhas com # são ignoradas; use {{VARIAVEL}}. Ranges: <code>@cada VLAN em {{VLANS}}: comando</code> repete o comando para cada item da lista.</p>
+        </div>
+        <div class="field">
+          <div class="field-head">
+            <span>Hosts</span>
+            <label class="small"><input type="checkbox" id="selectAllHosts" checked> todos</label>
+          </div>
+          <div id="hostChecklist" class="checklist"></div>
+        </div>
+        <label>Perfil de variáveis (segmento)
+          <select id="profileSelect"></select>
+        </label>
+        <label>Sobrescritas desta execução
+          <textarea id="overridesText" rows="3" class="mono" placeholder="CHAVE=valor (opcional, uma por linha)"></textarea>
+        </label>
+        <div class="opts">
+          <label><input type="checkbox" id="optStopOnError" checked> Parar no primeiro erro (por host)</label>
+          <label><input type="checkbox" id="optSequential"> Executar um host por vez</label>
+          <label class="inline">Timeout por comando (s)
+            <input id="optTimeout" type="number" min="0" value="0" title="0 = sem timeout">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button id="btnPreview" class="btn">Pré-visualizar</button>
+          <button id="btnRun" class="btn primary">Executar</button>
+          <button id="btnCancel" class="btn danger" hidden>Cancelar</button>
+        </div>
+      </div>
+      <div class="exec-right">
+        <div id="previewPanel" class="card" hidden></div>
+        <div id="runPanel" class="card" hidden>
+          <div id="runSummary" class="summary"></div>
+          <div id="runOutput"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-terminal" class="tab-panel active">
+    <div class="term-grid no-ai">
+      <aside class="host-sidebar">
+        <div class="host-sidebar-head">
+          <input id="hostSearch" type="text" placeholder="Buscar host…">
+          <button id="sidebarNewHost" class="btn small" title="Novo host">+</button>
+        </div>
+        <div id="hostSidebarList" class="host-sidebar-list"></div>
+      </aside>
+      <div class="term-main">
+        <div class="term-topbar">
+          <div id="termTabs" class="term-tabs"></div>
+        </div>
+        <div class="term-pane">
+          <div id="termContainers"></div>
+          <div id="termEmpty" class="term-empty">Clique em um host na barra lateral para abrir uma conexão. Você pode abrir várias — inclusive ao mesmo host.</div>
+        </div>
+      </div>
+      <div class="ai-pane" hidden>
+        <div class="ai-head">
+          <div class="ai-modes">
+            <button data-mode="assist" class="active">Assistente</button>
+            <button data-mode="agent">Agente autônomo</button>
+          </div>
+          <button id="aiClear" class="btn small" title="Limpar">Limpar</button>
+        </div>
+
+        <div id="assistView" class="ai-view">
+          <div id="aiMessagesMount" class="ai-view-body"></div>
+          <form id="aiForm" class="ai-form">
+            <textarea id="aiInput" rows="2" class="mono" placeholder="Pergunte à IA…"></textarea>
+            <button id="aiSend" class="btn primary" type="submit">Enviar</button>
+          </form>
+        </div>
+
+        <div id="agentView" class="ai-view" hidden>
+          <div class="agent-controls">
+            <textarea id="agentGoal" rows="2" placeholder="Descreva a tarefa para a IA executar sozinha… ex.: verifique quais serviços estão parados e tente reiniciá-los"></textarea>
+            <div class="agent-opts">
+              <span class="hint small">Supervisionado pausa em comandos perigosos; Automático executa tudo sozinho.</span>
+              <span class="spacer"></span>
+              <button id="agentStart" class="btn" title="Executa a tarefa, mas pausa e pede sua aprovação em comandos perigosos">Supervisionado</button>
+              <button id="agentAuto" class="btn auto" title="A IA executa todos os comandos sozinha, sem pedir confirmação">Automático</button>
+              <button id="agentStop" class="btn danger" hidden>Parar</button>
+            </div>
+            <p id="agentLocalNote" class="hint" hidden>O agente autônomo roda em <strong>hosts remotos</strong> (precisa de SSH). No terminal local, use o assistente.</p>
+          </div>
+          <div id="agentFeedMount" class="ai-view-body"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-hosts" class="tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Hosts</h2>
+        <button id="btnNewHost" class="btn primary">Novo host</button>
+      </div>
+      <div id="hostsList" class="host-groups"></div>
+    </div>
+  </section>
+
+  <section id="tab-playbooks" class="tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Playbooks</h2>
+        <div class="btn-row">
+          <button id="btnNewPlaybook" class="btn">Novo playbook</button>
+          <button id="btnPlaybookAi" class="btn primary" hidden>✨ Criar com IA</button>
+        </div>
+      </div>
+      <div id="playbooksList" class="items"></div>
+    </div>
+  </section>
+
+  <section id="tab-vars" class="tab-panel">
+    <div class="vars-grid">
+      <div class="card">
+        <h2>Variáveis globais</h2>
+        <p class="hint">Valem para todos os hosts e execuções, a menos que sejam sobrescritas.</p>
+        <textarea id="globalsText" rows="8" class="mono" placeholder="DATA_DIR=/srv/dados&#10;REGIAO=sudeste"></textarea>
+        <div class="btn-row"><button id="btnSaveGlobals" class="btn primary">Salvar globais</button></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Perfis (segmentos)</h2>
+          <button id="btnNewProfile" class="btn primary">Novo perfil</button>
+        </div>
+        <p class="hint">Um perfil agrupa valores de variáveis para um contexto (cliente, ambiente…). Escolha o perfil na hora de executar.</p>
+        <div id="profilesList" class="items"></div>
+      </div>
+    </div>
+    <p class="hint precedence">Precedência (a maior vence): sobrescritas da execução &gt; variáveis do host &gt; perfil &gt; globais. Variáveis embutidas: {{host.name}}, {{host.host}}, {{host.port}}, {{host.user}}.</p>
+    <p class="hint precedence">Ranges e listas: uma variável pode guardar uma faixa, ex.: <code>VLANS=100-110,150,200-205</code>. Use literal com {{VLANS}} ou expanda com <code>@cada VLAN em {{VLANS}}: comando com {{VLAN}}</code> no playbook (um comando por item).</p>
+  </section>
+
+  <section id="tab-config" class="tab-panel">
+    <div class="card" style="max-width:640px">
+      <h2>Tema</h2>
+      <p class="hint">Escolha entre o modo claro (padrão) e escuro. A preferência é lembrada nesta máquina. O terminal e blocos de código continuam escuros nos dois temas.</p>
+      <div id="themeSeg" class="theme-seg">
+        <button type="button" data-theme-choice="light">Claro</button>
+        <button type="button" data-theme-choice="dark">Escuro</button>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:640px">
+      <h2>Inteligência Artificial</h2>
+      <p class="hint">Os recursos de IA (assistente e agente no terminal, e geração de playbooks) usam a API da Anthropic (Claude). Informe sua própria chave — ela fica salva só nesta máquina (data.json, permissão 600) e nunca é enviada ao navegador. Precisa de créditos ativos na sua conta Anthropic.</p>
+      <label>Chave da API
+        <input id="cfgApiKey" type="password" autocomplete="new-password" placeholder="sk-ant-…">
+      </label>
+      <p id="cfgKeyState" class="hint"></p>
+      <label>Modelo
+        <select id="cfgModel"></select>
+      </label>
+      <p class="hint">Sugestões: <strong>claude-opus-4-8</strong> (mais capaz), <strong>claude-sonnet-5</strong> (equilíbrio), <strong>claude-haiku-4-5</strong> (rápido/barato).</p>
+      <div class="btn-row">
+        <button id="cfgClearKey" class="btn small danger" hidden>Remover chave salva</button>
+        <span class="spacer"></span>
+        <button id="cfgSaveAi" class="btn primary">Salvar</button>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:640px">
+      <h2>Aparência do terminal</h2>
+      <p class="hint">A fonte e o tamanho valem para o terminal interativo. As mudanças são aplicadas e salvas na hora.</p>
+      <div class="grid2">
+        <label>Fonte
+          <select id="cfgTermFont">
+            <option value='ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace'>Padrão do sistema</option>
+            <option value="Menlo, monospace">Menlo</option>
+            <option value="Monaco, monospace">Monaco</option>
+            <option value='"SF Mono", monospace'>SF Mono</option>
+            <option value="Consolas, monospace">Consolas</option>
+            <option value='"Courier New", monospace'>Courier New</option>
+            <option value='"Fira Code", monospace'>Fira Code</option>
+            <option value='"JetBrains Mono", monospace'>JetBrains Mono</option>
+            <option value='"Cascadia Code", monospace'>Cascadia Code</option>
+            <option value='"Source Code Pro", monospace'>Source Code Pro</option>
+            <option value='"Ubuntu Mono", monospace'>Ubuntu Mono</option>
+          </select>
+        </label>
+        <label>Tamanho (px)
+          <input id="cfgTermSize" type="number" min="8" max="28" step="1">
+        </label>
+      </div>
+      <div id="cfgFontPreview" class="font-preview">demo@servidor:~$ echo "Olá {{host.name}}"  0123456789 |&gt;_</div>
+      <p class="hint">Dica: fontes como Fira Code, JetBrains Mono ou Cascadia Code só aparecem se estiverem instaladas no sistema; caso contrário o terminal usa uma fonte monoespaçada padrão.</p>
+    </div>
+
+    <div class="card" style="max-width:640px">
+      <div class="card-head">
+        <h2>Backup da configuração</h2>
+        <div class="btn-row">
+          <button id="btnImportXml" class="btn">⤒ Importar .xml</button>
+          <button id="btnExportXml" class="btn primary">⤓ Exportar .xml</button>
+        </div>
+      </div>
+      <p class="hint">Exporta ou importa toda a configuração — playbooks, hosts, perfis e variáveis globais — em um arquivo XML. Ao importar, itens com o mesmo nome são atualizados e nada é apagado.</p>
+      <label class="check-danger"><input type="checkbox" id="exportSecrets"> Incluir <strong>senhas e chave da API</strong> no arquivo exportado (texto claro — guarde com cuidado)</label>
+      <input type="file" id="importFile" accept=".xml,application/xml,text/xml" hidden>
+    </div>
+  </section>
+</main>
+
+<div id="modalRoot" class="modal-root">
+  <form id="modalForm" class="modal-card">
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+    <footer class="btn-row">
+      <button type="button" id="modalCancel" class="btn">Cancelar</button>
+      <button type="submit" class="btn primary">Salvar</button>
+    </footer>
+  </form>
+</div>
+<div id="toasts"></div>
+</body>
+</html>
