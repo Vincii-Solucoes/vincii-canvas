@@ -961,10 +961,6 @@ function renderHostSidebar() {
   if (!list) return;
   const q = (($('#hostSearch') && $('#hostSearch').value) || '').toLowerCase().trim();
   list.innerHTML = '';
-  if (!state.hosts.length) {
-    el(list, 'p', 'empty', 'Nenhum host ainda. Clique em + para adicionar.');
-    return;
-  }
 
   // monta um item de host; removable = mostra "×" para tirar dos recentes
   const addHostItem = (h, removable) => {
@@ -1023,7 +1019,9 @@ function renderHostSidebar() {
   el(lbl, 'span', null, 'Recentes');
   if (recents.length) el(lbl, 'span', 'count', String(recents.length));
   if (!recents.length) {
-    el(list, 'p', 'empty', 'Nenhum host recente. Use a busca acima para conectar — o host passa a aparecer aqui.');
+    el(list, 'p', 'empty', state.hosts.length
+      ? 'Nenhum host recente. Use a busca acima para conectar — o host passa a aparecer aqui.'
+      : 'Nenhum host cadastrado. Clique em + acima para adicionar um servidor.');
     return;
   }
   const byId = new Map(state.hosts.map((h) => [h.id, h]));
