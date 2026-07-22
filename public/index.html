@@ -212,7 +212,7 @@
 
     <div class="card" style="max-width:640px">
       <h2>Aparência do terminal</h2>
-      <p class="hint">A fonte e o tamanho valem para o terminal interativo. As mudanças são aplicadas e salvas na hora.</p>
+      <p class="hint">A fonte e o tamanho valem para o terminal interativo. Veja a prévia abaixo e clique em <strong>Salvar</strong> para aplicar.</p>
       <div class="grid2">
         <label>Fonte
           <select id="cfgTermFont">
@@ -234,6 +234,10 @@
         </label>
       </div>
       <div id="cfgFontPreview" class="font-preview">demo@servidor:~$ echo "Olá {{host.name}}"  0123456789 |&gt;_</div>
+      <div class="btn-row">
+        <span class="spacer"></span>
+        <button id="cfgSaveTerm" class="btn primary">Salvar</button>
+      </div>
       <p class="hint">Dica: fontes como Fira Code, JetBrains Mono ou Cascadia Code só aparecem se estiverem instaladas no sistema; caso contrário o terminal usa uma fonte monoespaçada padrão.</p>
     </div>
 

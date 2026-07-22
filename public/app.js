@@ -1665,20 +1665,35 @@ async function loadConfigTab() {
   updateFontPreview();
 }
 
+// prévia ao vivo — lê os controles atuais, sem aplicar no terminal nem salvar
 function updateFontPreview() {
   const pv = $('#cfgFontPreview');
-  if (pv) { pv.style.fontFamily = termFont; pv.style.fontSize = termFontSize + 'px'; }
+  if (!pv) return;
+  const font = $('#cfgTermFont').value || DEFAULT_TERM_FONT;
+  const n = Number($('#cfgTermSize').value);
+  const size = Number.isFinite(n) ? Math.min(28, Math.max(8, Math.round(n))) : DEFAULT_TERM_FONT_SIZE;
+  pv.style.fontFamily = font;
+  pv.style.fontSize = size + 'px';
 }
 
-async function changeTermAppearance() {
+// aplica ao terminal e salva — chamado pelo botão "Salvar"
+async function saveTermAppearance() {
   termFont = $('#cfgTermFont').value || DEFAULT_TERM_FONT;
   const n = Number($('#cfgTermSize').value);
   termFontSize = Number.isFinite(n) ? Math.min(28, Math.max(8, Math.round(n))) : DEFAULT_TERM_FONT_SIZE;
+  $('#cfgTermSize').value = termFontSize; // reflete o valor já normalizado (8–28)
   updateFontPreview();
   applyTermAppearance();
+  const btn = $('#cfgSaveTerm');
+  if (btn) btn.disabled = true;
   try {
     await api('/api/settings', { method: 'PUT', body: { termFont, termFontSize } });
-  } catch (e) { toast(e.message, 'erro'); }
+    toast('Aparência do terminal salva.');
+  } catch (e) {
+    toast(e.message, 'erro');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function saveConfigAi() {
@@ -1787,8 +1802,9 @@ function init() {
   window.addEventListener('resize', () => { if ($('#tab-terminal').classList.contains('active')) fitActive(); });
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
-  $('#cfgTermFont').addEventListener('change', changeTermAppearance);
-  $('#cfgTermSize').addEventListener('change', changeTermAppearance);
+  $('#cfgTermFont').addEventListener('change', updateFontPreview);
+  $('#cfgTermSize').addEventListener('input', updateFontPreview);
+  $('#cfgSaveTerm').addEventListener('click', saveTermAppearance);
   $('#aiClear').addEventListener('click', () => { if (currentMode() === 'agent') agentResetFeed(); else aiReset(); });
   initAiModes();
   $('#agentStart').addEventListener('click', () => agentStart(false));
