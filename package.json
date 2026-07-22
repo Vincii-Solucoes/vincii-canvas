@@ -32,6 +32,7 @@
   "build": {
     "appId": "br.com.vincii.canvas",
     "productName": "Vincii Canvas",
+    "afterPack": "build/afterPack.js",
     "publish": [
       {
         "provider": "github",

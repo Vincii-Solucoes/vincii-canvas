@@ -71,8 +71,23 @@ jobs:
           if [ ${#files[@]} -eq 0 ]; then echo "Nenhum instalador — abortando"; exit 1; fi
           # recria o Release do zero (idempotente em re-execuções; mantém a tag)
           gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          printf '%s\n' \
+            '## Instalação' \
+            '' \
+            '### macOS' \
+            'O app não é assinado (sem certificado Apple), então na **primeira** abertura:' \
+            '1. Clique com o **botão direito** no app → **Abrir** → **Abrir**.' \
+            '2. Se aparecer *"está danificado"*, rode isto uma vez no Terminal e abra de novo:' \
+            '   ```' \
+            '   xattr -cr "/Applications/Vincii Canvas.app"' \
+            '   ```' \
+            '' \
+            '### Windows / Linux' \
+            'Windows: execute o instalador `Setup .exe`. Linux: `.AppImage` (dê permissão de execução) ou `.deb`.' \
+            'Nas próximas versões, **Windows e Linux se atualizam automaticamente**.' \
+            > /tmp/notes.md
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file /tmp/notes.md \
             "${files[@]}"
