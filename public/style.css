@@ -584,7 +584,10 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 /* ---------- Agente autônomo ---------- */
 .agent-controls { margin-bottom: 10px; }
 .agent-controls textarea { margin: 0 0 8px; resize: vertical; }
-.agent-opts { display: flex; align-items: center; gap: 8px; }
+.agent-opts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* o hint ocupa a linha inteira acima dos botões (no painel estreito ele
+   espremia numa coluna fininha ao lado dos botões) */
+.agent-opts .hint { flex: 1 1 100%; margin: 0 0 2px; }
 .agent-opts label { margin: 0; color: var(--text); }
 .agent-feed {
   flex: 1;

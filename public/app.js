@@ -1290,7 +1290,8 @@ function updateAgentControls(s) {
   if (auto) { auto.hidden = running; auto.disabled = !canAgent; }
   if (stop) stop.hidden = !running;
   if (note) note.hidden = !isLocal;
-  if (goal) goal.disabled = !canAgent;
+  // a textarea fica SEMPRE habilitada (digitar deve funcionar em qualquer aba);
+  // no terminal local só os botões ficam desativados, com a nota explicando.
 }
 
 // ---------- assistente de IA (estado por sessão) ----------
