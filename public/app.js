@@ -914,6 +914,11 @@ let activeSessionId = null;
 let sessionSeq = 0;
 let termSelectedHost = null; // host da sessão ativa (usado por IA/agente)
 let localDismissed = false;  // usuário fechou o terminal local; não reabrir sozinho até reentrar na aba
+let localInfo = null;        // { user, host, shell, platform } da própria máquina
+
+async function loadLocalInfo() {
+  try { localInfo = await api('/api/local-info'); renderHostSidebar(); } catch {}
+}
 
 const DEFAULT_TERM_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 const DEFAULT_TERM_FONT_SIZE = 13;
@@ -1004,10 +1009,11 @@ function renderHostSidebar() {
   const act = activeSession();
   if (act && act.isLocal) localItem.classList.add('active');
   if (sessions.some((s) => s.isLocal && s.status === 'conectado')) localItem.classList.add('connected');
-  makeAvatar(localItem, { name: 'Meu computador', icon: localOsIcon(), color: '' });
+  makeAvatar(localItem, { name: 'Meu computador', icon: localOsIcon(), color: 'teal' });
   const linfo = el(localItem, 'div', 'info');
   el(linfo, 'div', 'hname', 'Meu computador');
-  el(linfo, 'div', 'haddr', 'terminal local');
+  const login = (localInfo && localInfo.user && localInfo.host) ? `${localInfo.user}@${localInfo.host}` : 'terminal local';
+  el(linfo, 'div', 'haddr', login + (localInfo && localInfo.shell ? ` · ${localInfo.shell}` : ''));
   el(localItem, 'span', 'dot');
   localItem.title = 'Abrir um terminal na sua própria máquina';
   localItem.addEventListener('click', () => openLocalSession());
@@ -1109,8 +1115,8 @@ function ensureLocalTerminal() {
   if (sessions.length === 0) openLocalSession();
 }
 function localOsIcon() {
-  const p = (navigator.platform || navigator.userAgent || '').toLowerCase();
-  if (p.includes('mac')) return 'apple';
+  const p = String((localInfo && localInfo.platform) || navigator.platform || navigator.userAgent || '').toLowerCase();
+  if (p.includes('darwin') || p.includes('mac')) return 'apple';
   if (p.includes('win')) return 'windows';
   if (p.includes('linux')) return 'linux';
   return 'desktop';
@@ -1807,6 +1813,7 @@ function init() {
   loadState().catch((e) => toast(e.message, 'erro'));
   refreshAiVisibility(); // esconde recursos de IA se não houver chave configurada
   checkForUpdate(); // avisa (sem instalar) se houver versão nova no GitHub
+  loadLocalInfo(); // login/SO da máquina para o botão "Meu computador"
   // se o Terminal for a aba inicial, prepara o xterm já na carga
   if ($('#tab-terminal').classList.contains('active')) onTerminalTabShown();
 }

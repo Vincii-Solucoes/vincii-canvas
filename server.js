@@ -2,6 +2,7 @@
 
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 const express = require('express');
 
 const store = require('./lib/store');
@@ -86,6 +87,17 @@ app.get('/api/update-check', async (req, res) => {
   } catch (e) {
     res.json({ configured: true, current: pkg.version, updateAvailable: false, error: e.message });
   }
+});
+
+// Info da máquina local (para o botão "Meu computador" mostrar o login e o SO)
+app.get('/api/local-info', (req, res) => {
+  let user = '';
+  try { user = os.userInfo().username; } catch {}
+  const host = String(os.hostname() || '').replace(/\.local$/i, '');
+  const shell = process.platform === 'win32'
+    ? path.basename(process.env.COMSPEC || 'powershell.exe')
+    : path.basename(process.env.SHELL || 'shell');
+  res.json({ user, host, shell, platform: process.platform });
 });
 
 function cleanVars(obj, res) {
