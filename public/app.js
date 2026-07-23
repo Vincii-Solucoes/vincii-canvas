@@ -753,6 +753,8 @@ async function doPreview() {
 }
 
 function renderPreview(r) {
+  const ph = $('#execPlaceholder');
+  if (ph) ph.hidden = true;
   $('#runPanel').hidden = true;
   const panel = $('#previewPanel');
   panel.hidden = false;
@@ -787,6 +789,8 @@ async function doRun() {
 }
 
 function attachRun(runId) {
+  const ph = $('#execPlaceholder');
+  if (ph) ph.hidden = true;
   $('#previewPanel').hidden = true;
   $('#runOutput').innerHTML = '';
   $('#runSummary').textContent = 'Iniciando…';

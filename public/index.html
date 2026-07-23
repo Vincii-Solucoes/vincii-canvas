@@ -40,28 +40,26 @@
 <main>
   <section id="tab-exec" class="tab-panel">
     <div class="exec-grid">
-      <div class="card">
-        <h2>Configuração</h2>
-        <label>Comandos
-          <select id="playbookSelect"></select>
-        </label>
+      <div class="card exec-config">
+        <div class="exec-sec">Comandos</div>
+        <select id="playbookSelect"></select>
         <div id="adhocWrap" hidden>
           <textarea id="adhocCommands" rows="6" class="mono" placeholder="echo Olá {{CLIENTE}}&#10;uptime"></textarea>
           <p class="hint">Um comando por linha; linhas com # são ignoradas; use {{VARIAVEL}}. Ranges: <code>@cada VLAN em {{VLANS}}: comando</code> repete o comando para cada item da lista.</p>
         </div>
-        <div class="field">
-          <div class="field-head">
-            <span>Hosts</span>
-            <label class="small"><input type="checkbox" id="selectAllHosts" checked> todos</label>
-          </div>
-          <div id="hostChecklist" class="checklist"></div>
-        </div>
-        <label>Perfil de variáveis (segmento)
+
+        <div class="exec-sec">Hosts <label class="small sec-extra"><input type="checkbox" id="selectAllHosts" checked> todos</label></div>
+        <div id="hostChecklist" class="checklist"></div>
+
+        <div class="exec-sec">Variáveis</div>
+        <label>Perfil (segmento)
           <select id="profileSelect"></select>
         </label>
         <label>Sobrescritas desta execução
           <textarea id="overridesText" rows="3" class="mono" placeholder="CHAVE=valor (opcional, uma por linha)"></textarea>
         </label>
+
+        <div class="exec-sec">Opções</div>
         <div class="opts">
           <label><input type="checkbox" id="optStopOnError" checked> Parar no primeiro erro (por host)</label>
           <label><input type="checkbox" id="optSequential"> Executar um host por vez</label>
@@ -69,13 +67,19 @@
             <input id="optTimeout" type="number" min="0" value="0" title="0 = sem timeout">
           </label>
         </div>
-        <div class="btn-row">
+
+        <div class="btn-row exec-actions">
           <button id="btnPreview" class="btn">Pré-visualizar</button>
-          <button id="btnRun" class="btn primary">Executar</button>
+          <button id="btnRun" class="btn primary">▶ Executar</button>
           <button id="btnCancel" class="btn danger" hidden>Cancelar</button>
         </div>
       </div>
       <div class="exec-right">
+        <div id="execPlaceholder" class="card exec-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M7 9.5 10 12l-3 2.5M12.5 15H17"/></svg>
+          <h3>Pronto para executar</h3>
+          <p>Escolha os <strong>comandos</strong> e os <strong>hosts</strong> ao lado. A <strong>pré-visualização</strong> mostra os comandos já resolvidos por host (sem executar nada) e a <strong>execução</strong> aparece aqui ao vivo, host a host.</p>
+        </div>
         <div id="previewPanel" class="card" hidden></div>
         <div id="runPanel" class="card" hidden>
           <div id="runSummary" class="summary"></div>
