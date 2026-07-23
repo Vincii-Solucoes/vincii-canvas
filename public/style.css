@@ -133,6 +133,8 @@ body.term-full .term-grid { height: calc(100vh - 100px); }
 }
 .exec-config .exec-sec:first-child { margin-top: 0; }
 .exec-sec .sec-extra { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.exec-host-search { margin-bottom: 8px; }
+.check-host.filtered-out, .check-group-label.filtered-out { display: none; }
 .exec-actions { margin-top: 18px; }
 .exec-actions .btn { flex: 1; }
 .exec-actions #btnRun { flex: 1.5; }

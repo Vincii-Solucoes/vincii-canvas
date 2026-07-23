@@ -710,6 +710,7 @@ function renderExecControls() {
     el(wrap, 'div', 'check-group-label', groupName);
     for (const h of hosts) {
       const label = el(wrap, 'label', 'check-host');
+      label.dataset.search = `${groupName} ${h.name} ${h.username}@${h.host}:${h.port}`.toLowerCase();
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = h.id;
@@ -720,6 +721,38 @@ function renderExecControls() {
       el(info, 'div', 'hname', h.name);
       el(info, 'div', 'haddr', `${h.username}@${h.host}:${h.port}`);
     }
+  }
+  filterExecHosts(); // reaplica a busca atual após re-renderizar
+}
+
+// Filtra a lista de hosts da aba Executar pela busca. Só ESCONDE (CSS) os que
+// não casam — as seleções de hosts fora do filtro são preservadas; o "todos"
+// passa a valer para os visíveis. A prévia sempre mostra o que vai rodar.
+function filterExecHosts() {
+  const wrap = $('#hostChecklist');
+  if (!wrap) return;
+  const q = (($('#execHostSearch') && $('#execHostSearch').value) || '').toLowerCase().trim();
+  let groupLabel = null;
+  let groupHasVisible = false;
+  let anyVisible = false;
+  for (const n of [...wrap.children]) {
+    if (n.classList.contains('check-group-label')) {
+      if (groupLabel) groupLabel.classList.toggle('filtered-out', !groupHasVisible);
+      groupLabel = n;
+      groupHasVisible = false;
+    } else if (n.classList.contains('check-host')) {
+      const match = !q || (n.dataset.search || '').includes(q);
+      n.classList.toggle('filtered-out', !match);
+      if (match) { groupHasVisible = true; anyVisible = true; }
+    }
+  }
+  if (groupLabel) groupLabel.classList.toggle('filtered-out', !groupHasVisible);
+  let empty = wrap.querySelector('.search-empty');
+  if (q && !anyVisible) {
+    if (!empty) empty = el(wrap, 'p', 'hint search-empty', 'Nenhum host encontrado para essa busca.');
+    empty.hidden = false;
+  } else if (empty) {
+    empty.hidden = true;
   }
 }
 
@@ -1824,8 +1857,10 @@ function init() {
   $('#importFile').addEventListener('change', onImportFile);
   $('#playbookSelect').addEventListener('change', syncAdhoc);
   $('#selectAllHosts').addEventListener('change', (e) => {
-    $$('#hostChecklist input[type=checkbox]').forEach((cb) => { cb.checked = e.target.checked; });
+    // com busca ativa, "todos" marca/desmarca só os hosts visíveis
+    $$('#hostChecklist .check-host:not(.filtered-out) input[type=checkbox]').forEach((cb) => { cb.checked = e.target.checked; });
   });
+  $('#execHostSearch').addEventListener('input', filterExecHosts);
   $('#btnPreview').addEventListener('click', doPreview);
   $('#btnRun').addEventListener('click', doRun);
   $('#btnCancel').addEventListener('click', doCancel);
