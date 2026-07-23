@@ -103,6 +103,9 @@ body {
 }
 
 main { max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px; }
+/* aba Terminal: usa a janela INTEIRA (sem teto de largura, quase toda a altura) */
+body.term-full main { max-width: none; padding: 12px 14px 14px; }
+body.term-full .term-grid { height: calc(100vh - 100px); }
 
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }

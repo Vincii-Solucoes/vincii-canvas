@@ -120,9 +120,12 @@ function initTabs() {
   $$('.tabs button').forEach((btn) => btn.addEventListener('click', () => {
     $$('.tabs button').forEach((b) => b.classList.toggle('active', b === btn));
     $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'tab-' + btn.dataset.tab));
+    // aba Terminal usa a janela inteira (sem o teto de 1200px das outras abas)
+    document.body.classList.toggle('term-full', btn.dataset.tab === 'terminal');
     if (btn.dataset.tab === 'terminal') onTerminalTabShown();
     if (btn.dataset.tab === 'config') loadConfigTab();
   }));
+  document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
 
 // ---------- estado ----------
