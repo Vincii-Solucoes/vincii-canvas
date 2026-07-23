@@ -28,6 +28,7 @@
       <button data-tab="exec">Executar</button>
       <button data-tab="hosts">Hosts</button>
       <button data-tab="playbooks">Playbooks</button>
+      <button data-tab="history">Histórico</button>
       <button data-tab="vars">Variáveis</button>
       <button data-tab="config">Configurações</button>
     </nav>
@@ -168,6 +169,30 @@
         </div>
       </div>
       <div id="playbooksList" class="items"></div>
+    </div>
+  </section>
+
+  <section id="tab-history" class="tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Histórico de comandos</h2>
+        <div class="btn-row">
+          <button id="btnHistPlaybook" class="btn primary" disabled>Criar playbook (<span id="histSelCount">0</span>)</button>
+          <button id="btnHistClear" class="btn danger">Apagar histórico</button>
+        </div>
+      </div>
+      <p class="hint">Comandos executados no terminal (você e a IA) e em lote, com data, máquina e IP. Marque comandos e clique em <strong>Criar playbook</strong> para reaproveitá-los. Senhas não são registradas (não aparecem na tela).</p>
+      <div class="hist-toolbar">
+        <div class="hist-seges" id="histSourceSeg" role="group" aria-label="Filtrar por fonte">
+          <button data-src="" class="active">Todos</button>
+          <button data-src="human">👤 Humano</button>
+          <button data-src="ai">✨ IA</button>
+        </div>
+        <select id="histHostFilter" class="hist-hostfilter"><option value="">Todas as máquinas</option></select>
+        <input id="histSearch" type="text" class="hist-search" placeholder="Buscar comando…" autocomplete="off">
+        <label class="small hist-selall"><input type="checkbox" id="histSelectAll"> selecionar tudo</label>
+      </div>
+      <div id="historyList" class="hist-list"></div>
     </div>
   </section>
 

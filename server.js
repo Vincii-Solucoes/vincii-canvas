@@ -11,6 +11,7 @@ const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
 const ai = require('./lib/ai');
 const agent = require('./lib/agent');
+const history = require('./lib/history');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const pkg = require('./package.json');
@@ -100,6 +101,51 @@ app.get('/api/local-info', (req, res) => {
     ? path.basename(process.env.COMSPEC || 'powershell.exe')
     : path.basename(process.env.SHELL || 'shell');
   res.json({ user, host, shell, platform: process.platform });
+});
+
+// ---------- histórico de comandos ----------
+// Resolve os metadados da máquina (nome/IP/usuário) a partir do host ou do local,
+// no servidor — o cliente nunca dita esses dados (evita spoofing e mantém consistência).
+function historyMeta(hostId, local) {
+  if (local) {
+    let user = '';
+    try { user = os.userInfo().username; } catch {}
+    return {
+      machine: String(os.hostname() || '').replace(/\.local$/i, ''),
+      ip: history.localIp(),
+      username: user,
+      port: null,
+      local: true,
+      hostId: null,
+    };
+  }
+  const h = store.get().hosts.find((x) => x.id === hostId);
+  if (!h) return null;
+  return { machine: h.name, ip: h.host, username: h.username, port: h.port || 22, local: false, hostId: h.id };
+}
+
+app.get('/api/history', (req, res) => {
+  const { source, hostId, q, limit } = req.query || {};
+  res.json({ entries: history.list({ source, hostId, q, limit }) });
+});
+
+app.post('/api/history', (req, res) => {
+  const b = req.body || {};
+  const meta = historyMeta(b.hostId, b.local === true);
+  if (!meta) return fail(res, 400, 'Host não encontrado.');
+  const entry = history.add({ command: b.command, source: b.source, origin: b.origin, ...meta });
+  if (!entry) return fail(res, 400, 'Comando vazio.');
+  res.json({ entry });
+});
+
+app.delete('/api/history/:id', (req, res) => {
+  history.remove(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/history', (req, res) => {
+  history.clear();
+  res.json({ ok: true });
 });
 
 function cleanVars(obj, res) {
@@ -512,6 +558,18 @@ app.post('/api/run', (req, res) => {
     sequential: !!body.sequential,
     timeoutSec: Math.max(0, Number(body.timeoutSec) || 0),
   };
+  // registra no histórico os comandos (já resolvidos) que vão rodar em cada host
+  for (const p of r.perHost) {
+    for (const it of p.items) {
+      const c = String(it.resolved || '').trim();
+      if (!c || c.startsWith('#')) continue;
+      history.add({
+        command: c, source: 'human', origin: 'batch',
+        machine: p.host.name, ip: p.host.host, username: p.host.username,
+        port: p.host.port || 22, local: false, hostId: p.host.id,
+      });
+    }
+  }
   const run = runner.startRun({
     perHost: r.perHost,
     playbookName: r.playbookName,

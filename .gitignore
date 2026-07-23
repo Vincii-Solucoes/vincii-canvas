@@ -2,6 +2,8 @@ node_modules/
 data.json
 data.json.tmp
 data.json.corrompido-*
+history.json
+history.json.tmp
 test/.host_key
 test/.host_key.pub
 dist/

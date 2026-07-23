@@ -124,6 +124,7 @@ function initTabs() {
     document.body.classList.toggle('term-full', btn.dataset.tab === 'terminal');
     if (btn.dataset.tab === 'terminal') onTerminalTabShown();
     if (btn.dataset.tab === 'config') loadConfigTab();
+    if (btn.dataset.tab === 'history') loadHistory();
   }));
   document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
@@ -420,7 +421,7 @@ function renderPlaybooks() {
 
 function openPlaybookModal(existing) {
   const isEdit = !!(existing && existing.id); // rascunho gerado pela IA não tem id → é criação
-  openModal(isEdit ? 'Editar playbook' : existing ? 'Revisar playbook gerado' : 'Novo playbook', `
+  openModal(isEdit ? 'Editar playbook' : existing ? 'Revisar playbook' : 'Novo playbook', `
     <label>Nome <input id="f_pbName" required placeholder="ex.: Atualizar aplicação"></label>
     <label>Descrição (opcional) <input id="f_pbDesc"></label>
     <label>Comandos — um por linha
@@ -479,6 +480,143 @@ function openPlaybookAiModal() {
       btn.textContent = 'Gerar';
     }
   };
+}
+
+// ---------- histórico de comandos ----------
+const histState = { source: '', hostId: '', q: '', selected: new Set() };
+let histEntries = [];
+let histSearchTimer = null;
+
+function fmtHistDate(ts) {
+  try {
+    return new Date(ts).toLocaleString('pt-BR', {
+      day: '2-digit', month: '2-digit', year: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return ''; }
+}
+
+const ORIGIN_LABEL = { terminal: 'terminal', assistant: 'assistente', agent: 'agente', batch: 'lote' };
+
+// preenche o seletor de máquinas com base nos hosts + local
+function fillHistHostFilter() {
+  const sel = $('#histHostFilter');
+  if (!sel) return;
+  const cur = histState.hostId;
+  sel.innerHTML = '<option value="">Todas as máquinas</option><option value="local">Meu computador</option>';
+  for (const h of state.hosts) {
+    const o = document.createElement('option');
+    o.value = h.id;
+    o.textContent = `${h.name} (${h.host})`;
+    sel.appendChild(o);
+  }
+  sel.value = cur;
+}
+
+async function loadHistory() {
+  const params = new URLSearchParams();
+  if (histState.source) params.set('source', histState.source);
+  if (histState.hostId) params.set('hostId', histState.hostId);
+  if (histState.q) params.set('q', histState.q);
+  try {
+    const r = await api('/api/history?' + params.toString());
+    histEntries = r.entries || [];
+  } catch (e) {
+    histEntries = [];
+  }
+  // remove da seleção o que não está mais visível
+  const ids = new Set(histEntries.map((e) => e.id));
+  for (const id of [...histState.selected]) if (!ids.has(id)) histState.selected.delete(id);
+  renderHistory();
+}
+
+function renderHistory() {
+  const wrap = $('#historyList');
+  if (!wrap) return;
+  fillHistHostFilter();
+  wrap.innerHTML = '';
+  if (!histEntries.length) {
+    el(wrap, 'p', 'empty', 'Nenhum comando no histórico ainda. Use o terminal ou a IA e eles aparecem aqui.');
+    updateHistSelUI();
+    return;
+  }
+  for (const e of histEntries) {
+    const row = el(wrap, 'div', 'hist-row' + (histState.selected.has(e.id) ? ' selected' : ''));
+    const cb = el(row, 'input', 'hist-cb');
+    cb.type = 'checkbox';
+    cb.checked = histState.selected.has(e.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) histState.selected.add(e.id); else histState.selected.delete(e.id);
+      row.classList.toggle('selected', cb.checked);
+      updateHistSelUI();
+    });
+    const main = el(row, 'div', 'hist-main');
+    const top = el(main, 'div', 'hist-top');
+    const badge = el(top, 'span', 'badge ' + (e.source === 'ai' ? 'badge-ai' : 'badge-human'));
+    badge.textContent = e.source === 'ai' ? '✨ IA' : '👤 Humano';
+    const cmd = el(top, 'code', 'hist-cmd');
+    cmd.textContent = e.command;
+    const meta = el(main, 'div', 'hist-meta');
+    const machine = e.local ? 'Meu computador' : (e.machine || 'host');
+    const ipUser = [e.username ? e.username + '@' : '', e.ip || ''].join('');
+    meta.textContent = `${fmtHistDate(e.ts)} · ${machine}${ipUser ? ' · ' + ipUser : ''} · ${ORIGIN_LABEL[e.origin] || e.origin}`;
+    const del = el(row, 'button', 'hist-del', '×');
+    del.title = 'Remover esta entrada';
+    del.addEventListener('click', async () => {
+      try { await api('/api/history/' + e.id, { method: 'DELETE' }); histState.selected.delete(e.id); await loadHistory(); }
+      catch (err) { toast(err.message, 'erro'); }
+    });
+  }
+  updateHistSelUI();
+}
+
+function updateHistSelUI() {
+  const n = histState.selected.size;
+  const cnt = $('#histSelCount'); if (cnt) cnt.textContent = String(n);
+  const btn = $('#btnHistPlaybook'); if (btn) btn.disabled = n === 0;
+  const all = $('#histSelectAll');
+  if (all) all.checked = histEntries.length > 0 && histEntries.every((e) => histState.selected.has(e.id));
+}
+
+// Cria um playbook a partir dos comandos selecionados (mais antigos primeiro,
+// pois a lista é exibida do mais recente para o mais antigo).
+function historyToPlaybook() {
+  const chosen = histEntries.filter((e) => histState.selected.has(e.id));
+  if (!chosen.length) { toast('Marque ao menos um comando.', 'erro'); return; }
+  const commands = chosen.slice().reverse().map((e) => e.command);
+  // remove duplicados consecutivos para um playbook mais limpo
+  const dedup = commands.filter((c, i) => i === 0 || c !== commands[i - 1]);
+  openPlaybookModal({ name: '', description: '', commands: dedup });
+}
+
+function initHistoryControls() {
+  $$('#histSourceSeg button').forEach((b) => b.addEventListener('click', () => {
+    $$('#histSourceSeg button').forEach((x) => x.classList.toggle('active', x === b));
+    histState.source = b.dataset.src || '';
+    loadHistory();
+  }));
+  $('#histHostFilter').addEventListener('change', (e) => { histState.hostId = e.target.value; loadHistory(); });
+  $('#histSearch').addEventListener('input', (e) => {
+    histState.q = e.target.value.trim();
+    clearTimeout(histSearchTimer);
+    histSearchTimer = setTimeout(loadHistory, 250);
+  });
+  $('#histSelectAll').addEventListener('change', (e) => {
+    if (e.target.checked) histEntries.forEach((x) => histState.selected.add(x.id));
+    else histState.selected.clear();
+    renderHistory();
+  });
+  $('#btnHistPlaybook').addEventListener('click', historyToPlaybook);
+  $('#btnHistClear').addEventListener('click', async () => {
+    if (!histEntries.length) { toast('O histórico já está vazio.'); return; }
+    if (!confirm('Apagar TODO o histórico de comandos? Esta ação não pode ser desfeita.')) return;
+    try {
+      await api('/api/history', { method: 'DELETE' });
+      histState.selected.clear();
+      toast('Histórico apagado.');
+      await loadHistory();
+    } catch (e) { toast(e.message, 'erro'); }
+  });
 }
 
 // ---------- variáveis ----------
@@ -1133,7 +1271,10 @@ function createSession({ hostId, hostName, isLocal }) {
   const session = { id, hostId, hostName, isLocal: !!isLocal, term, fitAddon, ws: null, container, status: 'conectando' };
   // estado de IA POR SESSÃO: cada aba tem seu assistente e agente independentes
   session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
-  term.onData((d) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'i', d })); });
+  term.onData((d) => {
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'i', d }));
+    captureTyped(session, d);
+  });
   term.onResize(({ cols, rows }) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'r', cols, rows })); });
   sessions.push(session);
   setActiveSession(id);
@@ -1270,7 +1411,69 @@ function insertCommand(cmd, run) {
     return;
   }
   s.ws.send(JSON.stringify({ t: 'i', d: cmd + (run ? '\n' : '') }));
+  if (run) logHistory(s, cmd, 'ai', 'assistant'); // comando da IA rodado no terminal
   focusActive();
+}
+
+// ---------- captura do que é DIGITADO no terminal (selo Humano) ----------
+// Ao teclar Enter, lê a LINHA JÁ RENDERIZADA do xterm (reflete auto-complete e
+// histórico do shell) e remove o prompt. Como senhas não são ecoadas na tela,
+// elas não aparecem aqui — a captura é por segurança baseada na tela, não nas teclas.
+function captureTyped(session, d) {
+  for (let i = 0; i < d.length; i++) {
+    const ch = d[i];
+    if (ch === '\r' || ch === '\n') finalizeTyped(session);
+  }
+}
+
+function finalizeTyped(session) {
+  if (!session || session.status !== 'conectado') return;
+  let cmd = '';
+  try { cmd = readCommandLine(session.term); } catch {}
+  cmd = (cmd || '').trim();
+  if (!cmd) return;
+  logHistory(session, cmd, 'human', 'terminal');
+}
+
+const PROMPT_TERMS = ['❯ ', '➜ ', '$ ', '# ', '% '];
+
+// Lê o comando na posição do cursor: sobe até a linha do prompt (juntando as
+// continuações com wrap) e remove o prompt. Não depende de isWrapped — procura o
+// terminador do prompt nas últimas linhas, o que é mais robusto na prática.
+function readCommandLine(term) {
+  const buf = term.buffer.active;
+  const cursorRow = buf.baseY + buf.cursorY;
+  const parts = [];
+  for (let r = cursorRow; r >= 0 && r >= cursorRow - 5; r--) {
+    const ln = buf.getLine(r);
+    if (!ln) break;
+    const text = ln.translateToString(false);
+    parts.unshift(text);
+    if (PROMPT_TERMS.some((t) => text.includes(t))) {
+      return stripPrompt(parts.join('').replace(/\s+$/, ''));
+    }
+  }
+  return ''; // sem prompt reconhecível → não registra (evita capturar dentro de vim/top)
+}
+
+// Remove o prompt do shell, pegando o que vem após o último terminador comum.
+function stripPrompt(line) {
+  let cut = -1;
+  for (const t of PROMPT_TERMS) {
+    const i = line.lastIndexOf(t);
+    if (i >= 0 && i + t.length > cut) cut = i + t.length;
+  }
+  return cut >= 0 ? line.slice(cut).trim() : '';
+}
+
+// Envia uma entrada ao histórico; o servidor resolve máquina/IP/usuário.
+function logHistory(session, command, source, origin) {
+  if (!session || !command) return;
+  const body = { command, source, origin };
+  if (session.isLocal) body.local = true;
+  else if (session.hostId) body.hostId = session.hostId;
+  else return; // sem contexto de host, não registra
+  api('/api/history', { method: 'POST', body }).catch(() => {});
 }
 
 // ---------- IA por sessão: builders + montagem no painel ----------
@@ -1851,6 +2054,7 @@ function init() {
   $('#btnNewHost').addEventListener('click', () => openHostModal(null));
   $('#btnNewPlaybook').addEventListener('click', () => openPlaybookModal(null));
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
+  initHistoryControls();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
