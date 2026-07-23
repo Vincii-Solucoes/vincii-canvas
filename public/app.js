@@ -1410,20 +1410,41 @@ async function aiSend(question) {
   }
 }
 
-// ---------- visibilidade dos recursos de IA ----------
+// ---------- visibilidade dos recursos de IA + layout do terminal ----------
 let aiEnabled = false;
+let aiCollapsed = false;      // usuário recolheu o painel de IA (lembrado)
+let sidebarCollapsed = false; // usuário recolheu a barra de hosts (lembrado)
+try {
+  aiCollapsed = localStorage.getItem('vc-ai-collapsed') === '1';
+  sidebarCollapsed = localStorage.getItem('vc-sidebar-collapsed') === '1';
+} catch {}
+
+// aplica sidebar/painel de IA recolhidos ou não — devolve espaço ao terminal
+function updateTermLayout() {
+  const grid = document.querySelector('.term-grid');
+  const pane = document.querySelector('.ai-pane');
+  const sidebar = document.querySelector('.host-sidebar');
+  const showAi = aiEnabled && !aiCollapsed;
+  if (pane) pane.hidden = !showAi;
+  if (sidebar) sidebar.hidden = sidebarCollapsed;
+  if (grid) {
+    grid.classList.toggle('no-ai', !showAi);
+    grid.classList.toggle('no-sidebar', sidebarCollapsed);
+  }
+  const bAi = $('#toggleAiPane');
+  if (bAi) { bAi.hidden = !aiEnabled; bAi.classList.toggle('active', showAi); }
+  const bSb = $('#toggleSidebar');
+  if (bSb) bSb.classList.toggle('active', !sidebarCollapsed);
+  // o terminal muda de largura — reajusta o xterm
+  if ($('#tab-terminal').classList.contains('active')) setTimeout(fitActive, 40);
+}
 
 function applyAiVisibility(hasKey) {
   aiEnabled = !!hasKey;
-  const pane = document.querySelector('.ai-pane');
-  const grid = document.querySelector('.term-grid');
-  if (pane) pane.hidden = !aiEnabled;
-  if (grid) grid.classList.toggle('no-ai', !aiEnabled);
   const pbAi = $('#btnPlaybookAi');
   if (pbAi) pbAi.hidden = !aiEnabled;
   if (aiEnabled) mountAiForActive(); // (re)monta a IA da aba ativa ao exibir o painel
-  // o terminal muda de largura ao mostrar/esconder o painel — reajusta
-  if ($('#tab-terminal').classList.contains('active')) setTimeout(fitActive, 40);
+  updateTermLayout();
 }
 
 async function refreshAiVisibility() {
@@ -1803,6 +1824,16 @@ function init() {
   $('#btnCancel').addEventListener('click', doCancel);
   $('#hostSearch').addEventListener('input', renderHostSidebar);
   $('#sidebarNewHost').addEventListener('click', () => openHostModal(null));
+  $('#toggleSidebar').addEventListener('click', () => {
+    sidebarCollapsed = !sidebarCollapsed;
+    try { localStorage.setItem('vc-sidebar-collapsed', sidebarCollapsed ? '1' : '0'); } catch {}
+    updateTermLayout();
+  });
+  $('#toggleAiPane').addEventListener('click', () => {
+    aiCollapsed = !aiCollapsed;
+    try { localStorage.setItem('vc-ai-collapsed', aiCollapsed ? '1' : '0'); } catch {}
+    updateTermLayout();
+  });
   window.addEventListener('resize', () => { if ($('#tab-terminal').classList.contains('active')) fitActive(); });
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
