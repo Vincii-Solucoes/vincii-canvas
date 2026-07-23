@@ -629,8 +629,22 @@ app.post('/api/ai/playbook', async (req, res) => {
 // ---------- agente autônomo (IA age sozinha, analista acompanha) ----------
 app.post('/api/agent/start', (req, res) => {
   const body = req.body || {};
-  const host = store.get().hosts.find((h) => h.id === body.hostId);
-  if (!host) return fail(res, 400, 'Host não encontrado.');
+  let host;
+  if (body.local === true) {
+    // agente na própria máquina: comandos rodam via shell local, sem SSH
+    let user = '';
+    try { user = os.userInfo().username; } catch {}
+    host = {
+      local: true,
+      name: 'Meu computador',
+      username: user,
+      host: String(os.hostname() || '').replace(/\.local$/i, ''),
+      platform: process.platform,
+    };
+  } else {
+    host = store.get().hosts.find((h) => h.id === body.hostId);
+    if (!host) return fail(res, 400, 'Host não encontrado.');
+  }
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');
   if (goal.length > 4000) return fail(res, 400, 'Tarefa longa demais.');

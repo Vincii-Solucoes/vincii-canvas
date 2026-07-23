@@ -1318,19 +1318,18 @@ function setPanelMode(mode) {
 }
 
 // habilita/desabilita os controles do agente conforme a aba ativa
-// (o agente autônomo só roda em host remoto; no terminal local, só assistente)
+// (o agente roda em host remoto via SSH ou na própria máquina, na aba local)
 function updateAgentControls(s) {
-  const start = $('#agentStart'), auto = $('#agentAuto'), stop = $('#agentStop'), note = $('#agentLocalNote'), goal = $('#agentGoal');
+  const start = $('#agentStart'), auto = $('#agentAuto'), stop = $('#agentStop'), note = $('#agentLocalNote');
   const agent = s && s.ai && s.ai.agent;
   const running = !!(agent && agent.status === 'running');
   const isLocal = !!(s && s.isLocal);
-  const canAgent = !!(s && !isLocal && s.hostId);
+  const canAgent = !!(s && (isLocal || s.hostId));
   if (start) { start.hidden = running; start.disabled = !canAgent; }
   if (auto) { auto.hidden = running; auto.disabled = !canAgent; }
   if (stop) stop.hidden = !running;
+  // na aba local a nota vira um aviso: os comandos rodam NESTA máquina
   if (note) note.hidden = !isLocal;
-  // a textarea fica SEMPRE habilitada (digitar deve funcionar em qualquer aba);
-  // no terminal local só os botões ficam desativados, com a nota explicando.
 }
 
 // ---------- assistente de IA (estado por sessão) ----------
@@ -1531,11 +1530,12 @@ function clearThinking(ai) {
 function agentStart(auto) {
   const s = activeSession();
   if (!s || !s.ai) return;
-  if (s.isLocal || !s.hostId) { toast('O agente autônomo roda em hosts remotos. Conecte-se a um host.', 'erro'); return; }
+  if (!s.isLocal && !s.hostId) { toast('Abra um host remoto ou o terminal "Meu computador" para usar o agente.', 'erro'); return; }
   const goal = $('#agentGoal').value.trim();
   if (!goal) { toast('Descreva a tarefa para o agente.', 'erro'); return; }
+  const alvo = s.isLocal ? 'nesta máquina (seu computador)' : 'no servidor';
   if (auto && !confirm(
-    'Modo AUTOMÁTICO: a IA vai executar sozinha todos os comandos necessários para cumprir a tarefa, sem pedir confirmação — inclusive comandos que alteram ou apagam dados no servidor. ' +
+    `Modo AUTOMÁTICO: a IA vai executar sozinha todos os comandos necessários para cumprir a tarefa, sem pedir confirmação — inclusive comandos que alteram ou apagam dados ${alvo}. ` +
     'Você acompanha ao vivo e pode clicar em "Parar" a qualquer momento.\n\nDeseja continuar?'
   )) return;
   const ai = s.ai;
@@ -1545,7 +1545,9 @@ function agentStart(auto) {
   updateAgentControls(s);
   api('/api/agent/start', {
     method: 'POST',
-    body: { hostId: s.hostId, goal, confirmDangerous: !auto },
+    body: s.isLocal
+      ? { local: true, goal, confirmDangerous: !auto }
+      : { hostId: s.hostId, goal, confirmDangerous: !auto },
   })
     .then((r) => {
       if (!ai.agent) return; // cancelado antes de iniciar
