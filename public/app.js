@@ -699,8 +699,7 @@ function renderExecControls() {
   if ([...ps.options].some((o) => o.value === prevP)) ps.value = prevP;
 
   const wrap = $('#hostChecklist');
-  const checked = new Set(getSelectedHostIds());
-  const hadAny = wrap.querySelector('input') !== null;
+  const checked = new Set(getSelectedHostIds()); // preserva seleção entre re-renderizações
   wrap.innerHTML = '';
   if (!state.hosts.length) {
     el(wrap, 'p', 'hint', 'Cadastre hosts na aba "Hosts".');
@@ -714,7 +713,7 @@ function renderExecControls() {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = h.id;
-      cb.checked = hadAny ? checked.has(h.id) : true;
+      cb.checked = checked.has(h.id); // por padrão, nada marcado — o usuário escolhe
       label.appendChild(cb);
       makeAvatar(label, h, 'avatar-sm');
       const info = el(label, 'div', 'info');
