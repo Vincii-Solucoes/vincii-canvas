@@ -12,6 +12,7 @@ const { wss: localWss } = require('./lib/localterm');
 const ai = require('./lib/ai');
 const agent = require('./lib/agent');
 const history = require('./lib/history');
+const quickhosts = require('./lib/quickhosts');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const pkg = require('./package.json');
@@ -119,10 +120,33 @@ function historyMeta(hostId, local) {
       hostId: null,
     };
   }
-  const h = store.get().hosts.find((x) => x.id === hostId);
+  const h = store.get().hosts.find((x) => x.id === hostId) || quickhosts.get(hostId);
   if (!h) return null;
   return { machine: h.name, ip: h.host, username: h.username, port: h.port || 22, local: false, hostId: h.id };
 }
+
+// Conexão rápida: cria um host avulso (não salvo em data.json) e devolve um id
+// temporário que o terminal usa para conectar. Some quando o app fecha.
+app.post('/api/quick-connect', (req, res) => {
+  const b = req.body || {};
+  const host = String(b.host || '').trim();
+  const username = String(b.username || '').trim();
+  if (!host) return fail(res, 400, 'Informe o host ou IP.');
+  if (!username) return fail(res, 400, 'Informe o usuário.');
+  const port = Math.min(65535, Math.max(1, Number(b.port) || 22));
+  const a = b.auth || {};
+  const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
+  const auth = { type };
+  if (type === 'key') {
+    auth.keyPath = String(a.keyPath || '').trim();
+    if (a.passphrase) auth.passphrase = String(a.passphrase);
+  } else if (type === 'password') {
+    auth.password = String(a.password || '');
+  }
+  const name = String(b.name || '').trim() || `${username}@${host}`;
+  const id = quickhosts.add({ name, host, port, username, auth });
+  res.json({ hostId: id, name });
+});
 
 app.get('/api/history', (req, res) => {
   const { source, hostId, q, limit } = req.query || {};
@@ -700,7 +724,7 @@ app.post('/api/agent/start', (req, res) => {
       platform: process.platform,
     };
   } else {
-    host = store.get().hosts.find((h) => h.id === body.hostId);
+    host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
   }
   const goal = String(body.goal || '').trim();

@@ -1198,7 +1198,7 @@ function renderHostSidebar() {
   if (!recents.length) {
     el(list, 'p', 'empty', state.hosts.length
       ? 'Nenhum host recente. Use a busca acima para conectar — o host passa a aparecer aqui.'
-      : 'Nenhum host cadastrado. Clique em + acima para adicionar um servidor.');
+      : 'Nenhum host cadastrado. Use a Conexão rápida (⚡) acima para conectar a um servidor avulso, ou cadastre na aba Hosts.');
     return;
   }
   const byId = new Map(state.hosts.map((h) => [h.id, h]));
@@ -1253,6 +1253,84 @@ function openLocalSession() {
   if (!xtermReady()) return;
   localDismissed = false;
   createSession({ hostId: null, hostName: 'Meu computador', isLocal: true });
+}
+
+// Abre uma sessão para um host AVULSO (conexão rápida, não salvo). Não entra em
+// "recentes" (o id é temporário); some quando o app fecha.
+function openAdHocSession(hostId, name) {
+  if (!xtermReady()) return;
+  createSession({ hostId, hostName: name || 'Conexão rápida' });
+}
+
+// Modal de conexão rápida: conecta a um servidor avulso sem cadastrá-lo.
+function openQuickConnectModal() {
+  openModal('Conexão rápida', `
+    <p class="hint">Conecte-se a um servidor avulso sem cadastrá-lo. A conexão é temporária (não fica salva), mas os comandos entram normalmente no <strong>Histórico</strong>.</p>
+    <div class="grid2">
+      <label>Host / IP <input id="qc_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
+      <label>Porta <input id="qc_port" type="number" min="1" max="65535" value="22"></label>
+      <label>Usuário <input id="qc_user" required placeholder="root"></label>
+      <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
+    </div>
+    <fieldset>
+      <legend>Autenticação</legend>
+      <div class="radios">
+        <label><input type="radio" name="qcAuth" value="agent"> Agente SSH</label>
+        <label><input type="radio" name="qcAuth" value="key"> Chave privada</label>
+        <label><input type="radio" name="qcAuth" value="password"> Senha</label>
+      </div>
+      <div id="qcKeyFields" class="auth-fields" hidden>
+        <label>Caminho da chave <input id="qc_keyPath" placeholder="~/.ssh/id_ed25519"></label>
+        <label>Passphrase (opcional) <input id="qc_passphrase" type="password" autocomplete="new-password"></label>
+      </div>
+      <div id="qcPassFields" class="auth-fields" hidden>
+        <label>Senha <input id="qc_password" type="password" autocomplete="new-password"></label>
+      </div>
+    </fieldset>
+    <label class="check-inline"><input type="checkbox" id="qc_save"> Salvar este host para reusar depois</label>
+  `);
+  const submit = $('#modalForm button[type=submit]');
+  submit.textContent = 'Conectar';
+  const syncQc = () => {
+    const t = (($$('input[name="qcAuth"]').find((r) => r.checked)) || {}).value || 'agent';
+    $('#qcKeyFields').hidden = t !== 'key';
+    $('#qcPassFields').hidden = t !== 'password';
+  };
+  $$('input[name="qcAuth"]').forEach((r) => { r.checked = r.value === 'agent'; r.addEventListener('change', syncQc); });
+  syncQc();
+  setTimeout(() => { try { $('#qc_host').focus(); } catch {} }, 30);
+
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const host = $('#qc_host').value.trim();
+    const username = $('#qc_user').value.trim();
+    if (!host || !username) { toast('Informe host/IP e usuário.', 'erro'); return; }
+    const type = (($$('input[name="qcAuth"]').find((r) => r.checked)) || {}).value || 'agent';
+    const auth = { type };
+    if (type === 'key') {
+      auth.keyPath = $('#qc_keyPath').value.trim();
+      if ($('#qc_passphrase').value) auth.passphrase = $('#qc_passphrase').value;
+    } else if (type === 'password' && $('#qc_password').value) {
+      auth.password = $('#qc_password').value;
+    }
+    const name = $('#qc_name').value.trim();
+    const port = Number($('#qc_port').value) || 22;
+    submit.disabled = true;
+    try {
+      if ($('#qc_save').checked) {
+        // salva como host permanente e abre uma sessão normal
+        const created = await api('/api/hosts', { method: 'POST', body: { name: name || `${username}@${host}`, host, port, username, auth, vars: {} } });
+        closeModal();
+        await loadState();
+        if (created && created.id) openSession(created.id);
+        else toast('Host salvo. Selecione-o na lista para conectar.');
+      } else {
+        const r = await api('/api/quick-connect', { method: 'POST', body: { host, port, username, auth, name } });
+        closeModal();
+        openAdHocSession(r.hostId, r.name);
+      }
+    } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
+  };
 }
 
 function createSession({ hostId, hostName, isLocal }) {
@@ -2070,7 +2148,7 @@ function init() {
   $('#btnRun').addEventListener('click', doRun);
   $('#btnCancel').addEventListener('click', doCancel);
   $('#hostSearch').addEventListener('input', renderHostSidebar);
-  $('#sidebarNewHost').addEventListener('click', () => openHostModal(null));
+  $('#sidebarQuickConnect').addEventListener('click', openQuickConnectModal);
   $('#toggleSidebar').addEventListener('click', () => {
     sidebarCollapsed = !sidebarCollapsed;
     try { localStorage.setItem('vc-sidebar-collapsed', sidebarCollapsed ? '1' : '0'); } catch {}
