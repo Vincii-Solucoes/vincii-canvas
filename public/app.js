@@ -2128,7 +2128,7 @@ function showUpdateBanner(d) {
 
 // tela de carregamento: garante um tempo mínimo em tela para a animação ser
 // vista, mesmo quando os dados chegam instantaneamente
-const SPLASH_MIN_MS = 1100;
+const SPLASH_MIN_MS = 2600;
 const splashStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
 let splashDone = false;
 function hideSplash() {

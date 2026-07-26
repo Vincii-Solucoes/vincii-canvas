@@ -94,8 +94,10 @@ body {
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease, transform .12s ease;
 }
-.tabs button:hover { color: var(--text); }
+.tabs button:hover { color: var(--text); background: color-mix(in srgb, var(--panel2) 55%, transparent); }
+.tabs button:active { transform: scale(.96); }
 .tabs button.active {
   color: var(--text);
   background: var(--panel2);
@@ -108,7 +110,11 @@ body.term-full main { max-width: none; padding: 12px 14px 14px; }
 body.term-full .term-grid { height: calc(100vh - 100px); }
 
 .tab-panel { display: none; }
-.tab-panel.active { display: block; }
+.tab-panel.active { display: block; animation: panelIn .34s cubic-bezier(.2,.8,.2,1) both; }
+/* o Terminal só faz fade (sem deslocamento, para não bagunçar o dimensionamento do xterm) */
+#tab-terminal.active { animation: panelFade .3s ease both; }
+@keyframes panelIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes panelFade { from { opacity: 0; } to { opacity: 1; } }
 
 .card {
   background: var(--panel);
@@ -172,11 +178,15 @@ input[type="text"], input[type="password"], input[type="number"], input:not([typ
   padding: 8px 10px;
   font-size: 14px;
   font-family: inherit;
+  transition: border-color .16s ease, box-shadow .16s ease, background-color .16s ease;
 }
 label.inline input[type="number"] { width: 90px; margin-top: 0; display: inline-block; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 textarea.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
-input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
 
 .field { margin-bottom: 12px; }
 .field-head {
@@ -231,18 +241,20 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   padding: 8px 16px;
   font-size: 14px;
   cursor: pointer;
+  transition: transform .12s ease, box-shadow .18s ease, background-color .18s ease, border-color .18s ease;
 }
-.btn:hover { border-color: var(--muted); }
+.btn:hover { border-color: var(--muted); transform: translateY(-1px); box-shadow: 0 4px 14px var(--shadow); }
+.btn:active { transform: translateY(0) scale(.98); box-shadow: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn.primary:hover { background: #17dcc4; border-color: #17dcc4; }
+.btn.primary:hover { background: #17dcc4; border-color: #17dcc4; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 42%, transparent); }
 .btn.danger { background: #b62324; border-color: #b62324; }
-.btn.danger:hover { background: #d32f2f; }
+.btn.danger:hover { background: #d32f2f; box-shadow: 0 6px 18px color-mix(in srgb, #d32f2f 42%, transparent); }
 .btn.auto { background: #b8860b; border-color: #b8860b; color: #fff; font-weight: 600; }
 .btn.auto:hover { background: #d29922; }
 .btn.small { padding: 4px 10px; font-size: 12.5px; }
 .btn.small.danger { background: none; border-color: var(--border); color: var(--red); }
 .btn.small.danger:hover { border-color: var(--red); }
-.btn:disabled { opacity: 0.55; cursor: default; }
+.btn:disabled { opacity: 0.55; cursor: default; transform: none; box-shadow: none; }
 
 .table-wrap { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; }
@@ -352,7 +364,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   padding: 40px 16px;
   overflow: auto;
 }
-.modal-root.open { display: flex; }
+.modal-root.open { display: flex; animation: backdropIn .22s ease both; }
+@keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
 .modal-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -362,6 +375,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   padding: 20px;
   margin: 0;
 }
+.modal-root.open .modal-card { animation: modalIn .3s cubic-bezier(.2,.85,.25,1) both; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: none; } }
 .modal-card h2 { margin: 0 0 14px; font-size: 16px; }
 .modal-card footer { justify-content: flex-end; margin-top: 6px; }
 
@@ -820,8 +835,10 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   padding: 10px 14px;
   font-size: 13.5px;
   box-shadow: 0 6px 24px var(--shadow);
+  animation: toastIn .32s cubic-bezier(.2,.85,.25,1) both;
 }
 .toast.erro { border-left-color: var(--red); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(24px) scale(.98); } to { opacity: 1; transform: none; } }
 
 /* ---------- alternância de tema (claro/escuro) ---------- */
 .topbar-right { display: flex; align-items: center; gap: 10px; }
@@ -912,3 +929,32 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .badge-ai { background: color-mix(in srgb, var(--accent) 20%, var(--panel)); color: var(--accent-text); }
 .badge-human { background: var(--panel2); color: var(--muted); }
+
+/* ---------- micro-interações e animações da interface ---------- */
+/* cards e itens de lista sobem um tico ao passar o mouse */
+.card { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.card.item:hover, .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px var(--shadow); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
+/* transições suaves em elementos clicáveis das listas */
+.host-item, .term-tab, .hist-row, .check-host, .icon-opt, .color-opt, .theme-toggle {
+  transition: transform .14s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease, color .16s ease;
+}
+.host-item:hover { transform: translateX(2px); }
+.term-tab:hover { transform: translateY(-1px); }
+.hist-row:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); box-shadow: 0 3px 12px var(--shadow); }
+.icon-opt:hover, .color-opt:hover { transform: translateY(-1px); }
+.theme-toggle:hover { transform: rotate(-18deg); border-color: var(--accent); }
+.host-remove:hover, .tab-close:hover, .host-remove:focus { transform: scale(1.18); }
+
+/* botão de IA no terminal com um brilho sutil ao passar o mouse */
+#toggleAiPane { transition: transform .14s ease, box-shadow .18s ease, background-color .16s ease, border-color .16s ease; }
+#toggleAiPane:hover { transform: translateY(-1px); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* respeita quem prefere menos movimento: mantém só fades curtos, sem deslocamentos */
+@media (prefers-reduced-motion: reduce) {
+  .tab-panel.active, #tab-terminal.active, .modal-root.open, .modal-root.open .modal-card,
+  .toast { animation: none; }
+  .btn, .btn:hover, .btn:active, .card.item:hover, .host-item:hover, .term-tab:hover,
+  .icon-opt:hover, .color-opt:hover, .theme-toggle:hover, #toggleAiPane:hover,
+  .host-remove:hover, .tab-close:hover { transform: none; }
+}
