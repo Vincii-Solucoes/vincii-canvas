@@ -2126,6 +2126,26 @@ function showUpdateBanner(d) {
   bar.hidden = false;
 }
 
+// tela de carregamento: garante um tempo mínimo em tela para a animação ser
+// vista, mesmo quando os dados chegam instantaneamente
+const SPLASH_MIN_MS = 1100;
+const splashStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+let splashDone = false;
+function hideSplash() {
+  if (splashDone) return;
+  splashDone = true;
+  const sp = document.getElementById('splash');
+  if (!sp) return;
+  const elapsed = ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - splashStart;
+  const wait = Math.max(0, SPLASH_MIN_MS - elapsed);
+  setTimeout(() => {
+    sp.classList.add('hide');
+    setTimeout(() => { try { sp.remove(); } catch {} }, 650); // após o fade
+  }, wait);
+}
+// rede de segurança: se algo travar o loadState, não deixa a splash presa
+setTimeout(hideSplash, 6000);
+
 function init() {
   initTabs();
   initTheme();
@@ -2184,7 +2204,9 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
   });
-  loadState().catch((e) => toast(e.message, 'erro'));
+  loadState()
+    .catch((e) => toast(e.message, 'erro'))
+    .finally(hideSplash); // some a tela de carregamento quando os dados chegam
   refreshAiVisibility(); // esconde recursos de IA se não houver chave configurada
   checkForUpdate(); // avisa (sem instalar) se houver versão nova no GitHub
   loadLocalInfo(); // login/SO da máquina para o botão "Meu computador"
