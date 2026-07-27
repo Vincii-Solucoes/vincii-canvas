@@ -129,8 +129,11 @@
           <button id="toggleSidebar" class="panel-toggle" type="button" title="Mostrar/ocultar hosts">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9.5" y1="4" x2="9.5" y2="20"/></svg>
           </button>
-          <div id="termTabs" class="term-tabs"></div>
-          <span class="spacer"></span>
+          <div class="term-tabs-wrap">
+            <button id="tabsLeft" class="tabs-arrow" type="button" title="Rolar abas para a esquerda" hidden>‹</button>
+            <div id="termTabs" class="term-tabs"></div>
+            <button id="tabsRight" class="tabs-arrow" type="button" title="Rolar abas para a direita" hidden>›</button>
+          </div>
           <button id="toggleGreet" class="panel-toggle" type="button" title="Mostrar/ocultar saudação">🖖</button>
           <div class="fav-wrap">
             <button id="favBtn" class="panel-toggle" type="button" title="Comandos favoritos">★ Favoritos</button>

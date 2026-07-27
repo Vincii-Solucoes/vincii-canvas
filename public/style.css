@@ -617,11 +617,30 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .term-main { display: flex; flex-direction: column; min-width: 0; }
 .term-main .term-pane { flex: 1; }
 .term-topbar { margin-bottom: 10px; min-height: 34px; display: flex; align-items: center; gap: 8px; }
-.term-topbar .term-tabs { flex: 1; min-width: 0; }
+/* a área de abas ocupa TODO o espaço livre até os botões da direita */
+.term-tabs-wrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.tabs-arrow {
+  flex: 0 0 auto; width: 24px; height: 28px; padding: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer;
+  transition: color .14s ease, border-color .14s ease, background-color .14s ease;
+}
+.tabs-arrow:hover:not(:disabled) { color: var(--accent-text); border-color: var(--accent); }
+.tabs-arrow:disabled { opacity: .35; cursor: default; }
+.tabs-arrow[hidden] { display: none; }
+/* campo de renomear a aba (duplo clique) */
+.tab-rename {
+  width: 110px; min-width: 70px; margin: 0; padding: 1px 5px;
+  font-size: 12.5px; font-family: inherit;
+  border: 1px solid var(--accent); border-radius: 5px;
+  background: var(--bg); color: var(--text);
+}
+.tab-rename:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 .panel-toggle {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--panel); border: 1px solid var(--border); color: var(--muted);
   border-radius: 8px; padding: 6px 10px; font-size: 12.5px; cursor: pointer; flex-shrink: 0;
+  white-space: nowrap; /* não quebrar "★ Favoritos" em duas linhas */
 }
 .panel-toggle svg { width: 16px; height: 16px; }
 .panel-toggle:hover { color: var(--text); border-color: var(--muted); }

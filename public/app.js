@@ -2036,14 +2036,38 @@ function closeSession(id) {
   ensureLocalTerminal(); // fechou a última remota? cai no terminal local
 }
 
+// Rótulo da aba: nome personalizado do usuário, senão o nome do host —
+// com número quando há mais de uma aba do mesmo host (evita "Meu computador"
+// repetido várias vezes sem distinção).
+function tabLabel(s) {
+  if (s.customName) return s.customName;
+  const mesmos = sessions.filter((x) => !x.customName && x.hostName === s.hostName);
+  if (mesmos.length < 2) return s.hostName;
+  return `${s.hostName} ${mesmos.indexOf(s) + 1}`;
+}
+
+// Descrição completa para o tooltip da aba (ajuda a saber "quem é quem")
+function tabTitle(s) {
+  const parts = [tabLabel(s)];
+  if (s.isLocal) parts.push('terminal local desta máquina');
+  else {
+    const h = state.hosts.find((x) => x.id === s.hostId);
+    if (h) parts.push(hostAddrLabel(h));
+    else parts.push('conexão rápida');
+  }
+  parts.push(`status: ${s.status}`);
+  return parts.join(' · ') + '\nDuplo clique para renomear';
+}
+
 function renderTermTabs() {
   const bar = $('#termTabs');
   if (!bar) return;
   bar.innerHTML = '';
   for (const s of sessions) {
     const tab = el(bar, 'div', 'term-tab' + (s.id === activeSessionId ? ' active' : ''));
+    tab.title = tabTitle(s);
     el(tab, 'span', 'tab-dot ' + s.status);
-    el(tab, 'span', 'tab-name', s.hostName);
+    const nameEl = el(tab, 'span', 'tab-name', tabLabel(s));
     if (s.ai && s.ai.agent && s.ai.agent.status === 'running') {
       const ind = el(tab, 'span', 'tab-agent' + (s.ai.agent.needsApproval ? ' warn' : ''));
       ind.title = s.ai.agent.needsApproval ? 'Agente aguardando sua aprovação' : 'Agente de IA em execução';
@@ -2051,8 +2075,103 @@ function renderTermTabs() {
     const x = el(tab, 'span', 'tab-close', '×');
     x.title = 'Fechar conexão';
     tab.addEventListener('click', (e) => { if (e.target !== x) setActiveSession(s.id); });
+    tab.addEventListener('dblclick', (e) => { if (e.target !== x) startTabRename(s, tab, nameEl); });
     x.addEventListener('click', (e) => { e.stopPropagation(); closeSession(s.id); });
   }
+  updateTabsArrows();
+  scrollActiveTabIntoView();
+}
+
+// Renomeia a aba no próprio lugar: troca o texto por um campo de edição.
+// Enter confirma, Esc cancela, campo vazio volta ao nome do host.
+function startTabRename(session, tab, nameEl) {
+  if (tab.querySelector('.tab-rename')) return;
+  const input = document.createElement('input');
+  input.className = 'tab-rename';
+  input.type = 'text';
+  input.value = tabLabel(session);
+  input.maxLength = 40;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save) {
+      const v = input.value.trim();
+      session.customName = v && v !== session.hostName ? v : '';
+    }
+    renderTermTabs();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('dblclick', (e) => e.stopPropagation());
+}
+
+// setas de rolagem: aparecem só quando as abas não cabem na barra
+function updateTabsArrows() {
+  const bar = $('#termTabs');
+  const l = $('#tabsLeft');
+  const r = $('#tabsRight');
+  if (!bar || !l || !r) return;
+  const overflow = bar.scrollWidth > bar.clientWidth + 2;
+  l.hidden = !overflow;
+  r.hidden = !overflow;
+  if (overflow) {
+    l.disabled = bar.scrollLeft <= 1;
+    r.disabled = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1;
+  }
+}
+
+// Mantém a aba ativa visível. Ajusta scrollLeft na mão (a suavização vem do
+// scroll-behavior no CSS — scrollBy com behavior "smooth" nem sempre é aplicado).
+function scrollActiveTabIntoView() {
+  const bar = $('#termTabs');
+  if (!bar) return;
+  const active = bar.querySelector('.term-tab.active');
+  if (!active || bar.scrollWidth <= bar.clientWidth) return;
+  const left = active.offsetLeft;
+  const right = left + active.offsetWidth;
+  const margem = 12;
+  if (left < bar.scrollLeft + margem) bar.scrollLeft = Math.max(0, left - margem);
+  else if (right > bar.scrollLeft + bar.clientWidth - margem) bar.scrollLeft = right - bar.clientWidth + margem;
+}
+
+// Rola as abas para uma posição. Atribuição direta de scrollLeft de propósito:
+// scrollBy/scroll-behavior "smooth" e animações por requestAnimationFrame não
+// são aplicados de forma confiável em todo ambiente (com a aba em segundo plano
+// o rAF nem dispara, e a rolagem simplesmente não aconteceria). Aqui o destino
+// é sempre atingido.
+function scrollTabsTo(target) {
+  const bar = $('#termTabs');
+  if (!bar) return;
+  const max = Math.max(0, bar.scrollWidth - bar.clientWidth);
+  bar.scrollLeft = Math.max(0, Math.min(max, Math.round(target)));
+  updateTabsArrows();
+}
+
+function initTermTabsScroll() {
+  const bar = $('#termTabs');
+  const l = $('#tabsLeft');
+  const r = $('#tabsRight');
+  if (!bar || !l || !r) return;
+  const step = () => Math.max(160, Math.round(bar.clientWidth * 0.7));
+  l.addEventListener('click', () => scrollTabsTo(bar.scrollLeft - step()));
+  r.addEventListener('click', () => scrollTabsTo(bar.scrollLeft + step()));
+  bar.addEventListener('scroll', updateTabsArrows);
+  // roda do mouse sobre as abas rola na horizontal
+  bar.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    bar.scrollLeft += e.deltaY;
+  }, { passive: false });
+  window.addEventListener('resize', updateTabsArrows);
 }
 
 function termSnapshot() {
@@ -2743,6 +2862,7 @@ function init() {
   initFavorites();
   initFavoritesTab();
   initGreeting();
+  initTermTabsScroll();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
