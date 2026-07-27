@@ -684,6 +684,13 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .term-tab .tab-dot.encerrado, .term-tab .tab-dot.erro { background: var(--red); }
 .term-tab .tab-close { color: var(--muted); font-size: 16px; line-height: 1; padding: 0 3px; border-radius: 4px; }
 .term-tab .tab-close:hover { color: var(--text); background: var(--border); }
+/* lápis de renomear: discreto, aparece ao passar o mouse ou na aba ativa */
+.term-tab .tab-edit {
+  color: var(--muted); font-size: 11px; line-height: 1; padding: 2px 3px; border-radius: 4px;
+  opacity: 0; transition: opacity .14s ease, color .14s ease, background-color .14s ease;
+}
+.term-tab:hover .tab-edit, .term-tab.active .tab-edit { opacity: .7; }
+.term-tab .tab-edit:hover { opacity: 1; color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* indicador de agente de IA rodando naquela aba */
 .term-tab .tab-agent { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; animation: tabPulse 1.1s ease-in-out infinite; }
 .term-tab .tab-agent.warn { background: var(--yellow); animation: none; }

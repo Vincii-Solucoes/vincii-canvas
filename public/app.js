@@ -1786,8 +1786,11 @@ function fitActive() {
 }
 
 function focusActive() {
+  // enquanto o usuário renomeia uma aba, o terminal não pode roubar o foco
+  // (o campo de edição perderia o foco e a renomeação seria cancelada)
+  if (renamingId !== null) return;
   const s = activeSession();
-  if (s) setTimeout(() => { try { s.term.focus(); } catch {} }, 30);
+  if (s) setTimeout(() => { if (renamingId !== null) return; try { s.term.focus(); } catch {} }, 30);
 }
 
 // Re-mede a sessão e envia o tamanho atual ao servidor (corrige uma conexão que
@@ -2059,41 +2062,69 @@ function tabTitle(s) {
   return parts.join(' · ') + '\nDuplo clique para renomear';
 }
 
+let renamingId = null;              // sessão com o nome em edição
+let lastTabClick = { id: null, t: 0 }; // detecção própria de duplo clique
+
 function renderTermTabs() {
   const bar = $('#termTabs');
   if (!bar) return;
+  // não recria as abas enquanto o usuário digita o novo nome (perderia o foco)
+  if (renamingId !== null && bar.querySelector('.tab-rename') === document.activeElement) return;
   bar.innerHTML = '';
   for (const s of sessions) {
     const tab = el(bar, 'div', 'term-tab' + (s.id === activeSessionId ? ' active' : ''));
-    tab.title = tabTitle(s);
     el(tab, 'span', 'tab-dot ' + s.status);
-    const nameEl = el(tab, 'span', 'tab-name', tabLabel(s));
-    if (s.ai && s.ai.agent && s.ai.agent.status === 'running') {
-      const ind = el(tab, 'span', 'tab-agent' + (s.ai.agent.needsApproval ? ' warn' : ''));
-      ind.title = s.ai.agent.needsApproval ? 'Agente aguardando sua aprovação' : 'Agente de IA em execução';
+
+    if (s.id === renamingId) {
+      buildRenameInput(tab, s);
+    } else {
+      tab.title = tabTitle(s);
+      el(tab, 'span', 'tab-name', tabLabel(s));
+      if (s.ai && s.ai.agent && s.ai.agent.status === 'running') {
+        const ind = el(tab, 'span', 'tab-agent' + (s.ai.agent.needsApproval ? ' warn' : ''));
+        ind.title = s.ai.agent.needsApproval ? 'Agente aguardando sua aprovação' : 'Agente de IA em execução';
+      }
+      const pen = el(tab, 'span', 'tab-edit', '✎');
+      pen.title = 'Renomear esta aba';
+      pen.addEventListener('click', (e) => { e.stopPropagation(); startTabRename(s.id); });
+      const x = el(tab, 'span', 'tab-close', '×');
+      x.title = 'Fechar conexão';
+      x.addEventListener('click', (e) => { e.stopPropagation(); closeSession(s.id); });
+      // Duplo clique detectado na mão: o 1º clique troca de aba e re-renderiza a
+      // barra, destruindo o elemento — então o evento dblclick nativo nunca
+      // dispararia. Comparando id + tempo, funciona mesmo com o re-render.
+      tab.addEventListener('click', (e) => {
+        if (e.target === x || e.target === pen) return;
+        const agora = Date.now();
+        if (lastTabClick.id === s.id && agora - lastTabClick.t < 450) {
+          lastTabClick = { id: null, t: 0 };
+          startTabRename(s.id);
+          return;
+        }
+        lastTabClick = { id: s.id, t: agora };
+        setActiveSession(s.id);
+      });
     }
-    const x = el(tab, 'span', 'tab-close', '×');
-    x.title = 'Fechar conexão';
-    tab.addEventListener('click', (e) => { if (e.target !== x) setActiveSession(s.id); });
-    tab.addEventListener('dblclick', (e) => { if (e.target !== x) startTabRename(s, tab, nameEl); });
-    x.addEventListener('click', (e) => { e.stopPropagation(); closeSession(s.id); });
   }
   updateTabsArrows();
   scrollActiveTabIntoView();
 }
 
-// Renomeia a aba no próprio lugar: troca o texto por um campo de edição.
-// Enter confirma, Esc cancela, campo vazio volta ao nome do host.
-function startTabRename(session, tab, nameEl) {
-  if (tab.querySelector('.tab-rename')) return;
+function startTabRename(id) {
+  renamingId = id;
+  renderTermTabs();
+  const inp = $('#termTabs .tab-rename');
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+// Campo de edição do nome da aba: Enter salva, Esc cancela, vazio volta ao host.
+function buildRenameInput(tab, session) {
   const input = document.createElement('input');
   input.className = 'tab-rename';
   input.type = 'text';
   input.value = tabLabel(session);
   input.maxLength = 40;
-  nameEl.replaceWith(input);
-  input.focus();
-  input.select();
+  tab.appendChild(input);
   let done = false;
   const finish = (save) => {
     if (done) return;
@@ -2102,6 +2133,7 @@ function startTabRename(session, tab, nameEl) {
       const v = input.value.trim();
       session.customName = v && v !== session.hostName ? v : '';
     }
+    renamingId = null;
     renderTermTabs();
   };
   input.addEventListener('keydown', (e) => {
@@ -2109,9 +2141,17 @@ function startTabRename(session, tab, nameEl) {
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });
-  input.addEventListener('blur', () => finish(true));
+  // blur logo após a criação (foco ainda se acomodando) não cancela a edição
+  const criadoEm = Date.now();
+  input.addEventListener('blur', () => {
+    if (Date.now() - criadoEm < 300 && renamingId === session.id) {
+      try { input.focus(); } catch {}
+      return;
+    }
+    finish(true);
+  });
   input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('dblclick', (e) => e.stopPropagation());
+  input.addEventListener('mousedown', (e) => e.stopPropagation());
 }
 
 // setas de rolagem: aparecem só quando as abas não cabem na barra
