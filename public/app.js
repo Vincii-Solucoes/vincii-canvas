@@ -6,6 +6,61 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 let state = { hosts: [], playbooks: [], profiles: [], favorites: [], globals: {} };
 let currentRun = null;
 
+// ---------- preferências da interface ----------
+// Ficam no data.json (via /api/prefs) porque o app desktop sobe o servidor numa
+// porta diferente a cada abertura — e como o localStorage é por origem, tudo que
+// dependesse só dele se perdia ao reiniciar. O servidor injeta os valores no
+// HTML (window.VC_PREFS), então já chegam prontos, sem esperar requisição.
+// O localStorage segue como espelho (modo web e reaproveitamento imediato).
+const prefs = Object.assign({
+  theme: '', recentHosts: null, greetHidden: null,
+  aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
+}, (typeof window !== 'undefined' && window.VC_PREFS) || {});
+
+const PREF_LS = {
+  theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
+  sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
+  recentHosts: 'vc-recent-hosts',
+};
+
+function lsGet(key) {
+  try { return localStorage.getItem(PREF_LS[key]); } catch { return null; }
+}
+function lsSet(key, valor) {
+  try { localStorage.setItem(PREF_LS[key], valor); } catch {}
+}
+
+// valor efetivo: servidor tem prioridade; localStorage cobre o modo web
+function prefBool(key) {
+  if (typeof prefs[key] === 'boolean') return prefs[key];
+  return lsGet(key) === '1';
+}
+function prefStr(key, dflt) {
+  if (prefs[key]) return prefs[key];
+  return lsGet(key) || dflt;
+}
+function prefList(key) {
+  if (Array.isArray(prefs[key])) return prefs[key];
+  try { const v = JSON.parse(lsGet(key) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+let prefsTimer = null;
+let prefsFila = {};
+// grava no servidor com um pequeno atraso (agrupa mudanças seguidas)
+function prefSet(key, valor) {
+  prefs[key] = valor;
+  if (Array.isArray(valor)) lsSet(key, JSON.stringify(valor));
+  else if (typeof valor === 'boolean') lsSet(key, valor ? '1' : '0');
+  else lsSet(key, String(valor));
+  prefsFila[key] = valor;
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    const corpo = prefsFila;
+    prefsFila = {};
+    api('/api/prefs', { method: 'PUT', body: corpo }).catch(() => {});
+  }, 250);
+}
+
 // ---------- utilidades ----------
 async function api(url, options = {}) {
   const opts = { headers: {}, ...options };
@@ -964,7 +1019,7 @@ function greetingFor(date) {
 }
 
 let greetHidden = false;
-try { greetHidden = localStorage.getItem('vc-greet-hidden') === '1'; } catch {}
+greetHidden = prefBool('greetHidden');
 
 function pickQuote() {
   return NERD_QUOTES[Math.floor(Math.random() * NERD_QUOTES.length)];
@@ -988,7 +1043,7 @@ function updateGreetVisibility() {
 
 function setGreetHidden(v) {
   greetHidden = !!v;
-  try { localStorage.setItem('vc-greet-hidden', greetHidden ? '1' : '0'); } catch {}
+  prefSet('greetHidden', greetHidden);
   updateGreetVisibility();
 }
 
@@ -1673,16 +1728,14 @@ function applyTermAppearance() {
   fitActive();
 }
 
-// ----- hosts recentes (persistidos por máquina no localStorage) -----
+// ----- hosts recentes (guardados no data.json via /api/prefs) -----
 function getRecents() {
-  let ids = [];
-  try { ids = JSON.parse(localStorage.getItem('vc-recent-hosts') || '[]'); } catch {}
-  if (!Array.isArray(ids)) ids = [];
+  const ids = prefList('recentHosts');
   const exist = new Set(state.hosts.map((h) => h.id));
   return ids.filter((id) => exist.has(id)); // remove os que já não existem
 }
 function saveRecents(ids) {
-  try { localStorage.setItem('vc-recent-hosts', JSON.stringify(ids.slice(0, 30))); } catch {}
+  prefSet('recentHosts', ids.slice(0, 30));
 }
 function addRecent(id) {
   const ids = getRecents().filter((x) => x !== id);
@@ -2480,8 +2533,8 @@ let aiEnabled = false;
 let aiCollapsed = false;      // usuário recolheu o painel de IA (lembrado)
 let sidebarCollapsed = false; // usuário recolheu a barra de hosts (lembrado)
 try {
-  aiCollapsed = localStorage.getItem('vc-ai-collapsed') === '1';
-  sidebarCollapsed = localStorage.getItem('vc-sidebar-collapsed') === '1';
+  aiCollapsed = prefBool('aiCollapsed');
+  sidebarCollapsed = prefBool('sidebarCollapsed');
 } catch {}
 
 // aplica sidebar/painel de IA recolhidos ou não — devolve espaço ao terminal
@@ -2819,7 +2872,7 @@ function currentTheme() {
 function setTheme(theme) {
   const t = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = t;
-  try { localStorage.setItem('vc-theme', t); } catch {}
+  prefSet('theme', t);
   // o botão do header mostra o ícone do tema para o qual vai alternar
   const tb = $('#themeToggle');
   if (tb) {
@@ -2845,7 +2898,7 @@ async function checkForUpdate() {
   // de aviso fica só para o Mac e para o modo web.
   if (d.desktop && (d.platform === 'win32' || d.platform === 'linux')) return;
   let dismissed = '';
-  try { dismissed = localStorage.getItem('vc-update-dismissed') || ''; } catch {}
+  dismissed = prefStr('updateDismissed', '');
   if (dismissed === d.latest) return; // usuário já dispensou esta versão
   showUpdateBanner(d);
 }
@@ -2867,7 +2920,7 @@ function showUpdateBanner(d) {
   x.title = 'Dispensar';
   x.addEventListener('click', () => {
     bar.hidden = true;
-    try { localStorage.setItem('vc-update-dismissed', d.latest); } catch {}
+    prefSet('updateDismissed', d.latest);
   });
   bar.hidden = false;
 }
@@ -2921,12 +2974,12 @@ function init() {
   $('#sidebarQuickConnect').addEventListener('click', openQuickConnectModal);
   $('#toggleSidebar').addEventListener('click', () => {
     sidebarCollapsed = !sidebarCollapsed;
-    try { localStorage.setItem('vc-sidebar-collapsed', sidebarCollapsed ? '1' : '0'); } catch {}
+    prefSet('sidebarCollapsed', sidebarCollapsed);
     updateTermLayout();
   });
   $('#toggleAiPane').addEventListener('click', () => {
     aiCollapsed = !aiCollapsed;
-    try { localStorage.setItem('vc-ai-collapsed', aiCollapsed ? '1' : '0'); } catch {}
+    prefSet('aiCollapsed', aiCollapsed);
     updateTermLayout();
   });
   window.addEventListener('resize', () => { if ($('#tab-terminal').classList.contains('active')) fitActive(); });

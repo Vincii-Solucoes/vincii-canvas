@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vincii Canvas</title>
 <link rel="icon" href="/vincii-logo.png">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('vc-theme')||'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+<script>
+/* O servidor injeta aqui as preferências salvas em data.json (no app desktop a
+   porta muda a cada abertura, então o localStorage não serve de memória). */
+window.VC_PREFS = /*__VC_PREFS__*/ null;
+try {
+  var _p = window.VC_PREFS || {};
+  document.documentElement.dataset.theme = _p.theme || localStorage.getItem('vc-theme') || 'light';
+} catch (e) { document.documentElement.dataset.theme = 'light'; }
+</script>
 <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
 <link rel="stylesheet" href="style.css">
 <script src="/vendor/xterm/lib/xterm.js"></script>

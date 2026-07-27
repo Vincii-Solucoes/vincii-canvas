@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const express = require('express');
@@ -64,6 +65,30 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '1mb' }));
+// ---------- preferências da interface ----------
+// No app desktop o servidor sobe numa porta ALEATÓRIA a cada abertura, e o
+// localStorage do navegador é por origem — então tudo que ficasse só no
+// navegador se perderia a cada reinício (recentes, tema, painéis…). Por isso as
+// preferências moram no data.json e são injetadas no HTML já na carga da
+// página, evitando também o "flash" de tema errado.
+function uiPrefs() {
+  const d = store.get();
+  if (!d.settings || typeof d.settings !== 'object' || Array.isArray(d.settings)) d.settings = {};
+  if (!d.settings.ui || typeof d.settings.ui !== 'object' || Array.isArray(d.settings.ui)) d.settings.ui = {};
+  return d.settings.ui;
+}
+
+const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+function serveIndex(req, res) {
+  let html;
+  try { html = fs.readFileSync(INDEX_PATH, 'utf8'); } catch { return fail(res, 500, 'index.html não encontrado.'); }
+  // "<" escapado para o JSON nunca fechar a tag <script> por acidente
+  const json = JSON.stringify(uiPrefs()).replace(/</g, '\\u003c');
+  res.type('html').send(html.replace('/*__VC_PREFS__*/ null', json));
+}
+app.get('/', serveIndex);
+app.get('/index.html', serveIndex);
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Assets do terminal (xterm.js) servidos direto do pacote instalado
@@ -144,6 +169,23 @@ app.get('/api/local-info', (req, res) => {
     ? path.basename(process.env.COMSPEC || 'powershell.exe')
     : path.basename(process.env.SHELL || 'shell');
   res.json({ user, host, shell, platform: process.platform });
+});
+
+app.get('/api/prefs', (req, res) => res.json(uiPrefs()));
+
+app.put('/api/prefs', (req, res) => {
+  const b = req.body || {};
+  const ui = uiPrefs();
+  if (b.theme === 'light' || b.theme === 'dark') ui.theme = b.theme;
+  if (Array.isArray(b.recentHosts)) {
+    ui.recentHosts = b.recentHosts.filter((x) => typeof x === 'string' && x.length < 80).slice(0, 30);
+  }
+  for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
+    if (typeof b[k] === 'boolean') ui[k] = b[k];
+  }
+  if (typeof b.updateDismissed === 'string') ui.updateDismissed = b.updateDismissed.slice(0, 40);
+  store.save();
+  res.json(ui);
 });
 
 // ---------- histórico de comandos ----------
