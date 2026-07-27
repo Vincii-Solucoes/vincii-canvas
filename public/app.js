@@ -1135,17 +1135,13 @@ function renderFavMenu() {
   const addRow = (f) => {
     const row = el(menu, 'div', 'fav-item');
     const body = el(row, 'div', 'fav-body');
-    body.title = 'Inserir no terminal (sem executar)';
+    // O favorito apenas ESCREVE o comando no terminal — quem dá Enter é você.
+    // Assim dá para revisar ou editar (trocar um caminho, um nome de serviço)
+    // antes de executar; nada roda sozinho.
+    body.title = 'Escrever no terminal (você revisa e dá Enter)';
     el(body, 'div', 'fav-label', f.label || f.command);
     if (f.label) el(body, 'code', 'fav-cmd', f.command);
     body.addEventListener('click', () => { insertCommand(f.command, false); closeFavMenu(); });
-    const run = el(row, 'button', 'fav-run', '▶');
-    run.title = 'Executar agora';
-    run.addEventListener('click', (e) => {
-      e.stopPropagation();
-      insertCommand(f.command, true, { source: 'human', origin: 'favorite' });
-      closeFavMenu();
-    });
     const del = el(row, 'button', 'fav-del', '×');
     del.title = 'Remover dos favoritos';
     del.addEventListener('click', async (e) => {
