@@ -31,28 +31,51 @@ const app = express();
 // requisições passam a ser "mesma origem". Por isso validamos Host e Origin.
 const ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
+// A ORIGEM completa (com porta) do próprio app, preenchida quando o servidor
+// começa a escutar. Comparar só o hostname não basta: "localhost" sem porta
+// deixaria qualquer outra página em localhost:<outra porta> — um servidor de
+// desenvolvimento, um Jupyter, um painel local com XSS — abrir o terminal desta
+// máquina pelo WebSocket (que não é coberto por CORS nem pela mesma origem).
+let ALLOWED_ORIGINS = new Set();
+function setAllowedOrigins(port) {
+  ALLOWED_ORIGINS = new Set([
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+    `http://[::1]:${port}`,
+  ]);
+}
+
+// Segredo por processo: vai no HTML servido (que só a própria origem consegue
+// ler) e é exigido no WebSocket. Assim, mesmo que a checagem de origem falhe,
+// uma página de fora não abre um terminal — ela não tem como descobrir o token.
+const SESSION_TOKEN = crypto.randomBytes(32).toString('hex');
+function tokenValido(valor) {
+  const a = Buffer.from(String(valor || ''), 'utf8');
+  const b = Buffer.from(SESSION_TOKEN, 'utf8');
+  if (a.length !== b.length) return false;
+  try { return crypto.timingSafeEqual(a, b); } catch { return false; }
+}
+
 function hostnameOf(value) {
   const s = String(value || '').trim();
-  if (!s) return '';
+  if (!s) return null;
   // remove a porta preservando IPv6 entre colchetes
   const m = s.match(/^(\[[^\]]+\]|[^:]+)(?::\d+)?$/);
-  return m ? m[1].toLowerCase() : '';
+  return m ? m[1].toLowerCase() : null; // não parseável → falha fechando
 }
 
 // Origin ausente = cliente não navegador (curl, app nativo): permitido, pois
-// já roda com os privilégios do usuário. Origin presente PRECISA ser o app.
+// já roda com os privilégios do usuário. Origin presente PRECISA ser este app,
+// com a porta exata — não basta ser "algum localhost".
 function originAllowed(origin) {
   if (!origin) return true;
-  try {
-    const u = new URL(origin);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-    return ALLOWED_HOSTNAMES.has(u.hostname.toLowerCase());
-  } catch { return false; }
+  return ALLOWED_ORIGINS.has(String(origin).trim());
 }
 
 function requestAllowed(req) {
   const host = hostnameOf(req.headers && req.headers.host);
-  if (host && !ALLOWED_HOSTNAMES.has(host)) return false; // DNS rebinding
+  if (host !== null && !ALLOWED_HOSTNAMES.has(host)) return false; // DNS rebinding
+  if (host === null && req.headers && req.headers.host) return false; // Host estranho
   return originAllowed(req.headers && req.headers.origin);
 }
 
@@ -82,9 +105,18 @@ const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
 function serveIndex(req, res) {
   let html;
   try { html = fs.readFileSync(INDEX_PATH, 'utf8'); } catch { return fail(res, 500, 'index.html não encontrado.'); }
-  // "<" escapado para o JSON nunca fechar a tag <script> por acidente
+  // "<" escapado para o JSON nunca fechar a tag <script> por acidente.
+  // A substituição usa FUNÇÃO: como string, o replace interpretaria $&, $` e $'
+  // dentro do JSON e injetaria pedaços do HTML de volta no script.
   const json = JSON.stringify(uiPrefs()).replace(/</g, '\\u003c');
-  res.type('html').send(html.replace('/*__VC_PREFS__*/ null', json));
+  const token = JSON.stringify(SESSION_TOKEN);
+  res.type('html')
+    .set('X-Frame-Options', 'DENY')
+    .set('X-Content-Type-Options', 'nosniff')
+    .set('Referrer-Policy', 'no-referrer')
+    .send(html
+      .replace('/*__VC_PREFS__*/ null', () => json)
+      .replace('/*__VC_TOKEN__*/ ""', () => token));
 }
 app.get('/', serveIndex);
 app.get('/index.html', serveIndex);
@@ -330,7 +362,11 @@ function slug(v) {
 }
 
 // ---------- exportar configuração (.xml) ----------
-app.get('/api/export.xml', (req, res) => {
+// POST de propósito (e não GET): numa navegação GET o navegador não envia
+// Origin, então um site externo conseguiria disparar o download do arquivo COM
+// SEGREDOS na pasta de downloads do usuário. Com POST o Origin vem sempre, e a
+// guarda de origem barra. O front-end já baixa via fetch + Blob.
+app.post('/api/export.xml', (req, res) => {
   const includeSecrets = req.query.secrets === '1' || req.query.secrets === 'true';
   const xml = buildXml(store.get(), { exportedAt: new Date().toISOString(), includeSecrets });
   const fname = includeSecrets ? 'ssh-commander-config-com-segredos.xml' : 'ssh-commander-config.xml';
@@ -365,6 +401,7 @@ app.post('/api/import', (req, res) => {
     playbooks: { added: 0, updated: 0 },
     settings: false,
     skipped: [],
+    rebound: [], // hosts existentes que o arquivo reapontou para outro endereço
   };
 
   // Variáveis globais (merge de chaves)
@@ -405,16 +442,28 @@ app.post('/api/import', (req, res) => {
     const group = String(h.group || '').trim().slice(0, 60);
     const icon = slug(h.icon);
     const color = slug(h.color);
-    const fingerprint = h.fingerprint ? String(h.fingerprint) : null;
+    // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
+    // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
+    // deixaria um arquivo de terceiro apontar o host para outro servidor já
+    // "aprovado", e a senha salva seria entregue a ele sem nenhum alerta.
     const ex = d.hosts.find((x) => x.name === name);
     if (ex) {
-      // preserva segredo existente quando o arquivo não traz um
-      if (type === 'password' && !auth.password && ex.auth && ex.auth.type === 'password' && ex.auth.password) auth.password = ex.auth.password;
-      if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
-      Object.assign(ex, { name, host: hostAddr, port, username, group, icon, color, auth, vars, fingerprint: fingerprint || ex.fingerprint || null });
+      const enderecoMudou = ex.host !== hostAddr || (ex.port || 22) !== port || ex.username !== username;
+      if (enderecoMudou) {
+        // credencial pertence ao endereço para o qual foi guardada
+        delete auth.password;
+        delete auth.passphrase;
+        summary.rebound.push(`${name}: ${ex.username}@${ex.host}:${ex.port || 22} → ${username}@${hostAddr}:${port}`);
+      } else {
+        // mesmo destino: preserva segredo existente quando o arquivo não traz um
+        if (type === 'password' && !auth.password && ex.auth && ex.auth.type === 'password' && ex.auth.password) auth.password = ex.auth.password;
+        if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
+      }
+      Object.assign(ex, { name, host: hostAddr, port, username, group, icon, color, auth, vars });
+      if (enderecoMudou) ex.fingerprint = null; // TOFU aprende de novo, no destino novo
       summary.hosts.updated++;
     } else {
-      d.hosts.push({ id: crypto.randomUUID(), fingerprint, name, host: hostAddr, port, username, group, icon, color, auth, vars });
+      d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, group, icon, color, auth, vars });
       summary.hosts.added++;
     }
   }
@@ -914,7 +963,11 @@ app.post('/api/agent/:id/stop', (req, res) => {
 // Sobe o servidor HTTP; port 0 = porta aleatória livre (usado pelo app desktop)
 function start(port = PORT, host = HOST) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, host, () => resolve(server));
+    const server = app.listen(port, host, () => {
+      // só agora sabemos a porta real (o desktop usa porta 0 = automática)
+      setAllowedOrigins(server.address().port);
+      resolve(server);
+    });
     // Roteia o upgrade de WebSocket por caminho para o WSS certo (um único
     // handler; vários WSS com `path` no mesmo servidor conflitam no handshake).
     server.on('upgrade', (req, socket, head) => {
@@ -925,8 +978,18 @@ function start(port = PORT, host = HOST) {
         socket.destroy();
         return;
       }
-      let pathname;
-      try { pathname = new URL(req.url, 'http://127.0.0.1').pathname; } catch { socket.destroy(); return; }
+      let pathname, params;
+      try {
+        const u = new URL(req.url, 'http://127.0.0.1');
+        pathname = u.pathname;
+        params = u.searchParams;
+      } catch { socket.destroy(); return; }
+      // segunda barreira: sem o token do processo, não abre terminal nenhum
+      if (!tokenValido(params.get('token'))) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
       else if (pathname === '/api/localterminal') localWss.handleUpgrade(req, socket, head, (ws) => localWss.emit('connection', ws, req));
       else socket.destroy();

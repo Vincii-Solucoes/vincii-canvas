@@ -9,6 +9,7 @@
 /* O servidor injeta aqui as preferências salvas em data.json (no app desktop a
    porta muda a cada abertura, então o localStorage não serve de memória). */
 window.VC_PREFS = /*__VC_PREFS__*/ null;
+window.VC_TOKEN = /*__VC_TOKEN__*/ "";
 try {
   var _p = window.VC_PREFS || {};
   document.documentElement.dataset.theme = _p.theme || localStorage.getItem('vc-theme') || 'light';

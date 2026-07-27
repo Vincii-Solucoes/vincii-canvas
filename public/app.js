@@ -1248,7 +1248,7 @@ async function exportXml() {
   const btn = $('#btnExportXml');
   btn.disabled = true;
   try {
-    const res = await fetch('/api/export.xml' + (secrets ? '?secrets=1' : ''));
+    const res = await fetch('/api/export.xml' + (secrets ? '?secrets=1' : ''), { method: 'POST' });
     if (!res.ok) throw new Error(`Erro ${res.status}`);
     const text = await res.text();
     const blob = new Blob([text], { type: 'application/xml' });
@@ -1333,6 +1333,25 @@ async function importFromText(text) {
   const c = parsed.config;
   const counts = `${c.hosts.length} host(s), ${c.playbooks.length} playbook(s), ${c.profiles.length} perfil(is), ${Object.keys(c.globals).length} variável(is) global(is)`;
   const secretsNote = parsed.includesSecrets ? '\n\nO arquivo contém senhas/chave da API — serão importadas.' : '';
+
+  // Avisa quando o arquivo aponta um host JÁ EXISTENTE para outro endereço:
+  // é assim que um arquivo de terceiro tentaria desviar uma conexão sua.
+  const porNome = new Map(state.hosts.map((h) => [h.name, h]));
+  const reaponta = [];
+  for (const h of c.hosts || []) {
+    const ex = porNome.get(String(h.name || '').trim());
+    if (!ex) continue;
+    const novoPorto = Number(h.port) || 22;
+    if (ex.host !== h.host || (ex.port || 22) !== novoPorto || ex.username !== h.username) {
+      reaponta.push(`• ${ex.name}: ${ex.username}@${ex.host}:${ex.port || 22}  →  ${h.username}@${h.host}:${novoPorto}`);
+    }
+  }
+  if (reaponta.length && !confirm(
+    `ATENÇÃO: este arquivo muda o ENDEREÇO de ${reaponta.length} host(s) que você já tem:\n\n${reaponta.join('\n')}\n\n` +
+    'Se você não esperava isso, cancele — um arquivo de origem duvidosa pode estar tentando desviar sua conexão para outro servidor.\n' +
+    'As senhas salvas NÃO serão levadas para o novo endereço, e a identidade do servidor será verificada de novo.\n\nContinuar mesmo assim?'
+  )) return;
+
   if (!confirm(`Importar deste arquivo: ${counts}.\nItens com o mesmo nome serão atualizados; nada é apagado.${secretsNote}\n\nContinuar?`)) return;
   try {
     const r = await api('/api/import', { method: 'POST', body: c });
@@ -2031,9 +2050,12 @@ function connectSession(session) {
   const cols = session.term.cols || 80;
   const rows = session.term.rows || 24;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  // token do processo: o servidor exige no upgrade (ver server.js) para que uma
+  // página de outra origem não consiga abrir um terminal nesta máquina
+  const tk = encodeURIComponent((typeof window !== 'undefined' && window.VC_TOKEN) || '');
   const url = session.isLocal
-    ? `${proto}://${location.host}/api/localterminal?cols=${cols}&rows=${rows}`
-    : `${proto}://${location.host}/api/terminal?hostId=${encodeURIComponent(session.hostId)}&cols=${cols}&rows=${rows}`;
+    ? `${proto}://${location.host}/api/localterminal?cols=${cols}&rows=${rows}&token=${tk}`
+    : `${proto}://${location.host}/api/terminal?hostId=${encodeURIComponent(session.hostId)}&cols=${cols}&rows=${rows}&token=${tk}`;
   session.status = 'conectando';
   const ws = new WebSocket(url);
   session.ws = ws;
