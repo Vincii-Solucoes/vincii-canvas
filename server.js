@@ -362,6 +362,7 @@ app.get('/api/state', (req, res) => {
     hosts: d.hosts.map(publicHost),
     playbooks: d.playbooks,
     profiles: d.profiles,
+    favorites: d.favorites || [],
     globals: d.globals,
   });
 });
@@ -452,6 +453,55 @@ app.delete('/api/playbooks/:id', (req, res) => {
   const idx = d.playbooks.findIndex((p) => p.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Playbook não encontrado.');
   d.playbooks.splice(idx, 1);
+  store.save();
+  res.json({ ok: true });
+});
+
+// ---------- comandos favoritos (globais ou por host) ----------
+function parseFavoriteBody(body, res) {
+  const command = String((body && body.command) || '').trim();
+  if (!command) return fail(res, 400, 'Informe o comando.');
+  if (command.length > 4000) return fail(res, 400, 'Comando longo demais.');
+  const label = String((body && body.label) || '').trim();
+  let hostId = (body && body.hostId) || null;
+  if (hostId) {
+    if (!store.get().hosts.find((h) => h.id === hostId)) return fail(res, 400, 'Host não encontrado.');
+  } else {
+    hostId = null; // favorito global
+  }
+  return { command, label, hostId };
+}
+
+app.post('/api/favorites', (req, res) => {
+  const v = parseFavoriteBody(req.body, res);
+  if (!v) return;
+  const d = store.get();
+  if (!Array.isArray(d.favorites)) d.favorites = [];
+  // evita duplicado exato (mesmo comando no mesmo escopo)
+  const dup = d.favorites.find((f) => f.command === v.command && (f.hostId || null) === v.hostId);
+  if (dup) return fail(res, 400, 'Este comando já está nos favoritos desse escopo.');
+  const fav = { id: crypto.randomUUID(), ...v };
+  d.favorites.push(fav);
+  store.save();
+  res.json(fav);
+});
+
+app.put('/api/favorites/:id', (req, res) => {
+  const d = store.get();
+  const fav = (d.favorites || []).find((f) => f.id === req.params.id);
+  if (!fav) return fail(res, 404, 'Favorito não encontrado.');
+  const v = parseFavoriteBody(req.body, res);
+  if (!v) return;
+  Object.assign(fav, v);
+  store.save();
+  res.json(fav);
+});
+
+app.delete('/api/favorites/:id', (req, res) => {
+  const d = store.get();
+  const idx = (d.favorites || []).findIndex((f) => f.id === req.params.id);
+  if (idx < 0) return fail(res, 404, 'Favorito não encontrado.');
+  d.favorites.splice(idx, 1);
   store.save();
   res.json({ ok: true });
 });

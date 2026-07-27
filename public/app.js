@@ -3,7 +3,7 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-let state = { hosts: [], playbooks: [], profiles: [], globals: {} };
+let state = { hosts: [], playbooks: [], profiles: [], favorites: [], globals: {} };
 let currentRun = null;
 
 // ---------- utilidades ----------
@@ -496,7 +496,7 @@ function fmtHistDate(ts) {
   } catch { return ''; }
 }
 
-const ORIGIN_LABEL = { terminal: 'terminal', assistant: 'assistente', agent: 'agente', batch: 'lote' };
+const ORIGIN_LABEL = { terminal: 'terminal', assistant: 'assistente', agent: 'agente', batch: 'lote', favorite: 'favorito' };
 
 // preenche o seletor de máquinas com base nos hosts + local
 function fillHistHostFilter() {
@@ -560,6 +560,13 @@ function renderHistory() {
     const machine = e.local ? 'Meu computador' : (e.machine || 'host');
     const ipUser = [e.username ? e.username + '@' : '', e.ip || ''].join('');
     meta.textContent = `${fmtHistDate(e.ts)} · ${machine}${ipUser ? ' · ' + ipUser : ''} · ${ORIGIN_LABEL[e.origin] || e.origin}`;
+    const fav = el(row, 'button', 'hist-fav', '☆');
+    fav.title = 'Adicionar aos favoritos';
+    fav.addEventListener('click', () => {
+      // escopo por host só quando o host da entrada ainda existe no cadastro
+      const hostId = e.hostId && favHostName(e.hostId) ? e.hostId : null;
+      openFavoriteModal({ command: e.command, hostId, preferHost: !!hostId });
+    });
     const del = el(row, 'button', 'hist-del', '×');
     del.title = 'Remover esta entrada';
     del.addEventListener('click', async () => {
@@ -616,6 +623,122 @@ function initHistoryControls() {
       toast('Histórico apagado.');
       await loadHistory();
     } catch (e) { toast(e.message, 'erro'); }
+  });
+}
+
+// ---------- comandos favoritos (globais ou por host) ----------
+function favHostName(hostId) {
+  const h = state.hosts.find((x) => x.id === hostId);
+  return h ? h.name : null;
+}
+
+// favoritos visíveis para a sessão ativa: os do host da aba + os globais
+function favsForActiveSession() {
+  const s = activeSession();
+  const hostId = s && !s.isLocal && favHostName(s.hostId) ? s.hostId : null;
+  const ofHost = hostId ? state.favorites.filter((f) => f.hostId === hostId) : [];
+  const globals = state.favorites.filter((f) => !f.hostId);
+  return { ofHost, globals, hostId };
+}
+
+function renderFavMenu() {
+  const menu = $('#favMenu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  const { ofHost, globals, hostId } = favsForActiveSession();
+
+  const addRow = (f) => {
+    const row = el(menu, 'div', 'fav-item');
+    const body = el(row, 'div', 'fav-body');
+    body.title = 'Inserir no terminal (sem executar)';
+    el(body, 'div', 'fav-label', f.label || f.command);
+    if (f.label) el(body, 'code', 'fav-cmd', f.command);
+    body.addEventListener('click', () => { insertCommand(f.command, false); closeFavMenu(); });
+    const run = el(row, 'button', 'fav-run', '▶');
+    run.title = 'Executar agora';
+    run.addEventListener('click', (e) => {
+      e.stopPropagation();
+      insertCommand(f.command, true, { source: 'human', origin: 'favorite' });
+      closeFavMenu();
+    });
+    const del = el(row, 'button', 'fav-del', '×');
+    del.title = 'Remover dos favoritos';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Remover este favorito?')) return;
+      try { await api('/api/favorites/' + f.id, { method: 'DELETE' }); await loadState(); renderFavMenu(); }
+      catch (err) { toast(err.message, 'erro'); }
+    });
+  };
+
+  if (hostId && ofHost.length) {
+    el(menu, 'div', 'fav-group', `★ Deste host (${favHostName(hostId)})`);
+    ofHost.forEach(addRow);
+  }
+  el(menu, 'div', 'fav-group', '🌐 Globais');
+  if (globals.length) globals.forEach(addRow);
+  else el(menu, 'p', 'fav-empty', 'Nenhum favorito global ainda.');
+
+  const add = el(menu, 'button', 'fav-add', '+ Novo favorito');
+  add.addEventListener('click', () => { closeFavMenu(); openFavoriteModal({ hostId }); });
+}
+
+function closeFavMenu() { const m = $('#favMenu'); if (m) m.hidden = true; }
+
+function toggleFavMenu() {
+  const m = $('#favMenu');
+  if (!m) return;
+  if (m.hidden) { renderFavMenu(); m.hidden = false; }
+  else m.hidden = true;
+}
+
+// Modal para criar/editar favorito. ctx: { command?, hostId?, existing? }
+// hostId (se válido) vira a opção "só para este host" do seletor de escopo.
+function openFavoriteModal(ctx = {}) {
+  const hostName = ctx.hostId ? favHostName(ctx.hostId) : null;
+  openModal(ctx.existing ? 'Editar favorito' : 'Adicionar aos favoritos', `
+    <label>Comando
+      <textarea id="fav_cmd" rows="3" class="mono" required></textarea>
+    </label>
+    <label>Rótulo (opcional) <input id="fav_label" placeholder="ex.: Ver uso de disco"></label>
+    <label>Escopo
+      <select id="fav_scope">
+        <option value="">🌐 Global — disponível em todos os hosts</option>
+        ${hostName ? `<option value="${ctx.hostId}">★ Só para ${hostName.replace(/</g, '&lt;')}</option>` : ''}
+      </select>
+    </label>
+    ${hostName ? '' : '<p class="hint">Para criar um favorito de um host específico, abra a aba desse host no terminal (ou favorite pelo histórico de um comando daquele host).</p>'}
+  `);
+  $('#fav_cmd').value = ctx.command || (ctx.existing && ctx.existing.command) || '';
+  $('#fav_label').value = (ctx.existing && ctx.existing.label) || '';
+  if (ctx.existing && ctx.existing.hostId && favHostName(ctx.existing.hostId)) $('#fav_scope').value = ctx.existing.hostId;
+  else if (ctx.preferHost && hostName) $('#fav_scope').value = ctx.hostId;
+  setTimeout(() => { try { ($('#fav_cmd').value ? $('#fav_label') : $('#fav_cmd')).focus(); } catch {} }, 30);
+
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const body = {
+      command: $('#fav_cmd').value.trim(),
+      label: $('#fav_label').value.trim(),
+      hostId: $('#fav_scope').value || null,
+    };
+    if (!body.command) { toast('Informe o comando.', 'erro'); return; }
+    try {
+      if (ctx.existing) await api('/api/favorites/' + ctx.existing.id, { method: 'PUT', body });
+      else await api('/api/favorites', { method: 'POST', body });
+      closeModal();
+      toast('Favorito salvo.');
+      await loadState();
+    } catch (e) { toast(e.message, 'erro'); }
+  };
+}
+
+function initFavorites() {
+  $('#favBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFavMenu(); });
+  // fecha o menu ao clicar fora dele
+  document.addEventListener('click', (e) => {
+    const m = $('#favMenu');
+    if (m && !m.hidden && !m.contains(e.target) && e.target !== $('#favBtn')) closeFavMenu();
   });
 }
 
@@ -1482,14 +1605,15 @@ function termSnapshot() {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
 }
 
-function insertCommand(cmd, run) {
+function insertCommand(cmd, run, opts = {}) {
   const s = activeSession();
   if (!s || !s.ws || s.ws.readyState !== WebSocket.OPEN) {
     toast('Abra uma conexão antes de inserir o comando.', 'erro');
     return;
   }
   s.ws.send(JSON.stringify({ t: 'i', d: cmd + (run ? '\n' : '') }));
-  if (run) logHistory(s, cmd, 'ai', 'assistant'); // comando da IA rodado no terminal
+  // rodou direto → registra; inserido sem rodar, a captura do Enter registra depois
+  if (run) logHistory(s, cmd, opts.source || 'ai', opts.origin || 'assistant');
   focusActive();
 }
 
@@ -2153,6 +2277,7 @@ function init() {
   $('#btnNewPlaybook').addEventListener('click', () => openPlaybookModal(null));
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
   initHistoryControls();
+  initFavorites();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
