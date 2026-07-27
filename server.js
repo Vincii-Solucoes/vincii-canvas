@@ -21,6 +21,48 @@ const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e
 const PORT = Number(process.env.PORT || 3033);
 
 const app = express();
+
+// ---------- proteção contra acesso de páginas externas ----------
+// O app escuta em 127.0.0.1, mas isso NÃO basta: (a) WebSocket não é coberto
+// pela política de mesma origem — qualquer site aberto no navegador poderia
+// abrir ws://localhost:3033/api/localterminal e ganhar um shell na máquina;
+// (b) DNS rebinding faz um domínio do atacante resolver para 127.0.0.1 e as
+// requisições passam a ser "mesma origem". Por isso validamos Host e Origin.
+const ALLOWED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+function hostnameOf(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  // remove a porta preservando IPv6 entre colchetes
+  const m = s.match(/^(\[[^\]]+\]|[^:]+)(?::\d+)?$/);
+  return m ? m[1].toLowerCase() : '';
+}
+
+// Origin ausente = cliente não navegador (curl, app nativo): permitido, pois
+// já roda com os privilégios do usuário. Origin presente PRECISA ser o app.
+function originAllowed(origin) {
+  if (!origin) return true;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return ALLOWED_HOSTNAMES.has(u.hostname.toLowerCase());
+  } catch { return false; }
+}
+
+function requestAllowed(req) {
+  const host = hostnameOf(req.headers && req.headers.host);
+  if (host && !ALLOWED_HOSTNAMES.has(host)) return false; // DNS rebinding
+  return originAllowed(req.headers && req.headers.origin);
+}
+
+app.use((req, res, next) => {
+  if (!requestAllowed(req)) {
+    res.status(403).json({ error: 'Origem não autorizada.' });
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -131,9 +173,10 @@ app.post('/api/quick-connect', (req, res) => {
   const b = req.body || {};
   const host = String(b.host || '').trim();
   const username = String(b.username || '').trim();
+  const protocol = b.protocol === 'telnet' ? 'telnet' : 'ssh';
   if (!host) return fail(res, 400, 'Informe o host ou IP.');
-  if (!username) return fail(res, 400, 'Informe o usuário.');
-  const port = Math.min(65535, Math.max(1, Number(b.port) || 22));
+  if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário.');
+  const port = Math.min(65535, Math.max(1, Number(b.port) || (protocol === 'telnet' ? 23 : 22)));
   const a = b.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
   const auth = { type };
@@ -143,8 +186,8 @@ app.post('/api/quick-connect', (req, res) => {
   } else if (type === 'password') {
     auth.password = String(a.password || '');
   }
-  const name = String(b.name || '').trim() || `${username}@${host}`;
-  const id = quickhosts.add({ name, host, port, username, auth });
+  const name = String(b.name || '').trim() || (username ? `${username}@${host}` : host);
+  const id = quickhosts.add({ name, host, port, username, protocol, auth });
   res.json({ hostId: id, name });
 });
 
@@ -192,6 +235,7 @@ function publicHost(h) {
     host: h.host,
     port: h.port,
     username: h.username,
+    protocol: h.protocol === 'telnet' ? 'telnet' : 'ssh',
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
@@ -212,10 +256,12 @@ function parseHostBody(body, res) {
   if (!name) return fail(res, 400, 'Informe um nome para o host.');
   const hostAddr = String(body.host || '').trim();
   if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
-  const port = Number(body.port || 22);
+  const protocol = body.protocol === 'telnet' ? 'telnet' : 'ssh';
+  const port = Number(body.port || (protocol === 'telnet' ? 23 : 22));
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail(res, 400, 'Porta inválida.');
   const username = String(body.username || '').trim();
-  if (!username) return fail(res, 400, 'Informe o usuário SSH.');
+  // no Telnet o login é feito no próprio terminal do equipamento
+  if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário SSH.');
 
   const a = body.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
@@ -232,7 +278,7 @@ function parseHostBody(body, res) {
   const group = String(body.group || '').trim().slice(0, 60);
   const icon = slug(body.icon);
   const color = slug(body.color);
-  return { name, host: hostAddr, port, username, group, icon, color, auth, vars };
+  return { name, host: hostAddr, port, username, protocol, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -576,6 +622,7 @@ function resolveRequest(body, res) {
   for (const id of ids) {
     const h = d.hosts.find((x) => x.id === id);
     if (!h) return fail(res, 400, 'Host não encontrado: ' + id);
+    if (h.protocol === 'telnet') return fail(res, 400, `"${h.name}" é Telnet — execução em lote exige SSH. Use o terminal interativo para hosts Telnet.`);
     hosts.push(h);
   }
 
@@ -776,6 +823,7 @@ app.post('/api/agent/start', (req, res) => {
   } else {
     host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
+    if (host.protocol === 'telnet') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet.');
   }
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');
@@ -828,6 +876,13 @@ function start(port = PORT, host = HOST) {
     // Roteia o upgrade de WebSocket por caminho para o WSS certo (um único
     // handler; vários WSS com `path` no mesmo servidor conflitam no handshake).
     server.on('upgrade', (req, socket, head) => {
+      // WebSocket não passa pela política de mesma origem: sem esta checagem,
+      // qualquer página aberta no navegador abriria um terminal nesta máquina.
+      if (!requestAllowed(req)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       let pathname;
       try { pathname = new URL(req.url, 'http://127.0.0.1').pathname; } catch { socket.destroy(); return; }
       if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));

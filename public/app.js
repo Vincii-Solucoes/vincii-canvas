@@ -134,6 +134,7 @@ async function loadState() {
   state = await api('/api/state');
   renderHosts();
   renderPlaybooks();
+  renderFavoritesTab();
   renderProfiles();
   renderGlobals();
   renderExecControls();
@@ -180,9 +181,10 @@ function hostCard(h) {
   makeAvatar(card, h, 'avatar-lg');
   const info = el(card, 'div', 'info');
   el(info, 'div', 'hname', h.name);
-  el(info, 'div', 'haddr', `${h.username}@${h.host}:${h.port}`);
+  el(info, 'div', 'haddr', hostAddrLabel(h));
   const meta = el(info, 'div', 'meta');
-  el(meta, 'span', 'tag', authLabel(h.auth));
+  if (h.protocol === 'telnet') el(meta, 'span', 'tag tag-warn', 'TELNET — sem criptografia');
+  else el(meta, 'span', 'tag', authLabel(h.auth));
   const nv = Object.keys(h.vars || {}).length;
   if (nv) el(meta, 'span', 'tag', `${nv} var(s)`);
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
@@ -240,10 +242,17 @@ function openHostModal(existing) {
     <div class="grid2">
       <label>Nome <input id="f_name" required placeholder="ex.: web-01 Cliente A"></label>
       <label>Grupo (opcional) <input id="f_group" list="groupList" placeholder="ex.: Produção"><datalist id="groupList"></datalist></label>
-      <label>Usuário <input id="f_user" required placeholder="root"></label>
+      <label>Protocolo
+        <select id="f_protocol">
+          <option value="ssh">SSH (recomendado)</option>
+          <option value="telnet">Telnet (equipamentos legados)</option>
+        </select>
+      </label>
+      <label>Usuário <input id="f_user" placeholder="root"></label>
       <label>Host / IP <input id="f_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
       <label>Porta <input id="f_port" type="number" min="1" max="65535" value="22"></label>
     </div>
+    <p id="f_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — usuário e senha trafegam em texto claro na rede. Use só em rede de gerência confiável. O login é feito no próprio terminal do equipamento, e execução em lote/agente de IA exigem SSH.</p>
     <fieldset class="appearance-fs">
       <legend>Aparência (ícone e cor)</legend>
       <div class="appearance">
@@ -256,7 +265,7 @@ function openHostModal(existing) {
         </div>
       </div>
     </fieldset>
-    <fieldset>
+    <fieldset id="authFieldset">
       <legend>Autenticação</legend>
       <div class="radios">
         <label><input type="radio" name="authType" value="agent"> Agente SSH</label>
@@ -284,6 +293,18 @@ function openHostModal(existing) {
   $('#f_user').value = existing ? existing.username : '';
   $('#f_host').value = existing ? existing.host : '';
   $('#f_port').value = existing ? existing.port : 22;
+  $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
+  // Telnet: porta padrão 23, autenticação some (login é no equipamento)
+  const syncProtocol = () => {
+    const isTelnet = $('#f_protocol').value === 'telnet';
+    $('#f_telnetNote').hidden = !isTelnet;
+    const authFs = $('#authFieldset');
+    if (authFs) authFs.hidden = isTelnet;
+    const port = $('#f_port');
+    if (!existing && (port.value === '22' || port.value === '23' || !port.value)) port.value = isTelnet ? 23 : 22;
+  };
+  $('#f_protocol').addEventListener('change', syncProtocol);
+  syncProtocol();
   $('#f_keyPath').value = (existing && existing.auth.keyPath) || '';
   $('#f_vars').value = varsToText(existing && existing.vars);
   const type = (existing && existing.auth.type) || 'agent';
@@ -369,6 +390,7 @@ function openHostModal(existing) {
       host: $('#f_host').value.trim(),
       port: Number($('#f_port').value),
       username: $('#f_user').value.trim(),
+      protocol: $('#f_protocol').value,
       vars,
       auth: { type: authType },
     };
@@ -626,6 +648,147 @@ function initHistoryControls() {
   });
 }
 
+// ---------- saudação nerd (barra no topo do terminal) ----------
+// Frases de ficção científica/cultura nerd, em pt-BR, para dar as boas-vindas.
+const NERD_QUOTES = [
+  { icon: '🚀', text: 'Não entre em pânico. E leve sempre uma toalha.', src: 'O Guia do Mochileiro das Galáxias' },
+  { icon: '🐬', text: 'Até mais, e obrigado pelos peixes!', src: 'O Guia do Mochileiro das Galáxias' },
+  { icon: '🔢', text: 'A resposta para a vida, o universo e tudo mais é 42. A pergunta, ninguém sabe.', src: 'O Guia do Mochileiro das Galáxias' },
+  { icon: '🤖', text: '"Aqui estou eu, com um cérebro do tamanho de um planeta, e me pedem para reiniciar um serviço."', src: 'Marvin, o Andróide Paranoide' },
+  { icon: '⚔️', text: 'Que a Força esteja com você — e com seus backups.', src: 'Star Wars' },
+  { icon: '🌌', text: 'Faça ou não faça. Tentativa não há.', src: 'Mestre Yoda' },
+  { icon: '🛸', text: 'Eu tenho um mau pressentimento sobre isso.', src: 'Star Wars' },
+  { icon: '🖖', text: 'Vida longa e próspera.', src: 'Star Trek' },
+  { icon: '🚨', text: 'As necessidades de muitos superam as necessidades de poucos.', src: 'Spock, Star Trek' },
+  { icon: '🕶️', text: 'Não tente entortar a colher. Isso é impossível. Em vez disso, tente perceber a verdade: não há colher.', src: 'Matrix' },
+  { icon: '💊', text: 'Infelizmente, ninguém pode ser informado sobre o que é a Matrix. Você tem que ver com seus próprios olhos.', src: 'Matrix' },
+  { icon: '🦖', text: 'A vida encontra um caminho. O uptime, às vezes, não.', src: 'Jurassic Park' },
+  { icon: '💍', text: 'Um servidor para a todos governar.', src: 'O Senhor dos Anéis' },
+  { icon: '🧙', text: 'Você não vai passar! (disse o firewall)', src: 'Gandalf' },
+  { icon: '⏳', text: 'Tudo o que temos de decidir é o que fazer com o tempo que nos é dado.', src: 'Gandalf' },
+  { icon: '🔭', text: 'O espaço é grande. Muito grande. Você simplesmente não vai acreditar em quão vasto ele é.', src: 'O Guia do Mochileiro das Galáxias' },
+  { icon: '🤠', text: 'Ao infinito e além!', src: 'Toy Story' },
+  { icon: '🎬', text: 'Estrada? Para onde vamos, não precisamos de estradas.', src: 'De Volta para o Futuro' },
+  { icon: '⚡', text: '1.21 gigawatts?! Grande Escoto!', src: 'De Volta para o Futuro' },
+  { icon: '🐉', text: 'Um mago nunca se atrasa. Chega precisamente quando pretende.', src: 'O Senhor dos Anéis' },
+  { icon: '🎩', text: 'É perigoso sair sozinho! Leve isto.', src: 'The Legend of Zelda' },
+  { icon: '👾', text: 'A princesa está em outro castelo.', src: 'Super Mario Bros.' },
+  { icon: '🧬', text: 'Resistir é fútil. (mas fazer rollback, não)', src: 'Borg, Star Trek' },
+  { icon: '🛰️', text: 'Houston, tivemos um problema. (mas os logs vão dizer qual)', src: 'Apollo 13' },
+  { icon: '🤖', text: 'Eu voltarei. — provavelmente no próximo deploy.', src: 'O Exterminador do Futuro' },
+  { icon: '🌀', text: 'Resposta 42, pergunta desconhecida. Assim como aquele bug em produção.', src: 'O Guia do Mochileiro das Galáxias' },
+  { icon: '🔧', text: 'Já tentou desligar e ligar de novo?', src: 'The IT Crowd' },
+  { icon: '📞', text: 'Alô, TI? Está pegando fogo, cara!', src: 'The IT Crowd' },
+  { icon: '🧠', text: 'A lógica é o começo da sabedoria, não o fim.', src: 'Spock, Star Trek' },
+  { icon: '🎲', text: 'Nunca me diga as probabilidades!', src: 'Han Solo, Star Wars' },
+  { icon: '🌟', text: 'Eu sou o seu pai... do processo init.', src: 'Star Wars' },
+  { icon: '🛡️', text: 'Este é o caminho.', src: 'The Mandalorian' },
+  { icon: '🔮', text: 'Difícil de ver. Sempre em movimento está o futuro — e o cronograma.', src: 'Mestre Yoda' },
+  { icon: '💾', text: 'Tenha calma e faça backup.', src: 'Sabedoria ancestral de sysadmin' },
+  { icon: '🦸', text: 'Com grandes poderes de root vêm grandes responsabilidades.', src: 'Homem-Aranha (adaptado)' },
+];
+
+function greetingFor(date) {
+  const h = date.getHours();
+  if (h < 5) return 'Boa madrugada';
+  if (h < 12) return 'Bom dia';
+  if (h < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+let greetHidden = false;
+try { greetHidden = localStorage.getItem('vc-greet-hidden') === '1'; } catch {}
+
+function pickQuote() {
+  return NERD_QUOTES[Math.floor(Math.random() * NERD_QUOTES.length)];
+}
+
+function renderGreeting(q) {
+  const quote = q || pickQuote();
+  const name = (localInfo && localInfo.user) ? localInfo.user : '';
+  $('#greetIcon').textContent = quote.icon;
+  $('#greetHello').textContent = `${greetingFor(new Date())}${name ? ', ' + name : ''}!`;
+  $('#greetQuote').textContent = `“${quote.text}” — ${quote.src}`;
+}
+
+function updateGreetVisibility() {
+  const bar = $('#greetBar');
+  if (bar) bar.hidden = greetHidden;
+  const btn = $('#toggleGreet');
+  if (btn) btn.classList.toggle('active', !greetHidden);
+  if ($('#tab-terminal') && $('#tab-terminal').classList.contains('active')) setTimeout(fitActive, 40);
+}
+
+function setGreetHidden(v) {
+  greetHidden = !!v;
+  try { localStorage.setItem('vc-greet-hidden', greetHidden ? '1' : '0'); } catch {}
+  updateGreetVisibility();
+}
+
+function initGreeting() {
+  renderGreeting();
+  updateGreetVisibility();
+  $('#greetShuffle').addEventListener('click', () => renderGreeting());
+  $('#greetHide').addEventListener('click', () => setGreetHidden(true));
+  $('#toggleGreet').addEventListener('click', () => setGreetHidden(!greetHidden));
+}
+
+// ---------- aba Favoritos (edição completa) ----------
+const favTab = { scope: '', q: '' };
+
+function renderFavoritesTab() {
+  const wrap = $('#favoritesList');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const q = favTab.q.toLowerCase();
+  let list = state.favorites.slice();
+  if (favTab.scope === 'global') list = list.filter((f) => !f.hostId);
+  else if (favTab.scope === 'host') list = list.filter((f) => f.hostId);
+  if (q) list = list.filter((f) => (f.command + ' ' + (f.label || '')).toLowerCase().includes(q));
+
+  if (!list.length) {
+    el(wrap, 'p', 'empty', state.favorites.length
+      ? 'Nenhum favorito encontrado com esse filtro.'
+      : 'Nenhum favorito ainda. Crie um aqui, ou favorite um comando pelo ☆ no Histórico.');
+    return;
+  }
+  for (const f of list) {
+    const card = el(wrap, 'div', 'card item fav-card');
+    const head = el(card, 'div', 'item-head');
+    el(head, 'strong', null, f.label || f.command);
+    const scope = el(head, 'span', 'tag ' + (f.hostId ? 'tag-host' : 'tag-global'));
+    const hn = f.hostId ? favHostName(f.hostId) : null;
+    scope.textContent = f.hostId ? (hn ? `★ ${hn}` : '★ host removido') : '🌐 Global';
+    const pre = el(card, 'pre', 'console small-console');
+    pre.textContent = f.command;
+    const actions = el(card, 'div', 'actions');
+    const edit = el(actions, 'button', 'btn small', 'Editar');
+    edit.addEventListener('click', () => openFavoriteModal({ existing: f, hostId: f.hostId }));
+    const dup = el(actions, 'button', 'btn small', 'Duplicar');
+    dup.addEventListener('click', () => openFavoriteModal({ command: f.command, label: f.label ? f.label + ' (cópia)' : '', hostId: f.hostId }));
+    const del = el(actions, 'button', 'btn small danger', 'Excluir');
+    del.addEventListener('click', async () => {
+      if (!confirm(`Excluir o favorito "${f.label || f.command}"?`)) return;
+      try { await api('/api/favorites/' + f.id, { method: 'DELETE' }); toast('Favorito excluído.'); await loadState(); }
+      catch (e) { toast(e.message, 'erro'); }
+    });
+  }
+}
+
+function initFavoritesTab() {
+  $$('#favScopeSeg button').forEach((b) => b.addEventListener('click', () => {
+    $$('#favScopeSeg button').forEach((x) => x.classList.toggle('active', x === b));
+    favTab.scope = b.dataset.scope || '';
+    renderFavoritesTab();
+  }));
+  $('#favSearch').addEventListener('input', (e) => { favTab.q = e.target.value.trim(); renderFavoritesTab(); });
+  $('#btnNewFavorite').addEventListener('click', () => {
+    const s = activeSession();
+    const hostId = s && !s.isLocal && favHostName(s.hostId) ? s.hostId : null;
+    openFavoriteModal({ hostId });
+  });
+}
+
 // ---------- comandos favoritos (globais ou por host) ----------
 function favHostName(hostId) {
   const h = state.hosts.find((x) => x.id === hostId);
@@ -692,27 +855,34 @@ function toggleFavMenu() {
   else m.hidden = true;
 }
 
-// Modal para criar/editar favorito. ctx: { command?, hostId?, existing? }
-// hostId (se válido) vira a opção "só para este host" do seletor de escopo.
+// Modal para criar/editar favorito. ctx: { command?, label?, hostId?, existing? }
 function openFavoriteModal(ctx = {}) {
-  const hostName = ctx.hostId ? favHostName(ctx.hostId) : null;
   openModal(ctx.existing ? 'Editar favorito' : 'Adicionar aos favoritos', `
     <label>Comando
-      <textarea id="fav_cmd" rows="3" class="mono" required></textarea>
+      <textarea id="fav_cmd" rows="3" class="mono" required placeholder="ex.: df -h"></textarea>
     </label>
     <label>Rótulo (opcional) <input id="fav_label" placeholder="ex.: Ver uso de disco"></label>
     <label>Escopo
-      <select id="fav_scope">
-        <option value="">🌐 Global — disponível em todos os hosts</option>
-        ${hostName ? `<option value="${ctx.hostId}">★ Só para ${hostName.replace(/</g, '&lt;')}</option>` : ''}
-      </select>
+      <select id="fav_scope"></select>
     </label>
-    ${hostName ? '' : '<p class="hint">Para criar um favorito de um host específico, abra a aba desse host no terminal (ou favorite pelo histórico de um comando daquele host).</p>'}
+    <p class="hint">Global aparece em todos os hosts. De host, só na aba daquele host.</p>
   `);
+  // opções montadas via DOM (nome de host é texto do usuário — nada de HTML)
+  const sel = $('#fav_scope');
+  const optGlobal = document.createElement('option');
+  optGlobal.value = '';
+  optGlobal.textContent = '🌐 Global — em todos os hosts';
+  sel.appendChild(optGlobal);
+  for (const h of state.hosts) {
+    const o = document.createElement('option');
+    o.value = h.id;
+    o.textContent = `★ Só para ${h.name}`;
+    sel.appendChild(o);
+  }
   $('#fav_cmd').value = ctx.command || (ctx.existing && ctx.existing.command) || '';
-  $('#fav_label').value = (ctx.existing && ctx.existing.label) || '';
-  if (ctx.existing && ctx.existing.hostId && favHostName(ctx.existing.hostId)) $('#fav_scope').value = ctx.existing.hostId;
-  else if (ctx.preferHost && hostName) $('#fav_scope').value = ctx.hostId;
+  $('#fav_label').value = ctx.label || (ctx.existing && ctx.existing.label) || '';
+  const wantHost = (ctx.existing && ctx.existing.hostId) || ctx.hostId || '';
+  if (wantHost && favHostName(wantHost)) sel.value = wantHost;
   setTimeout(() => { try { ($('#fav_cmd').value ? $('#fav_label') : $('#fav_cmd')).focus(); } catch {} }, 30);
 
   $('#modalForm').onsubmit = async (ev) => {
@@ -1217,7 +1387,7 @@ let localDismissed = false;  // usuário fechou o terminal local; não reabrir s
 let localInfo = null;        // { user, host, shell, platform } da própria máquina
 
 async function loadLocalInfo() {
-  try { localInfo = await api('/api/local-info'); renderHostSidebar(); } catch {}
+  try { localInfo = await api('/api/local-info'); renderHostSidebar(); renderGreeting(); } catch {}
 }
 
 const DEFAULT_TERM_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
@@ -1256,6 +1426,11 @@ function removeRecent(id) {
   saveRecents(getRecents().filter((x) => x !== id));
 }
 
+// endereço legível do host (Telnet não tem usuário no login)
+function hostAddrLabel(h) {
+  return h.protocol === 'telnet' ? `telnet://${h.host}:${h.port}` : `${h.username}@${h.host}:${h.port}`;
+}
+
 function renderHostSidebar() {
   const list = $('#hostSidebarList');
   if (!list) return;
@@ -1271,8 +1446,10 @@ function renderHostSidebar() {
     const item = el(list, 'div', cls);
     makeAvatar(item, h);
     const info = el(item, 'div', 'info');
-    el(info, 'div', 'hname', h.name);
-    el(info, 'div', 'haddr', `${h.username}@${h.host}:${h.port}`);
+    const nameRow = el(info, 'div', 'hname');
+    el(nameRow, 'span', null, h.name);
+    if (h.protocol === 'telnet') el(nameRow, 'span', 'proto-badge', 'TELNET');
+    el(info, 'div', 'haddr', hostAddrLabel(h));
     if (nConn > 1) el(item, 'span', 'conn-count', String(nConn));
     el(item, 'span', 'dot');
     item.title = 'Clique para abrir uma nova conexão';
@@ -1390,12 +1567,19 @@ function openQuickConnectModal() {
   openModal('Conexão rápida', `
     <p class="hint">Conecte-se a um servidor avulso sem cadastrá-lo. A conexão é temporária (não fica salva), mas os comandos entram normalmente no <strong>Histórico</strong>.</p>
     <div class="grid2">
+      <label>Protocolo
+        <select id="qc_protocol">
+          <option value="ssh">SSH (recomendado)</option>
+          <option value="telnet">Telnet (equipamentos legados)</option>
+        </select>
+      </label>
       <label>Host / IP <input id="qc_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
       <label>Porta <input id="qc_port" type="number" min="1" max="65535" value="22"></label>
-      <label>Usuário <input id="qc_user" required placeholder="root"></label>
+      <label>Usuário <input id="qc_user" placeholder="root"></label>
       <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
     </div>
-    <fieldset>
+    <p id="qc_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — a senha trafega em texto claro. O login é feito no próprio terminal do equipamento.</p>
+    <fieldset id="qcAuthFs">
       <legend>Autenticação</legend>
       <div class="radios">
         <label><input type="radio" name="qcAuth" value="agent"> Agente SSH</label>
@@ -1421,13 +1605,24 @@ function openQuickConnectModal() {
   };
   $$('input[name="qcAuth"]').forEach((r) => { r.checked = r.value === 'agent'; r.addEventListener('change', syncQc); });
   syncQc();
+  const syncQcProto = () => {
+    const isTelnet = $('#qc_protocol').value === 'telnet';
+    $('#qc_telnetNote').hidden = !isTelnet;
+    $('#qcAuthFs').hidden = isTelnet;
+    const p = $('#qc_port');
+    if (p.value === '22' || p.value === '23' || !p.value) p.value = isTelnet ? 23 : 22;
+  };
+  $('#qc_protocol').addEventListener('change', syncQcProto);
+  syncQcProto();
   setTimeout(() => { try { $('#qc_host').focus(); } catch {} }, 30);
 
   $('#modalForm').onsubmit = async (ev) => {
     ev.preventDefault();
     const host = $('#qc_host').value.trim();
     const username = $('#qc_user').value.trim();
-    if (!host || !username) { toast('Informe host/IP e usuário.', 'erro'); return; }
+    const protocol = $('#qc_protocol').value;
+    if (!host) { toast('Informe host/IP.', 'erro'); return; }
+    if (!username && protocol === 'ssh') { toast('Informe o usuário.', 'erro'); return; }
     const type = (($$('input[name="qcAuth"]').find((r) => r.checked)) || {}).value || 'agent';
     const auth = { type };
     if (type === 'key') {
@@ -1437,18 +1632,19 @@ function openQuickConnectModal() {
       auth.password = $('#qc_password').value;
     }
     const name = $('#qc_name').value.trim();
-    const port = Number($('#qc_port').value) || 22;
+    const port = Number($('#qc_port').value) || (protocol === 'telnet' ? 23 : 22);
+    const fallbackName = username ? `${username}@${host}` : host;
     submit.disabled = true;
     try {
       if ($('#qc_save').checked) {
         // salva como host permanente e abre uma sessão normal
-        const created = await api('/api/hosts', { method: 'POST', body: { name: name || `${username}@${host}`, host, port, username, auth, vars: {} } });
+        const created = await api('/api/hosts', { method: 'POST', body: { name: name || fallbackName, host, port, username, protocol, auth, vars: {} } });
         closeModal();
         await loadState();
         if (created && created.id) openSession(created.id);
         else toast('Host salvo. Selecione-o na lista para conectar.');
       } else {
-        const r = await api('/api/quick-connect', { method: 'POST', body: { host, port, username, auth, name } });
+        const r = await api('/api/quick-connect', { method: 'POST', body: { host, port, username, protocol, auth, name } });
         closeModal();
         openAdHocSession(r.hostId, r.name);
       }
@@ -2278,6 +2474,8 @@ function init() {
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
   initHistoryControls();
   initFavorites();
+  initFavoritesTab();
+  initGreeting();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);

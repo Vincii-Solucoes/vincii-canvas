@@ -616,7 +616,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 
 .term-main { display: flex; flex-direction: column; min-width: 0; }
 .term-main .term-pane { flex: 1; }
-.term-topbar { margin-bottom: 10px; min-height: 34px; display: flex; align-items: flex-start; gap: 8px; }
+.term-topbar { margin-bottom: 10px; min-height: 34px; display: flex; align-items: center; gap: 8px; }
 .term-topbar .term-tabs { flex: 1; min-width: 0; }
 .panel-toggle {
   display: inline-flex; align-items: center; gap: 6px;
@@ -626,7 +626,22 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .panel-toggle svg { width: 16px; height: 16px; }
 .panel-toggle:hover { color: var(--text); border-color: var(--muted); }
 .panel-toggle.active { color: var(--accent-text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
-.term-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+/* abas do terminal: uma única linha que rola na horizontal — com wrap elas
+   empurravam o terminal para baixo e pareciam "encavaladas" */
+.term-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.term-tabs::-webkit-scrollbar { height: 6px; }
+.term-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.term-tabs::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 .term-tab {
   display: flex;
   align-items: center;
@@ -637,7 +652,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   border-radius: 8px;
   cursor: pointer;
   font-size: 12.5px;
-  max-width: 220px;
+  max-width: 200px;
+  min-width: 108px;
+  flex: 0 0 auto;
 }
 .term-tab:hover { border-color: var(--muted); }
 .term-tab.active { border-color: var(--accent); background: var(--panel2); }
@@ -929,6 +946,51 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .badge-ai { background: color-mix(in srgb, var(--accent) 20%, var(--panel)); color: var(--accent-text); }
 .badge-human { background: var(--panel2); color: var(--muted); }
+
+/* ---------- saudação nerd (topo do terminal) ---------- */
+.greet-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 10px;
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--accent) 12%, var(--panel)),
+    var(--panel) 62%);
+  animation: greetIn .45s cubic-bezier(.2,.85,.25,1) both;
+}
+.greet-bar[hidden] { display: none; }
+@keyframes greetIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.greet-icon { font-size: 20px; line-height: 1; flex: 0 0 auto; }
+.greet-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.greet-hello { font-weight: 700; font-size: 13.5px; color: var(--text); white-space: nowrap; }
+.greet-quote { font-size: 12.5px; color: var(--muted); font-style: italic; min-width: 0; }
+.greet-btn {
+  flex: 0 0 auto; background: none; border: none; color: var(--muted);
+  font-size: 15px; line-height: 1; cursor: pointer; padding: 4px 7px; border-radius: 6px;
+  transition: color .14s ease, background-color .14s ease, transform .2s ease;
+}
+.greet-btn:hover { color: var(--accent-text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#greetShuffle:hover { transform: rotate(180deg); }
+
+/* ---------- selos de protocolo / escopo ---------- */
+.proto-badge {
+  margin-left: 6px; font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 5px; border-radius: 4px; vertical-align: middle;
+  background: color-mix(in srgb, var(--yellow) 22%, var(--panel)); color: var(--yellow);
+}
+.tag-warn { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: var(--yellow); }
+.tag-global { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--accent-text); }
+.tag-host { background: color-mix(in srgb, var(--yellow) 16%, var(--panel)); color: var(--yellow); }
+.warn-hint {
+  border-left: 3px solid var(--yellow); padding: 8px 10px; border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--yellow) 9%, transparent);
+}
+.host-item .hname { display: flex; align-items: center; gap: 2px; }
+
+/* ---------- aba Favoritos ---------- */
+.fav-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }
+.fav-card .item-head { display: flex; align-items: center; gap: 10px; }
+.fav-card .small-console { margin: 8px 0; }
 
 /* ---------- comandos favoritos ---------- */
 .fav-wrap { position: relative; }

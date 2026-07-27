@@ -40,6 +40,7 @@
       <button data-tab="exec">Executar</button>
       <button data-tab="hosts">Hosts</button>
       <button data-tab="playbooks">Playbooks</button>
+      <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
       <button data-tab="vars">Variáveis</button>
       <button data-tab="config">Configurações</button>
@@ -115,12 +116,22 @@
         <div id="hostSidebarList" class="host-sidebar-list"></div>
       </aside>
       <div class="term-main">
+        <div id="greetBar" class="greet-bar" hidden>
+          <span id="greetIcon" class="greet-icon">🖖</span>
+          <div class="greet-text">
+            <span id="greetHello" class="greet-hello"></span>
+            <span id="greetQuote" class="greet-quote"></span>
+          </div>
+          <button id="greetShuffle" class="greet-btn" type="button" title="Outra frase">⟳</button>
+          <button id="greetHide" class="greet-btn" type="button" title="Ocultar saudação">×</button>
+        </div>
         <div class="term-topbar">
           <button id="toggleSidebar" class="panel-toggle" type="button" title="Mostrar/ocultar hosts">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9.5" y1="4" x2="9.5" y2="20"/></svg>
           </button>
           <div id="termTabs" class="term-tabs"></div>
           <span class="spacer"></span>
+          <button id="toggleGreet" class="panel-toggle" type="button" title="Mostrar/ocultar saudação">🖖</button>
           <div class="fav-wrap">
             <button id="favBtn" class="panel-toggle" type="button" title="Comandos favoritos">★ Favoritos</button>
             <div id="favMenu" class="fav-menu" hidden></div>
@@ -187,6 +198,25 @@
         </div>
       </div>
       <div id="playbooksList" class="items"></div>
+    </div>
+  </section>
+
+  <section id="tab-favorites" class="tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Comandos favoritos</h2>
+        <button id="btnNewFavorite" class="btn primary">Novo favorito</button>
+      </div>
+      <p class="hint">Comandos que você usa sempre, prontos no terminal pelo botão <strong>★ Favoritos</strong>. Um favorito <strong>global</strong> aparece em qualquer host; um favorito <strong>de host</strong> só aparece na aba daquele host.</p>
+      <div class="fav-toolbar">
+        <div class="hist-seges" id="favScopeSeg" role="group" aria-label="Filtrar por escopo">
+          <button data-scope="" class="active">Todos</button>
+          <button data-scope="global">🌐 Globais</button>
+          <button data-scope="host">★ De host</button>
+        </div>
+        <input id="favSearch" type="text" class="hist-search" placeholder="Buscar comando ou rótulo…" autocomplete="off">
+      </div>
+      <div id="favoritesList" class="items"></div>
     </div>
   </section>
 
