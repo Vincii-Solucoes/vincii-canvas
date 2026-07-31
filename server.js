@@ -239,6 +239,7 @@ function limpaFileSessions() {
 }
 
 function ladoDe(body, res) {
+  limpaFileSessions(); // recicla sessões vencidas em toda operação, não só ao abrir
   const lado = (body && body.side) || 'local';
   if (lado === 'local') return files.local;
   const s = fileSessions.get(String((body && body.sessionId) || ''));
@@ -263,6 +264,7 @@ app.post('/api/files/open', async (req, res) => {
       sessionId: id,
       protocol: client.tipo,
       secure: !!client.seguro,
+      certVerificado: client.certificadoVerificado !== false,
       path: client.home(),
       hostName: host.name,
     });
@@ -556,6 +558,8 @@ app.post('/api/import', (req, res) => {
     playbooks: { added: 0, updated: 0 },
     settings: false,
     skipped: [],
+    favorites: { added: 0, updated: 0 },
+    prefs: false,
     rebound: [], // hosts existentes que o arquivo reapontou para outro endereço
   };
 
@@ -582,8 +586,11 @@ app.post('/api/import', (req, res) => {
     const name = String((h && h.name) || '').trim();
     const hostAddr = String((h && h.host) || '').trim();
     const username = String((h && h.username) || '').trim();
-    if (!name || !hostAddr || !username) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
-    let port = Number(h.port) || 22;
+    const proto = ['telnet', 'ftp'].includes(h && h.protocol) ? h.protocol : 'ssh';
+    // Telnet e FTP podem legitimamente não ter usuário (login no equipamento):
+    // exigir usuário aqui fazia esses hosts sumirem na restauração.
+    if (!name || !hostAddr || (!username && proto === 'ssh')) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
+    let port = Number(h.port) || ({ telnet: 23, ftp: 21 }[h.protocol] || 22);
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = 22;
     const a = h.auth || {};
     const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
@@ -594,6 +601,8 @@ app.post('/api/import', (req, res) => {
     }
     if (type === 'password' && a.password) auth.password = String(a.password);
     const vars = cleanVarsLenient(h.vars);
+    const protocol = ['telnet', 'ftp'].includes(h.protocol) ? h.protocol : 'ssh';
+    const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
     const group = String(h.group || '').trim().slice(0, 60);
     const icon = slug(h.icon);
     const color = slug(h.color);
@@ -601,7 +610,17 @@ app.post('/api/import', (req, res) => {
     // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
     // deixaria um arquivo de terceiro apontar o host para outro servidor já
     // "aprovado", e a senha salva seria entregue a ele sem nenhum alerta.
-    const ex = d.hosts.find((x) => x.name === name);
+    // Casa por NOME + ENDEREÇO. Só por nome, dois hosts homônimos (comuns em
+    // parques com "Firewall" por filial) colapsavam num só na restauração — e a
+    // guarda anti-reapontamento ainda apagava a senha do sobrevivente.
+    const mesmoDestino = (x) => x.name === name && x.host === hostAddr && (x.port || 22) === port && x.username === username;
+    // Só correspondência EXATA atualiza. Qualquer outra coisa entra como host
+    // novo: importar nunca deve destruir um registro existente, e sem o endereço
+    // não há como saber se "Firewall" do arquivo é o mesmo "Firewall" daqui.
+    const ex = d.hosts.find(mesmoDestino);
+    if (!ex && d.hosts.some((x) => x.name === name)) {
+      summary.skipped.push(`"${name}": já existe um host com este nome em outro endereço — o do arquivo foi adicionado à parte, nada foi sobrescrito`);
+    }
     if (ex) {
       const enderecoMudou = ex.host !== hostAddr || (ex.port || 22) !== port || ex.username !== username;
       if (enderecoMudou) {
@@ -614,11 +633,11 @@ app.post('/api/import', (req, res) => {
         if (type === 'password' && !auth.password && ex.auth && ex.auth.type === 'password' && ex.auth.password) auth.password = ex.auth.password;
         if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
       }
-      Object.assign(ex, { name, host: hostAddr, port, username, group, icon, color, auth, vars });
+      Object.assign(ex, { name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars });
       if (enderecoMudou) ex.fingerprint = null; // TOFU aprende de novo, no destino novo
       summary.hosts.updated++;
     } else {
-      d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, group, icon, color, auth, vars });
+      d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars });
       summary.hosts.added++;
     }
   }
@@ -641,6 +660,37 @@ app.post('/api/import', (req, res) => {
     d.settings = d.settings || {};
     if (typeof s.model === 'string' && ai.KNOWN_MODELS.includes(s.model)) { d.settings.model = s.model; summary.settings = true; }
     if (typeof s.apiKey === 'string' && s.apiKey.trim()) { d.settings.apiKey = s.apiKey.trim(); summary.settings = true; }
+    if (typeof s.termFont === 'string' && s.termFont.length <= 200 && /^[A-Za-z0-9 ,"'\-]+$/.test(s.termFont)) { d.settings.termFont = s.termFont; summary.settings = true; }
+    if (Number.isFinite(Number(s.termFontSize))) { d.settings.termFontSize = Math.min(28, Math.max(8, Math.round(Number(s.termFontSize)))); summary.settings = true; }
+  }
+
+  // Favoritos: o arquivo referencia o host pelo NOME (ids mudam entre
+  // instalações); resolvemos para o id local aqui. Upsert por comando+escopo,
+  // para reimportar o mesmo arquivo não duplicar.
+  d.favorites = Array.isArray(d.favorites) ? d.favorites : [];
+  for (const f of asArray(body.favorites)) {
+    const command = String((f && f.command) || '').trim();
+    if (!command || command.length > 4000) { summary.skipped.push('favorito inválido'); continue; }
+    const label = String((f && f.label) || '').trim().slice(0, 80);
+    let hostId = null;
+    if (f && f.hostName) {
+      const alvo = d.hosts.find((h) => h.name === String(f.hostName));
+      if (!alvo) { summary.skipped.push(`favorito de host inexistente: ${f.hostName}`); continue; }
+      hostId = alvo.id;
+    }
+    const ex = d.favorites.find((x) => x.command === command && (x.hostId || null) === hostId);
+    if (ex) { ex.label = label; summary.favorites.updated++; }
+    else { d.favorites.push({ id: crypto.randomUUID(), command, label, hostId }); summary.favorites.added++; }
+  }
+
+  // Preferências da interface
+  if (body.prefs && typeof body.prefs === 'object') {
+    const ui = uiPrefs();
+    if (body.prefs.theme === 'light' || body.prefs.theme === 'dark') ui.theme = body.prefs.theme;
+    for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
+      if (typeof body.prefs[k] === 'boolean') ui[k] = body.prefs[k];
+    }
+    summary.prefs = true;
   }
 
   store.save();

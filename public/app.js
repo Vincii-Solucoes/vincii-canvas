@@ -310,6 +310,7 @@ function openHostModal(existing) {
         <select id="f_ftps">
           <option value="auto">Automática — usa TLS se o servidor aceitar</option>
           <option value="yes">Obrigatória — recusa conectar sem TLS</option>
+          <option value="confia">Obrigatória, confiando no certificado (autoassinado)</option>
           <option value="no">Nenhuma — texto claro</option>
         </select>
       </label>
@@ -985,7 +986,12 @@ async function conectarArquivos() {
     const badge = $('#fileProtoBadge');
     badge.hidden = false;
     badge.textContent = r.protocol === 'ftp' ? (r.secure ? 'FTPS' : 'FTP') : 'SFTP';
-    $('#fileInsecure').hidden = r.secure;
+    const aviso = $('#fileInsecure');
+    if (!r.secure) { aviso.hidden = false; aviso.textContent = '⚠️ sem criptografia'; }
+    else if (r.protocol === 'ftp' && r.certVerificado === false) {
+      // TLS sem identidade verificada não é o mesmo que conexão confiável
+      aviso.hidden = false; aviso.textContent = '⚠️ certificado não verificado';
+    } else aviso.hidden = true;
     $('#fileConnect').hidden = true;
     $('#fileDisconnect').hidden = false;
     $('#fileStatus').textContent = '';
@@ -1643,12 +1649,16 @@ function xmlToConfig(text) {
         return {
           name: h.getAttribute('name'),
           host: h.getAttribute('host'),
-          port: Number(h.getAttribute('port')) || 22,
+          port: Number(h.getAttribute('port')) || ({ telnet: 23, ftp: 21 }[h.getAttribute('protocol')] || 22),
           username: h.getAttribute('username'),
           group: h.getAttribute('group') || '',
           icon: h.getAttribute('icon') || '',
           color: h.getAttribute('color') || '',
-          fingerprint: h.getAttribute('fingerprint') || null,
+          protocol: ['telnet', 'ftp'].includes(h.getAttribute('protocol')) ? h.getAttribute('protocol') : 'ssh',
+          ftps: h.getAttribute('ftps') || 'auto',
+          // fingerprint NÃO vem do arquivo: é a prova de identidade do servidor,
+          // aprendida na primeira conexão. Aceitá-la daqui permitiria desviar
+          // uma conexão para outro servidor sem alarme.
           auth: auth ? {
             type: auth.getAttribute('type') || 'agent',
             keyPath: auth.getAttribute('keyPath') || '',
@@ -1663,13 +1673,31 @@ function xmlToConfig(text) {
         description: pb.getAttribute('description') || '',
         commands: [...pb.querySelectorAll(':scope > command')].map((c) => c.textContent),
       })),
+      favorites: [...root.querySelectorAll(':scope > favorites > favorite')].map((f) => ({
+        label: f.getAttribute('label') || '',
+        hostName: f.getAttribute('host') || '',
+        command: f.textContent,
+      })),
       settings: (() => {
         const s = root.querySelector(':scope > settings');
         if (!s) return {};
         const out = {};
         if (s.getAttribute('model')) out.model = s.getAttribute('model');
         if (s.getAttribute('apiKey')) out.apiKey = s.getAttribute('apiKey');
+        if (s.getAttribute('termFont')) out.termFont = s.getAttribute('termFont');
+        if (s.getAttribute('termFontSize')) out.termFontSize = Number(s.getAttribute('termFontSize'));
         return out;
+      })(),
+      prefs: (() => {
+        const p = root.querySelector(':scope > prefs');
+        if (!p) return null;
+        const out = {};
+        if (p.getAttribute('theme')) out.theme = p.getAttribute('theme');
+        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
+          const v = p.getAttribute(k);
+          if (v === 'true' || v === 'false') out[k] = v === 'true';
+        }
+        return Object.keys(out).length ? out : null;
       })(),
     },
   };
@@ -1679,7 +1707,7 @@ async function importFromText(text) {
   let parsed;
   try { parsed = xmlToConfig(text); } catch (e) { toast(e.message, 'erro'); return; }
   const c = parsed.config;
-  const counts = `${c.hosts.length} host(s), ${c.playbooks.length} playbook(s), ${c.profiles.length} perfil(is), ${Object.keys(c.globals).length} variável(is) global(is)`;
+  const counts = `${c.hosts.length} host(s), ${c.playbooks.length} playbook(s), ${c.profiles.length} perfil(is), ${(c.favorites || []).length} favorito(s), ${Object.keys(c.globals).length} variável(is) global(is)`;
   const secretsNote = parsed.includesSecrets ? '\n\nO arquivo contém senhas/chave da API — serão importadas.' : '';
 
   // Avisa quando o arquivo aponta um host JÁ EXISTENTE para outro endereço:
@@ -1705,7 +1733,10 @@ async function importFromText(text) {
     const r = await api('/api/import', { method: 'POST', body: c });
     await loadState();
     const p = (o) => `${o.added} novo(s), ${o.updated} atualizado(s)`;
-    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}; perfis: ${p(r.profiles)}.`);
+    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}; perfis: ${p(r.profiles)}${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}.`);
+    if (r.rebound && r.rebound.length) {
+      toast(`${r.rebound.length} host(s) tiveram o endereço alterado — a senha salva foi descartada por segurança: ${r.rebound.join(' | ')}`, 'erro');
+    }
     if (r.skipped && r.skipped.length) toast(`${r.skipped.length} item(ns) ignorado(s): ${r.skipped.slice(0, 3).join('; ')}`, 'erro');
   } catch (e) {
     toast(e.message, 'erro');
@@ -2450,6 +2481,13 @@ function closeSession(id) {
   const idx = sessions.findIndex((s) => s.id === id);
   if (idx < 0) return;
   const s = sessions[idx];
+  // fechar a aba precisa PARAR o agente daquela sessão: sem isto ele seguia
+  // rodando no servidor e o EventSource ficava aberto para sempre
+  if (s.ai && s.ai.agent) {
+    if (s.ai.agent.id) api(`/api/agent/${s.ai.agent.id}/stop`, { method: 'POST' }).catch(() => {});
+    if (s.ai.agent.es) { try { s.ai.agent.es.close(); } catch {} }
+    s.ai.agent = null;
+  }
   if (s.isLocal) localDismissed = true; // fechou o local de propósito: não reabrir sozinho
   try { if (s.ws) s.ws.close(); } catch {}
   try { s.term.dispose(); } catch {}
