@@ -2946,6 +2946,10 @@ let sidebarCollapsed = false; // usuário recolheu a barra de hosts (lembrado)
 try {
   aiCollapsed = prefBool('aiCollapsed');
   sidebarCollapsed = prefBool('sidebarCollapsed');
+  // Em janela estreita a lista de hosts vira gaveta sobreposta: começa fechada
+  // para o terminal nascer com a tela toda. Não grava a preferência — ao voltar
+  // para uma janela grande, a escolha do usuário continua valendo.
+  if (window.innerWidth <= 900) { aiCollapsed = true; sidebarCollapsed = true; }
 } catch {}
 
 // aplica sidebar/painel de IA recolhidos ou não — devolve espaço ao terminal
@@ -3395,6 +3399,19 @@ function init() {
     updateTermLayout();
   });
   window.addEventListener('resize', () => { if ($('#tab-terminal').classList.contains('active')) fitActive(); });
+  // Observa o painel do terminal: qualquer mudança de tamanho — janela, painéis
+  // recolhidos, saudação oculta, troca de aba — reajusta o xterm. Antes isso
+  // dependia só do evento de resize da janela, e o terminal ficava com o número
+  // de colunas/linhas antigo quando o layout mudava por outro motivo.
+  const painelTerm = document.querySelector('.term-pane');
+  if (painelTerm && typeof ResizeObserver === 'function') {
+    let pendente = null;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(pendente);
+      pendente = setTimeout(() => { if ($('#tab-terminal').classList.contains('active')) fitActive(); }, 80);
+    });
+    ro.observe(painelTerm);
+  }
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
   $('#cfgTermFont').addEventListener('change', updateFontPreview);

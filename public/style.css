@@ -85,7 +85,18 @@ body {
 .brand h1 { margin: 0; font-size: 17px; }
 .brand p { margin: 0; font-size: 12px; color: var(--muted); }
 
-.tabs { display: flex; gap: 4px; }
+.tabs {
+  display: flex; gap: 4px;
+  /* em janela estreita a barra ROLA em vez de empurrar a página: antes ela
+     esticava o topo além da janela, criando rolagem horizontal e deixando as
+     últimas abas inalcançáveis */
+  overflow-x: auto;
+  scrollbar-width: none;
+  max-width: 100%;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { flex: 0 0 auto; white-space: nowrap; }
+.topbar-right { min-width: 0; }
 .tabs button {
   background: none;
   border: 1px solid transparent;
@@ -416,8 +427,32 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   .term-grid.no-ai.no-sidebar { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
-  .term-grid, .term-grid.no-ai, .term-grid.no-sidebar, .term-grid.no-ai.no-sidebar { grid-template-columns: 1fr; height: auto; }
-  .host-sidebar { max-height: 220px; }
+  /* Empilhado: hosts em cima (altura própria), terminal ocupando TODO o resto.
+     Com height:auto o terminal virava uma caixa fixa e sobrava um vazio enorme
+     embaixo, além de a página passar a rolar. */
+  .term-grid, .term-grid.no-ai, .term-grid.no-sidebar, .term-grid.no-ai.no-sidebar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: calc(100vh - 150px);
+    min-height: 360px;
+  }
+  body.term-full .term-grid { height: calc(100vh - 100px); }
+  .host-sidebar { max-height: 168px; }
+  .host-sidebar-list { overflow-y: auto; }
+  /* o painel de IA aberto junto não pode espremer o terminal */
+  .ai-pane { max-height: 42vh; }
+}
+/* muito estreito: cabeçalho mais compacto para sobrar tela */
+@media (max-width: 620px) {
+  .topbar { padding: 10px 14px; gap: 8px; }
+  .brand p { display: none; }
+  .brand .logo-img { height: 32px; width: 32px; }
+  .brand h1 { font-size: 15px; }
+  .term-grid, .term-grid.no-ai, .term-grid.no-sidebar, .term-grid.no-ai.no-sidebar {
+    height: calc(100vh - 130px);
+    min-height: 320px;
+  }
+  .greet-quote { display: none; } /* mantém só a saudação, sem a frase */
 }
 
 /* ---------- Sidebar de hosts (estilo Termius) ---------- */
@@ -1155,3 +1190,80 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 
 /* pastas grandes: o navegador só desenha o que está visível (-47% no render) */
 .file-row { content-visibility: auto; contain-intrinsic-size: auto 28px; }
+
+
+/* ---------- janelas estreitas: overrides no FIM do arquivo ----------
+   Precisam vir depois das regras base (mesma especificidade: quem vem por
+   último vence). Antes estavam no meio e o `.term-pane { min-height: 380px }`
+   lá embaixo anulava a correção, deixando o terminal estourar a janela. */
+@media (max-width: 900px) {
+  .term-pane { min-height: 0; }
+  .term-main { min-height: 0; }
+  .term-grid { min-height: 360px; }
+}
+@media (max-width: 620px) {
+  .term-grid { min-height: 300px; }
+}
+
+
+/* ---------- aba Terminal: altura sem números mágicos ----------
+   Antes a grade usava calc(100vh - 150px) e variantes: o desconto era um chute
+   sobre a altura do cabeçalho e errava conforme a janela (sobrava vazio ou o
+   terminal passava da tela). Aqui a coluna flex simplesmente ocupa o que sobra,
+   em qualquer tamanho de janela. */
+body.term-full {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.term-full main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* o `margin: 0 auto` do main centraliza no eixo cruzado do flex e impede o
+     esticamento — no modo terminal ele precisa ocupar a largura inteira */
+  margin: 0;
+  width: 100%;
+}
+body.term-full #tab-terminal.active {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+body.term-full .term-grid,
+body.term-full .term-grid.no-ai,
+body.term-full .term-grid.no-sidebar,
+body.term-full .term-grid.no-ai.no-sidebar {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+
+/* ---------- telas estreitas: hosts viram gaveta sobreposta ----------
+   Empilhado, a lista de hosts + saudação + abas comiam quase toda a altura e
+   sobravam ~90px de terminal. Aqui a lista sai do fluxo e aparece por cima só
+   quando você abre pelo botão, deixando o terminal com a tela inteira. */
+@media (max-width: 900px) {
+  .term-grid,
+  .term-grid.no-ai,
+  .term-grid.no-sidebar,
+  .term-grid.no-ai.no-sidebar {
+    position: relative;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .host-sidebar {
+    position: absolute;
+    z-index: 20;
+    top: 0; left: 0; right: 0;
+    max-height: min(60vh, 340px);
+    box-shadow: 0 14px 40px var(--shadow);
+  }
+  /* a saudação fica em uma linha só, para não roubar altura do terminal */
+  .greet-bar { padding: 7px 10px; }
+  .greet-text { flex-wrap: nowrap; overflow: hidden; }
+  .greet-quote { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
