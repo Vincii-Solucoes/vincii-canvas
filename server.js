@@ -14,6 +14,7 @@ const ai = require('./lib/ai');
 const agent = require('./lib/agent');
 const history = require('./lib/history');
 const quickhosts = require('./lib/quickhosts');
+const files = require('./lib/files');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const pkg = require('./package.json');
@@ -220,6 +221,157 @@ app.put('/api/prefs', (req, res) => {
   res.json(ui);
 });
 
+// ---------- gerenciador de arquivos (SFTP / FTP / local) ----------
+// Sessões de arquivo ficam em memória, uma por painel remoto aberto. A
+// transferência entre painéis é feita AQUI, servidor↔servidor: o conteúdo não
+// passa pelo navegador, então arquivo grande não vira memória na aba.
+const fileSessions = new Map();
+const FILE_SESSION_TTL = 30 * 60 * 1000;
+
+function limpaFileSessions() {
+  const agora = Date.now();
+  for (const [id, s] of fileSessions) {
+    if (agora - s.usadaEm > FILE_SESSION_TTL) {
+      try { s.client.close(); } catch {}
+      fileSessions.delete(id);
+    }
+  }
+}
+
+function ladoDe(body, res) {
+  const lado = (body && body.side) || 'local';
+  if (lado === 'local') return files.local;
+  const s = fileSessions.get(String((body && body.sessionId) || ''));
+  if (!s) { fail(res, 400, 'Sessão de arquivos expirada — reconecte o painel.'); return null; }
+  s.usadaEm = Date.now();
+  return s.client;
+}
+
+app.post('/api/files/open', async (req, res) => {
+  limpaFileSessions();
+  const b = req.body || {};
+  const host = store.get().hosts.find((h) => h.id === b.hostId) || quickhosts.get(b.hostId);
+  if (!host) return fail(res, 400, 'Host não encontrado.');
+  if (fileSessions.size >= 20) return fail(res, 400, 'Muitos painéis de arquivo abertos.');
+  try {
+    const client = await files.openRemote(host, {
+      onSaveFingerprint: (fp) => { host.fingerprint = fp; store.save(); },
+    });
+    const id = 'fs_' + crypto.randomUUID();
+    fileSessions.set(id, { client, host, usadaEm: Date.now() });
+    res.json({
+      sessionId: id,
+      protocol: client.tipo,
+      secure: !!client.seguro,
+      path: client.home(),
+      hostName: host.name,
+    });
+  } catch (err) {
+    fail(res, 400, err && err.message ? err.message : String(err));
+  }
+});
+
+app.post('/api/files/close', (req, res) => {
+  const s = fileSessions.get(String((req.body || {}).sessionId || ''));
+  if (s) { try { s.client.close(); } catch {} fileSessions.delete(String(req.body.sessionId)); }
+  res.json({ ok: true });
+});
+
+app.post('/api/files/list', async (req, res) => {
+  const c = ladoDe(req.body, res);
+  if (!c) return;
+  try { res.json(await c.list(String((req.body || {}).path || ''))); }
+  catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+});
+
+// operações simples: criar pasta, renomear, excluir, permissões
+for (const [rota, exec] of [
+  ['mkdir', (c, b) => c.mkdir(b.path, b.name)],
+  ['rename', (c, b) => c.rename(b.path, b.name, b.newName)],
+  ['delete', (c, b) => c.remove(b.path, b.name)],
+  ['chmod', (c, b) => c.chmod(b.path, b.name, parseInt(String(b.mode), 8) & 0o777)],
+]) {
+  app.post('/api/files/' + rota, async (req, res) => {
+    const c = ladoDe(req.body, res);
+    if (!c) return;
+    const b = req.body || {};
+    const nome = String(b.name || '');
+    if (!nome || nome === '.' || nome === '..' || nome.includes('/')) return fail(res, 400, 'Nome inválido.');
+    if (rota === 'rename') {
+      const novo = String(b.newName || '');
+      if (!novo || novo.includes('/') || novo === '.' || novo === '..') return fail(res, 400, 'Novo nome inválido.');
+    }
+    try { await exec(c, b); res.json({ ok: true }); }
+    catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+  });
+}
+
+app.post('/api/files/read', async (req, res) => {
+  const c = ladoDe(req.body, res);
+  if (!c) return;
+  try { res.json({ content: await c.readText(String((req.body || {}).file || '')) }); }
+  catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+});
+
+app.post('/api/files/write', async (req, res) => {
+  const c = ladoDe(req.body, res);
+  if (!c) return;
+  const b = req.body || {};
+  if (typeof b.content !== 'string') return fail(res, 400, 'Conteúdo inválido.');
+  if (b.content.length > files.MAX_TEXT_BYTES) return fail(res, 400, 'Conteúdo grande demais.');
+  try { await c.writeText(String(b.file || ''), b.content); res.json({ ok: true }); }
+  catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+});
+
+// Transferência entre painéis (local↔remoto), feita no servidor.
+app.post('/api/files/transfer', async (req, res) => {
+  const b = req.body || {};
+  const origem = ladoDe({ side: b.fromSide, sessionId: b.sessionId }, res);
+  if (!origem) return;
+  const destino = ladoDe({ side: b.toSide, sessionId: b.sessionId }, res);
+  if (!destino) return;
+  const nome = String(b.name || '');
+  if (!nome || nome.includes('/') || nome === '.' || nome === '..') return fail(res, 400, 'Nome inválido.');
+  const de = files.joinRemote(String(b.fromPath || ''), nome).replace(/^\/\//, '/');
+  const paraDir = String(b.toPath || '');
+  const para = (b.toSide === 'local' ? path.join(paraDir, nome) : files.joinRemote(paraDir, nome));
+  const deLocal = (b.fromSide === 'local' ? path.join(String(b.fromPath || ''), nome) : de);
+  try {
+    await transferir(origem, deLocal, destino, para);
+    res.json({ ok: true });
+  } catch (err) {
+    fail(res, 400, err && err.message ? err.message : String(err));
+  }
+});
+
+// Copia um arquivo de um cliente para outro. O FTP não expõe streams soltos
+// (usa um canal de dados por vez), então tem caminho próprio.
+function transferir(origem, caminhoOrigem, destino, caminhoDestino) {
+  return new Promise((resolve, reject) => {
+    if (origem.tipo === 'ftp') {
+      // FTP → (local/sftp): o cliente FTP escreve no stream de destino
+      const w = destino.writeStream(caminhoDestino);
+      w.on('error', reject);
+      origem.downloadTo(w, caminhoOrigem).then(resolve, reject);
+      return;
+    }
+    if (destino.tipo === 'ftp') {
+      // (local/sftp) → FTP: o cliente FTP lê do stream de origem
+      const r = origem.readStream(caminhoOrigem);
+      r.on('error', reject);
+      destino.uploadFrom(r, caminhoDestino).then(resolve, reject);
+      return;
+    }
+    const r = origem.readStream(caminhoOrigem);
+    const w = destino.writeStream(caminhoDestino);
+    r.on('error', reject);
+    w.on('error', reject);
+    w.on('close', resolve);
+    w.on('finish', resolve);
+    r.pipe(w);
+  });
+}
+
 // ---------- histórico de comandos ----------
 // Resolve os metadados da máquina (nome/IP/usuário) a partir do host ou do local,
 // no servidor — o cliente nunca dita esses dados (evita spoofing e mantém consistência).
@@ -309,7 +461,8 @@ function publicHost(h) {
     host: h.host,
     port: h.port,
     username: h.username,
-    protocol: h.protocol === 'telnet' ? 'telnet' : 'ssh',
+    protocol: ['telnet', 'ftp'].includes(h.protocol) ? h.protocol : 'ssh',
+    ftps: h.ftps || 'auto',
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
@@ -330,12 +483,14 @@ function parseHostBody(body, res) {
   if (!name) return fail(res, 400, 'Informe um nome para o host.');
   const hostAddr = String(body.host || '').trim();
   if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
-  const protocol = body.protocol === 'telnet' ? 'telnet' : 'ssh';
-  const port = Number(body.port || (protocol === 'telnet' ? 23 : 22));
+  const protocol = ['telnet', 'ftp'].includes(body.protocol) ? body.protocol : 'ssh';
+  const PORTA_PADRAO = { telnet: 23, ftp: 21, ssh: 22 };
+  const port = Number(body.port || PORTA_PADRAO[protocol]);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail(res, 400, 'Porta inválida.');
   const username = String(body.username || '').trim();
   // no Telnet o login é feito no próprio terminal do equipamento
   if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário SSH.');
+  const ftps = ['auto', 'yes', 'no'].includes(body.ftps) ? body.ftps : 'auto';
 
   const a = body.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
@@ -352,7 +507,7 @@ function parseHostBody(body, res) {
   const group = String(body.group || '').trim().slice(0, 60);
   const icon = slug(body.icon);
   const color = slug(body.color);
-  return { name, host: hostAddr, port, username, protocol, group, icon, color, auth, vars };
+  return { name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -713,7 +868,7 @@ function resolveRequest(body, res) {
   for (const id of ids) {
     const h = d.hosts.find((x) => x.id === id);
     if (!h) return fail(res, 400, 'Host não encontrado: ' + id);
-    if (h.protocol === 'telnet') return fail(res, 400, `"${h.name}" é Telnet — execução em lote exige SSH. Use o terminal interativo para hosts Telnet.`);
+    if (h.protocol === 'telnet' || h.protocol === 'ftp') return fail(res, 400, `"${h.name}" é ${h.protocol.toUpperCase()} — execução em lote exige SSH.`);
     hosts.push(h);
   }
 
@@ -914,7 +1069,7 @@ app.post('/api/agent/start', (req, res) => {
   } else {
     host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
-    if (host.protocol === 'telnet') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet.');
+    if (host.protocol === 'telnet' || host.protocol === 'ftp') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet ou FTP.');
   }
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');

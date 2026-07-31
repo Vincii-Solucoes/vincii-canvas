@@ -49,6 +49,7 @@ try {
       <button data-tab="exec">Executar</button>
       <button data-tab="hosts">Hosts</button>
       <button data-tab="playbooks">Playbooks</button>
+      <button data-tab="files">Arquivos</button>
       <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
       <button data-tab="vars">Variáveis</button>
@@ -212,6 +213,53 @@ try {
       <div id="playbooksList" class="items"></div>
     </div>
   </section>
+
+  <section id="tab-files" class="tab-panel">
+    <div class="files-bar card">
+      <label class="inline files-host">Servidor
+        <select id="fileHostSelect"></select>
+      </label>
+      <button id="fileConnect" class="btn primary">Conectar</button>
+      <button id="fileDisconnect" class="btn" hidden>Desconectar</button>
+      <span id="fileProtoBadge" class="proto-badge" hidden></span>
+      <span id="fileInsecure" class="tag tag-warn" hidden>⚠️ sem criptografia</span>
+      <span class="spacer"></span>
+      <span id="fileStatus" class="muted small"></span>
+    </div>
+
+    <div class="files-grid">
+      <div class="card file-pane" data-side="local">
+        <div class="file-pane-head">
+          <strong>💻 Meu computador</strong>
+          <div class="file-actions">
+            <button class="btn small" data-act="up" title="Pasta acima">↑</button>
+            <button class="btn small" data-act="home" title="Pasta pessoal">⌂</button>
+            <button class="btn small" data-act="refresh" title="Atualizar">⟳</button>
+            <button class="btn small" data-act="mkdir" title="Nova pasta">＋</button>
+          </div>
+        </div>
+        <input class="file-path mono" data-side="local" spellcheck="false">
+        <div class="file-list" data-side="local"></div>
+      </div>
+
+      <div class="card file-pane" data-side="remote">
+        <div class="file-pane-head">
+          <strong id="fileRemoteTitle">☁️ Servidor</strong>
+          <div class="file-actions">
+            <button class="btn small" data-act="up" title="Pasta acima">↑</button>
+            <button class="btn small" data-act="home" title="Pasta inicial">⌂</button>
+            <button class="btn small" data-act="refresh" title="Atualizar">⟳</button>
+            <button class="btn small" data-act="mkdir" title="Nova pasta">＋</button>
+          </div>
+        </div>
+        <input class="file-path mono" data-side="remote" spellcheck="false">
+        <div class="file-list" data-side="remote"></div>
+      </div>
+    </div>
+    <p class="hint">Arraste um arquivo de um painel para o outro para transferir. Duplo clique entra na pasta (ou abre arquivo de texto para editar). Use o botão direito para renomear, permissões e excluir.</p>
+  </section>
+
+  <div id="fileMenu" class="ctx-menu" hidden></div>
 
   <section id="tab-favorites" class="tab-panel">
     <div class="card">

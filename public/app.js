@@ -180,6 +180,7 @@ function initTabs() {
     if (btn.dataset.tab === 'terminal') onTerminalTabShown();
     if (btn.dataset.tab === 'config') loadConfigTab();
     if (btn.dataset.tab === 'history') loadHistory();
+    if (btn.dataset.tab === 'files') onFilesTabShown();
   }));
   document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
@@ -190,6 +191,7 @@ async function loadState() {
   renderHosts();
   renderPlaybooks();
   renderFavoritesTab();
+  renderFileHostSelect();
   renderProfiles();
   renderGlobals();
   renderExecControls();
@@ -299,8 +301,16 @@ function openHostModal(existing) {
       <label>Grupo (opcional) <input id="f_group" list="groupList" placeholder="ex.: Produção"><datalist id="groupList"></datalist></label>
       <label>Protocolo
         <select id="f_protocol">
-          <option value="ssh">SSH (recomendado)</option>
+          <option value="ssh">SSH / SFTP (recomendado)</option>
+          <option value="ftp">FTP / FTPS (transferência de arquivos)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
+        </select>
+      </label>
+      <label id="f_ftpsWrap" hidden>Criptografia (FTPS)
+        <select id="f_ftps">
+          <option value="auto">Automática — usa TLS se o servidor aceitar</option>
+          <option value="yes">Obrigatória — recusa conectar sem TLS</option>
+          <option value="no">Nenhuma — texto claro</option>
         </select>
       </label>
       <label>Usuário <input id="f_user" placeholder="root"></label>
@@ -349,14 +359,28 @@ function openHostModal(existing) {
   $('#f_host').value = existing ? existing.host : '';
   $('#f_port').value = existing ? existing.port : 22;
   $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
+  $('#f_ftps').value = (existing && existing.ftps) || 'auto';
   // Telnet: porta padrão 23, autenticação some (login é no equipamento)
   const syncProtocol = () => {
-    const isTelnet = $('#f_protocol').value === 'telnet';
+    const proto = $('#f_protocol').value;
+    const isTelnet = proto === 'telnet';
+    const isFtp = proto === 'ftp';
     $('#f_telnetNote').hidden = !isTelnet;
     const authFs = $('#authFieldset');
     if (authFs) authFs.hidden = isTelnet;
+    $('#f_ftpsWrap').hidden = !isFtp;
+    // FTP autentica por usuário e senha; chave/agente não se aplicam
+    $$('input[name="authType"]').forEach((r) => {
+      const linha = r.closest('label');
+      if (linha) linha.hidden = isFtp && r.value !== 'password';
+    });
+    if (isFtp) {
+      const senha = $$('input[name="authType"]').find((r) => r.value === 'password');
+      if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
+    }
     const port = $('#f_port');
-    if (!existing && (port.value === '22' || port.value === '23' || !port.value)) port.value = isTelnet ? 23 : 22;
+    const padroes = { telnet: 23, ftp: 21, ssh: 22 };
+    if (!existing && ['21', '22', '23', ''].includes(String(port.value))) port.value = padroes[proto];
   };
   $('#f_protocol').addEventListener('change', syncProtocol);
   syncProtocol();
@@ -446,6 +470,7 @@ function openHostModal(existing) {
       port: Number($('#f_port').value),
       username: $('#f_user').value.trim(),
       protocol: $('#f_protocol').value,
+      ftps: $('#f_ftps').value,
       vars,
       auth: { type: authType },
     };
@@ -701,6 +726,330 @@ function initHistoryControls() {
       await loadHistory();
     } catch (e) { toast(e.message, 'erro'); }
   });
+}
+
+// ---------- gerenciador de arquivos (dois painéis: local ↔ remoto) ----------
+// O conteúdo dos arquivos NUNCA passa pelo navegador: arrastar de um painel
+// para o outro chama /api/files/transfer e o servidor copia direto entre as
+// pontas. Assim um arquivo de 2 GB não vira memória nesta aba.
+const fileState = {
+  sessionId: null,
+  protocol: null,
+  secure: false,
+  paths: { local: '', remote: '' },
+  lists: { local: null, remote: null },
+  sel: { local: null, remote: null },
+};
+
+function fmtTamanho(n) {
+  if (!n) return '—';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)) + ' ' + u[i];
+}
+function fmtData(ms) {
+  if (!ms) return '—';
+  try { return new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+  catch { return '—'; }
+}
+function iconeArquivo(item) {
+  if (item.type === 'dir') return '📁';
+  if (item.type === 'link') return '🔗';
+  const ext = (item.name.split('.').pop() || '').toLowerCase();
+  if (['txt', 'log', 'conf', 'cfg', 'ini', 'yml', 'yaml', 'json', 'xml', 'md', 'sh', 'py', 'js'].includes(ext)) return '📄';
+  if (['tar', 'gz', 'zip', 'bz2', 'xz', 'rar', '7z'].includes(ext)) return '🗜️';
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) return '🖼️';
+  return '📃';
+}
+const EDITAVEIS = ['txt', 'log', 'conf', 'cfg', 'ini', 'yml', 'yaml', 'json', 'xml', 'md', 'sh', 'py', 'js', 'env', 'service', 'rules', 'list'];
+function ehTexto(nome) {
+  if (!nome.includes('.')) return true; // arquivos sem extensão costumam ser config
+  return EDITAVEIS.includes(nome.split('.').pop().toLowerCase());
+}
+
+function filesApi(rota, body) {
+  return api('/api/files/' + rota, { method: 'POST', body });
+}
+
+// corpo padrão com o lado e a sessão
+function ladoBody(lado, extra) {
+  return Object.assign({ side: lado, sessionId: fileState.sessionId, path: fileState.paths[lado] }, extra || {});
+}
+
+async function fileList(lado, caminho) {
+  if (lado === 'remote' && !fileState.sessionId) return;
+  const st = $('#fileStatus');
+  try {
+    const r = await filesApi('list', { side: lado, sessionId: fileState.sessionId, path: caminho != null ? caminho : fileState.paths[lado] });
+    fileState.paths[lado] = r.path;
+    fileState.lists[lado] = r;
+    fileState.sel[lado] = null;
+    const inp = document.querySelector(`.file-path[data-side="${lado}"]`);
+    if (inp) inp.value = r.path;
+    renderFileList(lado);
+    if (r.truncated && st) st.textContent = 'Pasta muito grande — mostrando os primeiros itens.';
+  } catch (e) {
+    toast(e.message, 'erro');
+  }
+}
+
+function renderFileList(lado) {
+  const box = document.querySelector(`.file-list[data-side="${lado}"]`);
+  if (!box) return;
+  box.innerHTML = '';
+  const r = fileState.lists[lado];
+  if (!r) {
+    el(box, 'p', 'empty', lado === 'remote' ? 'Conecte-se a um servidor acima.' : 'Carregando…');
+    return;
+  }
+  const itens = r.items.slice().sort((a, b) => {
+    if ((a.type === 'dir') !== (b.type === 'dir')) return a.type === 'dir' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'pt-BR');
+  });
+  if (r.parent) {
+    const up = el(box, 'div', 'file-row file-up');
+    el(up, 'span', 'file-ico', '↩');
+    el(up, 'span', 'file-name', '..');
+    up.addEventListener('dblclick', () => fileList(lado, r.parent));
+    up.addEventListener('click', () => fileList(lado, r.parent));
+  }
+  for (const it of itens) {
+    const row = el(box, 'div', 'file-row' + (it.type === 'dir' ? ' is-dir' : ''));
+    row.draggable = true;
+    row.dataset.name = it.name;
+    row.dataset.type = it.type;
+    el(row, 'span', 'file-ico', iconeArquivo(it));
+    el(row, 'span', 'file-name', it.name);
+    el(row, 'span', 'file-size', it.type === 'dir' ? '' : fmtTamanho(it.size));
+    el(row, 'span', 'file-date', fmtData(it.mtime));
+    if (it.mode) el(row, 'span', 'file-mode mono', it.mode.toString(8).padStart(3, '0'));
+
+    row.addEventListener('click', () => {
+      box.querySelectorAll('.file-row.sel').forEach((x) => x.classList.remove('sel'));
+      row.classList.add('sel');
+      fileState.sel[lado] = it;
+    });
+    row.addEventListener('dblclick', () => {
+      if (it.type === 'dir') fileList(lado, joinCaminho(lado, it.name));
+      else if (ehTexto(it.name)) abrirEditorArquivo(lado, it);
+      else toast('Só arquivos de texto podem ser abertos aqui. Arraste para o outro painel para transferir.', 'erro');
+    });
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); abrirMenuArquivo(e, lado, it); });
+
+    // arrastar para o outro painel = transferir
+    row.addEventListener('dragstart', (e) => {
+      if (it.type === 'dir') { e.preventDefault(); return; } // pastas ainda não
+      e.dataTransfer.setData('text/plain', JSON.stringify({ lado, name: it.name }));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+  }
+  if (!itens.length && !r.parent) el(box, 'p', 'empty', 'Pasta vazia.');
+}
+
+function joinCaminho(lado, nome) {
+  const base = fileState.paths[lado] || '/';
+  if (lado === 'local') {
+    const sep = base.endsWith('/') ? '' : '/';
+    return base + sep + nome;
+  }
+  return (base === '/' ? '' : base.replace(/\/+$/, '')) + '/' + nome;
+}
+
+async function transferirArquivo(deLado, nome) {
+  const paraLado = deLado === 'local' ? 'remote' : 'local';
+  if (!fileState.sessionId) { toast('Conecte-se a um servidor primeiro.', 'erro'); return; }
+  const st = $('#fileStatus');
+  if (st) st.textContent = `Transferindo ${nome}…`;
+  try {
+    await filesApi('transfer', {
+      sessionId: fileState.sessionId,
+      fromSide: deLado, fromPath: fileState.paths[deLado],
+      toSide: paraLado, toPath: fileState.paths[paraLado],
+      name: nome,
+    });
+    if (st) st.textContent = `${nome} transferido.`;
+    toast(`${nome} → ${paraLado === 'local' ? 'seu computador' : 'servidor'}`);
+    await fileList(paraLado);
+  } catch (e) {
+    if (st) st.textContent = '';
+    toast(e.message, 'erro');
+  }
+}
+
+// menu de contexto (renomear, permissões, excluir, transferir)
+function abrirMenuArquivo(ev, lado, item) {
+  const menu = $('#fileMenu');
+  menu.innerHTML = '';
+  const add = (rotulo, fn, perigo) => {
+    const b = el(menu, 'button', 'ctx-item' + (perigo ? ' danger' : ''), rotulo);
+    b.addEventListener('click', () => { menu.hidden = true; fn(); });
+  };
+  if (item.type !== 'dir') {
+    add(lado === 'local' ? '⬆ Enviar ao servidor' : '⬇ Baixar para o computador', () => transferirArquivo(lado, item.name));
+    if (ehTexto(item.name)) add('✎ Abrir/editar', () => abrirEditorArquivo(lado, item));
+  }
+  add('Renomear', async () => {
+    const novo = prompt('Novo nome:', item.name);
+    if (!novo || novo === item.name) return;
+    try { await filesApi('rename', ladoBody(lado, { name: item.name, newName: novo })); await fileList(lado); }
+    catch (e) { toast(e.message, 'erro'); }
+  });
+  if (fileState.protocol !== 'ftp' || lado === 'local') {
+    add('Permissões (chmod)', async () => {
+      const m = prompt('Permissões em octal (ex.: 644, 755):', item.mode ? item.mode.toString(8).padStart(3, '0') : '644');
+      if (!m) return;
+      if (!/^[0-7]{3,4}$/.test(m)) { toast('Use 3 ou 4 dígitos octais, ex.: 644.', 'erro'); return; }
+      try { await filesApi('chmod', ladoBody(lado, { name: item.name, mode: m })); await fileList(lado); }
+      catch (e) { toast(e.message, 'erro'); }
+    });
+  }
+  add('Excluir', async () => {
+    if (!confirm(`Excluir "${item.name}"${item.type === 'dir' ? ' e todo o conteúdo' : ''}?\n\nEsta ação não pode ser desfeita.`)) return;
+    try { await filesApi('delete', ladoBody(lado, { name: item.name })); await fileList(lado); }
+    catch (e) { toast(e.message, 'erro'); }
+  }, true);
+
+  menu.hidden = false;
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.min(ev.clientX, window.innerWidth - r.width - 8) + 'px';
+  menu.style.top = Math.min(ev.clientY, window.innerHeight - r.height - 8) + 'px';
+}
+
+async function abrirEditorArquivo(lado, item) {
+  const caminho = joinCaminho(lado, item.name);
+  let conteudo;
+  try {
+    const r = await filesApi('read', { side: lado, sessionId: fileState.sessionId, file: caminho });
+    conteudo = r.content;
+  } catch (e) { toast(e.message, 'erro'); return; }
+  openModal('Editar — ' + item.name, `
+    <p class="hint mono small">${lado === 'local' ? 'no seu computador' : 'no servidor'}</p>
+    <textarea id="fed_txt" rows="18" class="mono"></textarea>
+  `);
+  $('#fed_txt').value = conteudo;
+  $('#modalForm button[type=submit]').textContent = 'Salvar';
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      await filesApi('write', { side: lado, sessionId: fileState.sessionId, file: caminho, content: $('#fed_txt').value });
+      closeModal();
+      toast('Arquivo salvo.');
+      await fileList(lado);
+    } catch (e) { toast(e.message, 'erro'); }
+  };
+}
+
+function fileHostsDisponiveis() {
+  return state.hosts.filter((h) => h.protocol !== 'telnet');
+}
+
+function renderFileHostSelect() {
+  const sel = $('#fileHostSelect');
+  if (!sel) return;
+  const atual = sel.value;
+  sel.innerHTML = '';
+  const hosts = fileHostsDisponiveis();
+  if (!hosts.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'Nenhum host compatível — cadastre em Hosts';
+    sel.appendChild(o);
+    return;
+  }
+  for (const h of hosts) {
+    const o = document.createElement('option');
+    o.value = h.id;
+    o.textContent = `${h.name} — ${h.protocol === 'ftp' ? 'FTP' : 'SFTP'} (${h.host})`;
+    sel.appendChild(o);
+  }
+  if (atual) sel.value = atual;
+}
+
+async function conectarArquivos() {
+  const id = $('#fileHostSelect').value;
+  if (!id) { toast('Cadastre um host SSH ou FTP primeiro.', 'erro'); return; }
+  const btn = $('#fileConnect');
+  btn.disabled = true;
+  $('#fileStatus').textContent = 'Conectando…';
+  try {
+    const r = await filesApi('open', { hostId: id });
+    fileState.sessionId = r.sessionId;
+    fileState.protocol = r.protocol;
+    fileState.secure = r.secure;
+    fileState.paths.remote = r.path;
+    $('#fileRemoteTitle').textContent = '☁️ ' + r.hostName;
+    const badge = $('#fileProtoBadge');
+    badge.hidden = false;
+    badge.textContent = r.protocol === 'ftp' ? (r.secure ? 'FTPS' : 'FTP') : 'SFTP';
+    $('#fileInsecure').hidden = r.secure;
+    $('#fileConnect').hidden = true;
+    $('#fileDisconnect').hidden = false;
+    $('#fileStatus').textContent = '';
+    await fileList('remote', r.path);
+  } catch (e) {
+    toast(e.message, 'erro');
+    $('#fileStatus').textContent = '';
+  } finally { btn.disabled = false; }
+}
+
+async function desconectarArquivos() {
+  if (fileState.sessionId) { try { await filesApi('close', { sessionId: fileState.sessionId }); } catch {} }
+  fileState.sessionId = null;
+  fileState.lists.remote = null;
+  fileState.protocol = null;
+  $('#fileProtoBadge').hidden = true;
+  $('#fileInsecure').hidden = true;
+  $('#fileConnect').hidden = false;
+  $('#fileDisconnect').hidden = true;
+  $('#fileRemoteTitle').textContent = '☁️ Servidor';
+  renderFileList('remote');
+}
+
+function initFiles() {
+  $('#fileConnect').addEventListener('click', conectarArquivos);
+  $('#fileDisconnect').addEventListener('click', desconectarArquivos);
+
+  $$('.file-pane').forEach((pane) => {
+    const lado = pane.dataset.side;
+    pane.querySelectorAll('.file-actions button').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const r = fileState.lists[lado];
+        if (b.dataset.act === 'up' && r && r.parent) return fileList(lado, r.parent);
+        if (b.dataset.act === 'home') return fileList(lado, lado === 'local' ? '' : (fileState.protocol === 'ftp' ? '/' : ''));
+        if (b.dataset.act === 'refresh') return fileList(lado);
+        if (b.dataset.act === 'mkdir') {
+          const nome = prompt('Nome da nova pasta:');
+          if (!nome) return;
+          try { await filesApi('mkdir', ladoBody(lado, { name: nome })); await fileList(lado); }
+          catch (e) { toast(e.message, 'erro'); }
+        }
+      });
+    });
+    // caminho editável: Enter navega
+    const inp = pane.querySelector('.file-path');
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') fileList(lado, inp.value.trim()); });
+
+    // soltar aqui = transferir do outro painel
+    const lista = pane.querySelector('.file-list');
+    lista.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; lista.classList.add('drop-alvo'); });
+    lista.addEventListener('dragleave', () => lista.classList.remove('drop-alvo'));
+    lista.addEventListener('drop', (e) => {
+      e.preventDefault();
+      lista.classList.remove('drop-alvo');
+      let d;
+      try { d = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+      if (!d || d.lado === lado) return; // soltou no mesmo painel
+      transferirArquivo(d.lado, d.name);
+    });
+  });
+
+  document.addEventListener('click', () => { const m = $('#fileMenu'); if (m && !m.hidden) m.hidden = true; });
+}
+
+function onFilesTabShown() {
+  renderFileHostSelect();
+  if (!fileState.lists.local) fileList('local', '');
 }
 
 // ---------- saudação nerd (barra no topo do terminal) ----------
@@ -1763,7 +2112,9 @@ function removeRecent(id) {
 
 // endereço legível do host (Telnet não tem usuário no login)
 function hostAddrLabel(h) {
-  return h.protocol === 'telnet' ? `telnet://${h.host}:${h.port}` : `${h.username}@${h.host}:${h.port}`;
+  if (h.protocol === 'telnet') return `telnet://${h.host}:${h.port}`;
+  if (h.protocol === 'ftp') return `ftp://${h.username || 'anonymous'}@${h.host}:${h.port}`;
+  return `${h.username}@${h.host}:${h.port}`;
 }
 
 function renderHostSidebar() {
@@ -1784,6 +2135,7 @@ function renderHostSidebar() {
     const nameRow = el(info, 'div', 'hname');
     el(nameRow, 'span', null, h.name);
     if (h.protocol === 'telnet') el(nameRow, 'span', 'proto-badge', 'TELNET');
+    else if (h.protocol === 'ftp') el(nameRow, 'span', 'proto-badge', 'FTP');
     el(info, 'div', 'haddr', hostAddrLabel(h));
     if (nConn > 1) el(item, 'span', 'conn-count', String(nConn));
     el(item, 'span', 'dot');
@@ -2974,6 +3326,7 @@ function init() {
   initFavoritesTab();
   initGreeting();
   initTermTabsScroll();
+  initFiles();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
