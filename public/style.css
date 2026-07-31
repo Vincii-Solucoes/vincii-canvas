@@ -1257,10 +1257,20 @@ body.term-full .term-grid.no-ai.no-sidebar {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
+  /* A barra com os botões (hosts / saudação / favoritos / IA) fica ACIMA das
+     gavetas e com fundo próprio: sem isto a gaveta cobria justamente o botão
+     que a fecha, e não havia como sair dela. */
+  .term-topbar {
+    position: relative;
+    z-index: 30;
+    background: var(--bg);
+  }
   .host-sidebar, .ai-pane {
     position: absolute;
     z-index: 20;
-    top: 0; bottom: 0;
+    /* começam abaixo da barra de botões, que continua clicável */
+    top: var(--altura-topbar, 46px);
+    bottom: 0;
     width: min(330px, 88vw);
     max-height: none;
     box-shadow: 0 10px 44px var(--shadow);

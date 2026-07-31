@@ -2964,7 +2964,20 @@ try {
 // sobre o terminal, deixando só uma fresta no meio. Ao cruzar para o modo
 // estreito, fecha as gavetas; e nesse modo nunca deixa as duas abertas.
 let estavaEstreito = null;
+// As gavetas começam exatamente onde o terminal começa — assim nunca cobrem a
+// saudação nem a barra de botões (incluindo os que as abrem e fecham). Medido
+// do topo da grade até o topo do terminal, então vale com a saudação visível
+// ou oculta, sem número fixo.
+function medirTopoDoTerminal() {
+  const grade = document.querySelector('.term-grid');
+  const painel = document.querySelector('.term-pane');
+  if (!grade || !painel) return;
+  const desloc = Math.round(painel.getBoundingClientRect().top - grade.getBoundingClientRect().top);
+  document.documentElement.style.setProperty('--altura-topbar', Math.max(0, desloc) + 'px');
+}
+
 function ajustaModoEstreito() {
+  medirTopoDoTerminal();
   const agora = ehEstreito();
   if (agora && estavaEstreito === false) {
     sidebarCollapsed = true;
@@ -2994,6 +3007,7 @@ function updateTermLayout() {
   if (bSb) bSb.classList.toggle('active', !sidebarCollapsed);
   // o terminal muda de largura — reajusta o xterm
   if ($('#tab-terminal').classList.contains('active')) setTimeout(fitActive, 40);
+  setTimeout(medirTopoDoTerminal, 60); // gavetas acompanham o novo topo
 }
 
 function applyAiVisibility(hasKey) {
