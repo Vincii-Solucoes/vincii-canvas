@@ -164,6 +164,9 @@ body.term-full .term-grid { height: calc(100vh - 100px); }
 }
 
 label { display: block; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
+/* o display acima vence o [hidden] do navegador — sem isto, esconder um <label>
+   pelo atributo hidden não surte efeito nenhum */
+label[hidden], .radios label[hidden] { display: none !important; }
 label.inline { display: flex; align-items: center; gap: 8px; }
 label.small, .small { font-size: 12px; }
 

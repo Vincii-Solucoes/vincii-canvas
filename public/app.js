@@ -317,7 +317,7 @@ function openHostModal(existing) {
       <label>Host / IP <input id="f_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
       <label>Porta <input id="f_port" type="number" min="1" max="65535" value="22"></label>
     </div>
-    <p id="f_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — usuário e senha trafegam em texto claro na rede. Use só em rede de gerência confiável. O login é feito no próprio terminal do equipamento, e execução em lote/agente de IA exigem SSH.</p>
+    <p id="f_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — usuário e senha trafegam em texto claro na rede. Use só em rede de gerência confiável. Preencha usuário e senha para o app fazer login sozinho; deixe a senha em branco para digitar no terminal. Execução em lote e agente de IA exigem SSH.</p>
     <fieldset class="appearance-fs">
       <legend>Aparência (ícone e cor)</legend>
       <div class="appearance">
@@ -342,7 +342,7 @@ function openHostModal(existing) {
         <label>Passphrase (opcional) <input id="f_passphrase" type="password" autocomplete="new-password"></label>
       </div>
       <div id="authPassFields" class="auth-fields" hidden>
-        <label>Senha <input id="f_password" type="password" autocomplete="new-password"></label>
+        <label><span id="f_passwordLabel">Senha</span> <input id="f_password" type="password" autocomplete="new-password"></label>
         <p class="hint">A senha fica salva em data.json (permissão 600) nesta máquina. Prefira agente ou chave.</p>
       </div>
     </fieldset>
@@ -366,15 +366,18 @@ function openHostModal(existing) {
     const isTelnet = proto === 'telnet';
     const isFtp = proto === 'ftp';
     $('#f_telnetNote').hidden = !isTelnet;
-    const authFs = $('#authFieldset');
-    if (authFs) authFs.hidden = isTelnet;
     $('#f_ftpsWrap').hidden = !isFtp;
-    // FTP autentica por usuário e senha; chave/agente não se aplicam
+    // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
+    // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
+    // prompts do equipamento; se vazia, você digita no terminal como antes.
+    const soSenha = isFtp || isTelnet;
     $$('input[name="authType"]').forEach((r) => {
       const linha = r.closest('label');
-      if (linha) linha.hidden = isFtp && r.value !== 'password';
+      if (linha) linha.hidden = soSenha && r.value !== 'password';
     });
-    if (isFtp) {
+    const lblSenha = $('#f_passwordLabel');
+    if (lblSenha) lblSenha.textContent = isTelnet ? 'Senha (opcional — login automático)' : 'Senha';
+    if (soSenha) {
       const senha = $$('input[name="authType"]').find((r) => r.value === 'password');
       if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
     }
