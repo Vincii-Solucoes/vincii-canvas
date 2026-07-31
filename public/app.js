@@ -2949,7 +2949,7 @@ try {
   // Em janela estreita a lista de hosts vira gaveta sobreposta: começa fechada
   // para o terminal nascer com a tela toda. Não grava a preferência — ao voltar
   // para uma janela grande, a escolha do usuário continua valendo.
-  if (window.innerWidth <= 900) { aiCollapsed = true; sidebarCollapsed = true; }
+  if (window.innerWidth <= 1000) { aiCollapsed = true; sidebarCollapsed = true; }
 } catch {}
 
 // aplica sidebar/painel de IA recolhidos ou não — devolve espaço ao terminal
@@ -3389,11 +3389,14 @@ function init() {
   $('#hostSearch').addEventListener('input', renderHostSidebar);
   $('#sidebarQuickConnect').addEventListener('click', openQuickConnectModal);
   $('#toggleSidebar').addEventListener('click', () => {
+    // em janela estreita as duas gavetas se sobrepõem: abrir uma fecha a outra
+    if (window.innerWidth <= 1000 && sidebarCollapsed) aiCollapsed = true;
     sidebarCollapsed = !sidebarCollapsed;
     prefSet('sidebarCollapsed', sidebarCollapsed);
     updateTermLayout();
   });
   $('#toggleAiPane').addEventListener('click', () => {
+    if (window.innerWidth <= 1000 && aiCollapsed) sidebarCollapsed = true;
     aiCollapsed = !aiCollapsed;
     prefSet('aiCollapsed', aiCollapsed);
     updateTermLayout();

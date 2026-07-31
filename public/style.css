@@ -1196,10 +1196,10 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
    Precisam vir depois das regras base (mesma especificidade: quem vem por
    último vence). Antes estavam no meio e o `.term-pane { min-height: 380px }`
    lá embaixo anulava a correção, deixando o terminal estourar a janela. */
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .term-pane { min-height: 0; }
   .term-main { min-height: 0; }
-  .term-grid { min-height: 360px; }
+  .term-grid { min-height: 300px; }
 }
 @media (max-width: 620px) {
   .term-grid { min-height: 300px; }
@@ -1243,25 +1243,30 @@ body.term-full .term-grid.no-ai.no-sidebar {
 }
 
 
-/* ---------- telas estreitas: hosts viram gaveta sobreposta ----------
-   Empilhado, a lista de hosts + saudação + abas comiam quase toda a altura e
-   sobravam ~90px de terminal. Aqui a lista sai do fluxo e aparece por cima só
-   quando você abre pelo botão, deixando o terminal com a tela inteira. */
-@media (max-width: 900px) {
+/* ---------- janela estreita: hosts e IA viram GAVETAS laterais ----------
+   Empilhados, os dois painéis engoliam a tela: a lista de hosts cobria o
+   terminal e o painel de IA tomava o resto — no tamanho mínimo da janela o
+   terminal sumia por completo. Aqui os dois saem do fluxo e deslizam por cima,
+   cada um de um lado, com o terminal ocupando SEMPRE a área toda por baixo. */
+@media (max-width: 1000px) {
   .term-grid,
   .term-grid.no-ai,
   .term-grid.no-sidebar,
   .term-grid.no-ai.no-sidebar {
     position: relative;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
-  .host-sidebar {
+  .host-sidebar, .ai-pane {
     position: absolute;
     z-index: 20;
-    top: 0; left: 0; right: 0;
-    max-height: min(60vh, 340px);
-    box-shadow: 0 14px 40px var(--shadow);
+    top: 0; bottom: 0;
+    width: min(330px, 88vw);
+    max-height: none;
+    box-shadow: 0 10px 44px var(--shadow);
   }
+  .host-sidebar { left: 0; }
+  .ai-pane { right: 0; }
   /* a saudação fica em uma linha só, para não roubar altura do terminal */
   .greet-bar { padding: 7px 10px; }
   .greet-text { flex-wrap: nowrap; overflow: hidden; }
