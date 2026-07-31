@@ -3238,7 +3238,14 @@ async function loadConfigTab() {
   try { s = await api('/api/settings'); } catch (e) { toast(e.message, 'erro'); return; }
   const sel = $('#cfgModel');
   sel.innerHTML = '';
-  (s.models || []).forEach((m) => { const o = el(sel, 'option', null, m); o.value = m; });
+  // nomes legíveis quando o servidor manda a lista descrita; senão, os ids
+  const lista = (s.modelList && s.modelList.length)
+    ? s.modelList
+    : (s.models || []).map((id) => ({ id, label: id }));
+  lista.forEach((m) => {
+    const o = el(sel, 'option', null, m.hint ? `${m.label} — ${m.hint}` : m.label);
+    o.value = m.id;
+  });
   sel.value = s.model;
   $('#cfgApiKey').value = '';
   $('#cfgApiKey').placeholder = s.hasApiKey ? '•••••••• (em branco = manter atual)' : 'sk-ant-…';
