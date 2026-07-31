@@ -2941,18 +2941,42 @@ async function aiSend(question) {
 
 // ---------- visibilidade dos recursos de IA + layout do terminal ----------
 let aiEnabled = false;
+// Abaixo desta largura os painéis viram gavetas sobrepostas (ver style.css).
+// Declarado ANTES de quem usa: como `const`, seria erro de zona morta lá em
+// cima — e o try/catch engoliria o erro sem ninguém perceber.
+const LARGURA_ESTREITA = 1000;
+function ehEstreito() { return window.innerWidth <= LARGURA_ESTREITA; }
+
 let aiCollapsed = false;      // usuário recolheu o painel de IA (lembrado)
 let sidebarCollapsed = false; // usuário recolheu a barra de hosts (lembrado)
 try {
   aiCollapsed = prefBool('aiCollapsed');
   sidebarCollapsed = prefBool('sidebarCollapsed');
-  // Em janela estreita a lista de hosts vira gaveta sobreposta: começa fechada
+  // Em janela estreita os painéis viram gavetas sobrepostas: começam fechados
   // para o terminal nascer com a tela toda. Não grava a preferência — ao voltar
   // para uma janela grande, a escolha do usuário continua valendo.
-  if (window.innerWidth <= 1000) { aiCollapsed = true; sidebarCollapsed = true; }
+  if (ehEstreito()) { aiCollapsed = true; sidebarCollapsed = true; }
 } catch {}
 
 // aplica sidebar/painel de IA recolhidos ou não — devolve espaço ao terminal
+
+// Ao ENCOLHER a janela, painéis que já estavam abertos viravam duas gavetas
+// sobre o terminal, deixando só uma fresta no meio. Ao cruzar para o modo
+// estreito, fecha as gavetas; e nesse modo nunca deixa as duas abertas.
+let estavaEstreito = null;
+function ajustaModoEstreito() {
+  const agora = ehEstreito();
+  if (agora && estavaEstreito === false) {
+    sidebarCollapsed = true;
+    aiCollapsed = true;
+    updateTermLayout();
+  } else if (agora && !sidebarCollapsed && !aiCollapsed) {
+    aiCollapsed = true; // as duas abertas não cabem
+    updateTermLayout();
+  }
+  estavaEstreito = agora;
+}
+
 function updateTermLayout() {
   const grid = document.querySelector('.term-grid');
   const pane = document.querySelector('.ai-pane');
@@ -3372,6 +3396,7 @@ function init() {
   initGreeting();
   initTermTabsScroll();
   initFiles();
+  ajustaModoEstreito();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
@@ -3390,18 +3415,21 @@ function init() {
   $('#sidebarQuickConnect').addEventListener('click', openQuickConnectModal);
   $('#toggleSidebar').addEventListener('click', () => {
     // em janela estreita as duas gavetas se sobrepõem: abrir uma fecha a outra
-    if (window.innerWidth <= 1000 && sidebarCollapsed) aiCollapsed = true;
+    if (ehEstreito() && sidebarCollapsed) aiCollapsed = true;
     sidebarCollapsed = !sidebarCollapsed;
     prefSet('sidebarCollapsed', sidebarCollapsed);
     updateTermLayout();
   });
   $('#toggleAiPane').addEventListener('click', () => {
-    if (window.innerWidth <= 1000 && aiCollapsed) sidebarCollapsed = true;
+    if (ehEstreito() && aiCollapsed) sidebarCollapsed = true;
     aiCollapsed = !aiCollapsed;
     prefSet('aiCollapsed', aiCollapsed);
     updateTermLayout();
   });
-  window.addEventListener('resize', () => { if ($('#tab-terminal').classList.contains('active')) fitActive(); });
+  window.addEventListener('resize', () => {
+    ajustaModoEstreito();
+    if ($('#tab-terminal').classList.contains('active')) fitActive();
+  });
   // Observa o painel do terminal: qualquer mudança de tamanho — janela, painéis
   // recolhidos, saudação oculta, troca de aba — reajusta o xterm. Antes isso
   // dependia só do evento de resize da janela, e o terminal ficava com o número
