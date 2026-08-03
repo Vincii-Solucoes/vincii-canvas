@@ -84,27 +84,43 @@ async function carregarIronRdp() {
   return ironrdp;
 }
 
+// Valores de IronErrorKind. Fixos aqui de propósito: o objeto de enum do
+// wasm-bindgen nem sempre chega junto do erro, e a tradução não pode depender
+// disso para funcionar.
+const ERRO_SENHA_ERRADA = 1;
+const ERRO_LOGIN = 2;
+const ERRO_ACESSO_NEGADO = 3;
+const ERRO_RDCLEANPATH = 4;
+const ERRO_PROXY = 5;
+const ERRO_NEGOCIACAO = 6;
+
 // Erros do IronRDP vêm como IronError, cujo texto é técnico demais para a
 // interface. Traduzimos os que o usuário consegue agir em cima.
-function humanizaRdp(erro, m) {
-  let texto = '';
-  let tipo = -1;
-  try { texto = typeof erro.backtrace === 'function' ? erro.backtrace() : String(erro); } catch { texto = String(erro); }
-  try { tipo = erro.kind; } catch {}
+//
+// Atenção: `kind` e `backtrace` são MÉTODOS, não propriedades — ler
+// `erro.kind` devolve a função, e a comparação com o número nunca casa.
+function humanizaRdp(erro) {
+  const ler = (nome) => {
+    try { const v = erro && erro[nome]; return typeof v === 'function' ? v.call(erro) : v; } catch { return undefined; }
+  };
+  const texto = String(ler('backtrace') ?? erro ?? '');
+  const tipo = ler('kind');
 
-  // kind 4 = erro de negociação do RDCleanPath. É o que o proxy devolve quando
-  // o servidor não sobe para TLS (ver lib/rdp.js) — a falha mais comum, e a
-  // única que o usuário resolve sozinho.
-  if (m && tipo === m.IronErrorKind.RDCleanPath) {
-    return 'O servidor recusou TLS. Habilite TLS/NLA no RDP dele — no xrdp, security_layer=negotiate.';
+  // O proxy responde erro de negociação quando o servidor não sobe para TLS
+  // (ver lib/rdp.js). É a falha mais comum e a única que o usuário resolve
+  // sozinho, então merece a mensagem mais direta.
+  if (tipo === ERRO_RDCLEANPATH || tipo === ERRO_NEGOCIACAO
+      || /RDCleanPath negotiation|standard RDP security is not supported/i.test(texto)) {
+    return 'O servidor recusou TLS — provavelmente está em RDP legado. '
+      + 'No xrdp: troque para security_layer=negotiate em /etc/xrdp/xrdp.ini e reinicie.';
   }
-  if (/CredSSP|NTLM|Kerberos|LogonDenied|logon/i.test(texto)) {
-    return 'Usuário ou senha recusados pelo servidor.';
+  if (tipo === ERRO_SENHA_ERRADA) return 'Senha incorreta.';
+  if (tipo === ERRO_LOGIN) return 'Usuário ou senha recusados pelo servidor.';
+  if (tipo === ERRO_ACESSO_NEGADO) return 'O servidor negou o acesso a este usuário.';
+  if (tipo === ERRO_PROXY || /WebSocket/i.test(texto)) {
+    return 'Não foi possível falar com o servidor. Ele está acessível na rede?';
   }
-  if (/standard RDP security is not supported/i.test(texto)) {
-    return 'O servidor só oferece RDP legado, sem TLS — não é suportado.';
-  }
-  if (/WebSocket/i.test(texto)) return 'Não foi possível falar com o servidor. Ele está acessível na rede?';
+  if (/CredSSP|NTLM|Kerberos|logon/i.test(texto)) return 'Falha de autenticação no servidor.';
   return texto || 'Erro na sessão RDP.';
 }
 
@@ -290,10 +306,10 @@ function conectarRdp({ hostId, container, onEstado }) {
           try { motivo = info && typeof info.reason === 'function' ? info.reason() : ''; } catch {}
           onEstado({ estado: 'desconectado', erro: motivo });
         },
-        (e) => onEstado({ estado: 'desconectado', erro: humanizaRdp(e, m) }),
+        (e) => onEstado({ estado: 'desconectado', erro: humanizaRdp(e) }),
       );
     } catch (e) {
-      if (!cancelado) onEstado({ estado: 'erro', erro: humanizaRdp(e, m) });
+      if (!cancelado) onEstado({ estado: 'erro', erro: humanizaRdp(e) });
     }
   })();
 
