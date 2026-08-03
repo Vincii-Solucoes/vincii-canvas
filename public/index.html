@@ -361,10 +361,8 @@ try {
     <div class="card">
       <h2>Área de trabalho remota (VNC e RDP)</h2>
       <p class="hint">Cadastre o host com protocolo <strong>VNC</strong> ou <strong>RDP</strong> em <strong>Hosts</strong> e clique nele na barra lateral do <strong>Terminal</strong> — a área de trabalho abre como mais uma aba.</p>
-      <p class="hint"><strong>VNC funciona sem instalar nada.</strong> Já o <strong>RDP</strong> moderno exige NLA/CredSSP, que não existe em JavaScript: o app usa o <em>guacd</em> (daemon do Apache Guacamole) para traduzir. Suba com Docker:</p>
-      <pre class="console small-console">docker run -d --name guacd -p 4822:4822 guacamole/guacd</pre>
-      <p class="hint">O endereço pode ser mudado pelas variáveis <code>GUACD_HOST</code> e <code>GUACD_PORT</code>.</p>
-      <div class="btn-row"><button id="btnCheckGuacd" class="btn">Verificar guacd</button><span id="guacdState" class="muted small"></span></div>
+      <p class="hint"><strong>Os dois funcionam sem instalar nada</strong> — nem Docker, nem guacd. O RDP roda em WebAssembly dentro do próprio app, com NLA/CredSSP, e o servidor entra só como ponte de rede.</p>
+      <p class="hint">O RDP <strong>exige TLS no servidor</strong> (que é o padrão no Windows). Em servidores Linux com xrdp configurado em <code>security_layer=rdp</code> a conexão é recusada: troque para <code>security_layer=negotiate</code> em <code>/etc/xrdp/xrdp.ini</code> e reinicie o xrdp.</p>
     </div>
 
     <div class="card">

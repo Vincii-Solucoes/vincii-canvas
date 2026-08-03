@@ -1073,18 +1073,8 @@ function onFilesTabShown() {
 }
 
 // ---------- área de trabalho remota (VNC / RDP) ----------
-// As sessões vivem como abas do Terminal (ver createDeskSession). Aqui fica só
-// o estado do guacd, consultado antes de abrir um RDP.
-const deskState = { guacd: false, checado: false };
-
-async function verificaGuacd() {
-  try {
-    const r = await api('/api/desktop/status');
-    deskState.guacd = !!r.guacd;
-    deskState.checado = true;
-  } catch { deskState.guacd = false; }
-  return deskState.guacd;
-}
+// As sessões vivem como abas do Terminal (ver createDeskSession). Nada de
+// estado global aqui: VNC e RDP abrem sem depender de serviço externo.
 
 // ---------- saudação nerd (barra no topo do terminal) ----------
 // Frases de ficção científica/cultura nerd, em pt-BR, para dar as boas-vindas.
@@ -2301,13 +2291,8 @@ function openSession(hostId) {
   if (!host) { toast('Host não encontrado.', 'erro'); return; }
   addRecent(hostId); // passa a aparecer na lista de recentes da sidebar
   if (host.protocol === 'vnc' || host.protocol === 'rdp') {
-    if (host.protocol === 'rdp' && !deskState.guacd) {
-      verificaGuacd().then((ok) => {
-        if (ok) createDeskSession({ hostId, hostName: host.name, protocol: 'rdp' });
-        else toast('RDP precisa do guacd rodando. Veja as instruções em Configurações.', 'erro');
-      });
-      return;
-    }
+    // RDP não depende mais do guacd: o IronRDP roda em WebAssembly no próprio
+    // navegador, então abre igual ao VNC, sem nada instalado.
     createDeskSession({ hostId, hostName: host.name, protocol: host.protocol });
     return;
   }
@@ -3510,13 +3495,6 @@ function init() {
   initGreeting();
   initTermTabsScroll();
   initFiles();
-  const btnGuacd = $('#btnCheckGuacd');
-  if (btnGuacd) btnGuacd.addEventListener('click', async () => {
-    const el2 = $('#guacdState');
-    el2.textContent = 'verificando…';
-    const ok = await verificaGuacd();
-    el2.textContent = ok ? '✅ guacd respondendo — RDP disponível' : '⚠️ guacd fora do ar — só VNC por enquanto';
-  });
   ajustaModoEstreito();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);

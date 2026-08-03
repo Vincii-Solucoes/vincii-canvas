@@ -138,7 +138,9 @@ function pkgDir(id) {
 }
 app.use('/vendor/xterm', express.static(pkgDir('@xterm/xterm')));
 app.use('/vendor/addon-fit', express.static(pkgDir('@xterm/addon-fit')));
-// Clientes de área de trabalho remota: noVNC (VNC) e guacamole-common-js (RDP)
+// Clientes de área de trabalho remota: noVNC (VNC) e ironrdp-wasm (RDP).
+// O guacamole-common-js continua servido, mas nada o importa: o caminho do
+// guacd ficou dormente e só sai depois que o IronRDP for validado em campo.
 app.use('/vendor/novnc', express.static(pkgDir('@novnc/novnc')));
 app.use('/vendor/guacamole', express.static(pkgDir('guacamole-common-js')));
 app.use('/vendor/ironrdp', express.static(pkgDir('ironrdp-wasm')));
@@ -388,9 +390,34 @@ function transferir(origem, caminhoOrigem, destino, caminhoDestino) {
 
 app.get('/api/desktop/status', async (req, res) => {
   res.json({
+    // RDP passou a rodar em WebAssembly no próprio app: não depende de nada
+    // instalado. O guacd continua reportado só para quem ainda o usa.
+    rdp: true,
     guacd: await desktop.guacdDisponivel(),
     guacdHost: desktop.GUACD_HOST,
     guacdPort: desktop.GUACD_PORT,
+  });
+});
+
+// A senha de um host NUNCA sai daqui pelas rotas normais (ver publicHost).
+// Esta é a única exceção, e é deliberada: o CredSSP do RDP roda no WebAssembly,
+// dentro do navegador, então a credencial precisa chegar lá.
+//
+// Barreiras: guarda de origem (como todas as rotas) MAIS o token do processo,
+// que não está em disco e é sorteado a cada abertura do app. É POST para a
+// credencial nunca aparecer em URL, histórico ou log de acesso.
+app.post('/api/rdp/credencial', (req, res) => {
+  const corpo = req.body || {};
+  if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
+  const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId);
+  if (!host) return fail(res, 404, 'Host não encontrado.');
+  if (host.protocol !== 'rdp') return fail(res, 400, 'Este host não é RDP.');
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    username: host.username || '',
+    password: (host.auth && host.auth.password) || '',
+    domain: host.rdpDomain || '',
+    destino: `${host.host}:${host.port || 3389}`,
   });
 });
 
