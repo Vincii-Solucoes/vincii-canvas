@@ -16,6 +16,7 @@ const history = require('./lib/history');
 const quickhosts = require('./lib/quickhosts');
 const files = require('./lib/files');
 const desktop = require('./lib/desktop');
+const rdp = require('./lib/rdp');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const pkg = require('./package.json');
@@ -140,6 +141,7 @@ app.use('/vendor/addon-fit', express.static(pkgDir('@xterm/addon-fit')));
 // Clientes de área de trabalho remota: noVNC (VNC) e guacamole-common-js (RDP)
 app.use('/vendor/novnc', express.static(pkgDir('@novnc/novnc')));
 app.use('/vendor/guacamole', express.static(pkgDir('guacamole-common-js')));
+app.use('/vendor/ironrdp', express.static(pkgDir('ironrdp-wasm')));
 
 function fail(res, status, error) {
   res.status(status).json({ error });
@@ -1217,6 +1219,7 @@ function start(port = PORT, host = HOST) {
       }
       if (pathname === '/api/vnc') desktop.vncWss.handleUpgrade(req, socket, head, (ws) => desktop.vncWss.emit('connection', ws, req));
       else if (pathname === '/api/guac') desktop.guacWss.handleUpgrade(req, socket, head, (ws) => desktop.guacWss.emit('connection', ws, req));
+      else if (pathname === '/api/rdp') rdp.rdpWss.handleUpgrade(req, socket, head, (ws) => rdp.rdpWss.emit('connection', ws, req));
       else if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
       else if (pathname === '/api/localterminal') localWss.handleUpgrade(req, socket, head, (ws) => localWss.emit('connection', ws, req));
       else socket.destroy();
