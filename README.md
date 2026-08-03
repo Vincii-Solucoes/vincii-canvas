@@ -122,3 +122,22 @@ test/sshd-local.js servidor SSH local de teste
 data.json          seus dados (gerado ao usar; não versionar)
 dist/              instaladores gerados (não versionar)
 ```
+
+## Área de trabalho remota (VNC e RDP)
+
+Cadastre o host com protocolo **VNC** (porta padrão 5900) ou **RDP** (3389) e
+conecte pela aba **Área de trabalho**.
+
+- **VNC funciona sem instalar nada**: o app fala RFB direto com o servidor.
+- **RDP exige o guacd**, daemon do Apache Guacamole. O RDP moderno usa
+  NLA/CredSSP, que não tem implementação viável em JavaScript; o guacd faz a
+  tradução. Suba com Docker:
+
+  ```
+  docker run -d --name guacd -p 4822:4822 guacamole/guacd
+  ```
+
+  O endereço pode ser mudado com as variáveis `GUACD_HOST` e `GUACD_PORT`.
+
+Execução em lote e o agente de IA continuam exigindo SSH — hosts VNC e RDP são
+recusados por essas funções, com mensagem clara.

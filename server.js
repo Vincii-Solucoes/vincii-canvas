@@ -15,6 +15,7 @@ const agent = require('./lib/agent');
 const history = require('./lib/history');
 const quickhosts = require('./lib/quickhosts');
 const files = require('./lib/files');
+const desktop = require('./lib/desktop');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const pkg = require('./package.json');
@@ -124,12 +125,21 @@ app.get('/index.html', serveIndex);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Assets do terminal (xterm.js) servidos direto do pacote instalado
+// Assets do terminal (xterm.js) servidos direto do pacote instalado.
+// Alguns pacotes (noVNC) bloqueiam "./package.json" no campo exports, então
+// require.resolve falha — nesses casos caímos para o caminho em node_modules.
 function pkgDir(id) {
-  return path.dirname(require.resolve(id + '/package.json'));
+  try {
+    return path.dirname(require.resolve(id + '/package.json'));
+  } catch {
+    return path.join(__dirname, 'node_modules', ...id.split('/'));
+  }
 }
 app.use('/vendor/xterm', express.static(pkgDir('@xterm/xterm')));
 app.use('/vendor/addon-fit', express.static(pkgDir('@xterm/addon-fit')));
+// Clientes de área de trabalho remota: noVNC (VNC) e guacamole-common-js (RDP)
+app.use('/vendor/novnc', express.static(pkgDir('@novnc/novnc')));
+app.use('/vendor/guacamole', express.static(pkgDir('guacamole-common-js')));
 
 function fail(res, status, error) {
   res.status(status).json({ error });
@@ -374,6 +384,14 @@ function transferir(origem, caminhoOrigem, destino, caminhoDestino) {
   });
 }
 
+app.get('/api/desktop/status', async (req, res) => {
+  res.json({
+    guacd: await desktop.guacdDisponivel(),
+    guacdHost: desktop.GUACD_HOST,
+    guacdPort: desktop.GUACD_PORT,
+  });
+});
+
 // ---------- histórico de comandos ----------
 // Resolve os metadados da máquina (nome/IP/usuário) a partir do host ou do local,
 // no servidor — o cliente nunca dita esses dados (evita spoofing e mantém consistência).
@@ -463,8 +481,9 @@ function publicHost(h) {
     host: h.host,
     port: h.port,
     username: h.username,
-    protocol: ['telnet', 'ftp'].includes(h.protocol) ? h.protocol : 'ssh',
+    protocol: ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh',
     ftps: h.ftps || 'auto',
+    rdpDomain: h.rdpDomain || '',
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
@@ -485,8 +504,8 @@ function parseHostBody(body, res) {
   if (!name) return fail(res, 400, 'Informe um nome para o host.');
   const hostAddr = String(body.host || '').trim();
   if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
-  const protocol = ['telnet', 'ftp'].includes(body.protocol) ? body.protocol : 'ssh';
-  const PORTA_PADRAO = { telnet: 23, ftp: 21, ssh: 22 };
+  const protocol = ['telnet', 'ftp', 'vnc', 'rdp'].includes(body.protocol) ? body.protocol : 'ssh';
+  const PORTA_PADRAO = { telnet: 23, ftp: 21, vnc: 5900, rdp: 3389, ssh: 22 };
   const port = Number(body.port || PORTA_PADRAO[protocol]);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail(res, 400, 'Porta inválida.');
   const username = String(body.username || '').trim();
@@ -509,7 +528,8 @@ function parseHostBody(body, res) {
   const group = String(body.group || '').trim().slice(0, 60);
   const icon = slug(body.icon);
   const color = slug(body.color);
-  return { name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars };
+  const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -586,11 +606,11 @@ app.post('/api/import', (req, res) => {
     const name = String((h && h.name) || '').trim();
     const hostAddr = String((h && h.host) || '').trim();
     const username = String((h && h.username) || '').trim();
-    const proto = ['telnet', 'ftp'].includes(h && h.protocol) ? h.protocol : 'ssh';
+    const proto = ['telnet', 'ftp', 'vnc', 'rdp'].includes(h && h.protocol) ? h.protocol : 'ssh';
     // Telnet e FTP podem legitimamente não ter usuário (login no equipamento):
     // exigir usuário aqui fazia esses hosts sumirem na restauração.
     if (!name || !hostAddr || (!username && proto === 'ssh')) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
-    let port = Number(h.port) || ({ telnet: 23, ftp: 21 }[h.protocol] || 22);
+    let port = Number(h.port) || ({ telnet: 23, ftp: 21, vnc: 5900, rdp: 3389 }[h.protocol] || 22);
     if (!Number.isInteger(port) || port < 1 || port > 65535) port = 22;
     const a = h.auth || {};
     const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
@@ -601,7 +621,7 @@ app.post('/api/import', (req, res) => {
     }
     if (type === 'password' && a.password) auth.password = String(a.password);
     const vars = cleanVarsLenient(h.vars);
-    const protocol = ['telnet', 'ftp'].includes(h.protocol) ? h.protocol : 'ssh';
+    const protocol = ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh';
     const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
     const group = String(h.group || '').trim().slice(0, 60);
     const icon = slug(h.icon);
@@ -918,7 +938,7 @@ function resolveRequest(body, res) {
   for (const id of ids) {
     const h = d.hosts.find((x) => x.id === id);
     if (!h) return fail(res, 400, 'Host não encontrado: ' + id);
-    if (h.protocol === 'telnet' || h.protocol === 'ftp') return fail(res, 400, `"${h.name}" é ${h.protocol.toUpperCase()} — execução em lote exige SSH.`);
+    if (h.protocol && h.protocol !== 'ssh') return fail(res, 400, `"${h.name}" é ${h.protocol.toUpperCase()} — execução em lote exige SSH.`);
     hosts.push(h);
   }
 
@@ -1119,7 +1139,7 @@ app.post('/api/agent/start', (req, res) => {
   } else {
     host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
-    if (host.protocol === 'telnet' || host.protocol === 'ftp') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet ou FTP.');
+    if (host.protocol && host.protocol !== 'ssh') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet, FTP, VNC ou RDP.');
   }
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');
@@ -1195,7 +1215,9 @@ function start(port = PORT, host = HOST) {
         socket.destroy();
         return;
       }
-      if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
+      if (pathname === '/api/vnc') desktop.vncWss.handleUpgrade(req, socket, head, (ws) => desktop.vncWss.emit('connection', ws, req));
+      else if (pathname === '/api/guac') desktop.guacWss.handleUpgrade(req, socket, head, (ws) => desktop.guacWss.emit('connection', ws, req));
+      else if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
       else if (pathname === '/api/localterminal') localWss.handleUpgrade(req, socket, head, (ws) => localWss.emit('connection', ws, req));
       else socket.destroy();
     });

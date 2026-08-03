@@ -21,6 +21,7 @@ try {
 <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
 <script src="host-icons.js" defer></script>
 <script src="app.js" defer></script>
+<script src="desktop.js" type="module"></script>
 </head>
 <body>
 <div id="splash" class="splash" role="status" aria-label="Carregando Vincii Canvas">
@@ -50,6 +51,7 @@ try {
       <button data-tab="hosts">Hosts</button>
       <button data-tab="playbooks">Playbooks</button>
       <button data-tab="files">Arquivos</button>
+      <button data-tab="desktop">Área de trabalho</button>
       <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
       <button data-tab="vars">Variáveis</button>
@@ -260,6 +262,33 @@ try {
   </section>
 
   <div id="fileMenu" class="ctx-menu" hidden></div>
+
+  <section id="tab-desktop" class="tab-panel">
+    <div class="files-bar card">
+      <label class="inline files-host">Máquina
+        <select id="deskHostSelect"></select>
+      </label>
+      <button id="deskConnect" class="btn primary">Conectar</button>
+      <button id="deskDisconnect" class="btn" hidden>Desconectar</button>
+      <span id="deskProtoBadge" class="proto-badge" hidden></span>
+      <span class="spacer"></span>
+      <span id="deskStatus" class="muted small"></span>
+    </div>
+    <div id="deskGuacdAviso" class="card warn-hint" hidden>
+      <strong>RDP precisa do guacd.</strong> O RDP moderno exige NLA/CredSSP, que não existe em JavaScript —
+      o app usa o <em>guacd</em> (daemon do Apache Guacamole) para traduzir. Suba com Docker:
+      <pre class="console small-console">docker run -d --name guacd -p 4822:4822 guacamole/guacd</pre>
+      Enquanto ele não estiver no ar, só hosts <strong>VNC</strong> conectam. O endereço pode ser mudado
+      pelas variáveis <code>GUACD_HOST</code> e <code>GUACD_PORT</code>.
+    </div>
+    <div class="card desk-card">
+      <div id="deskScreen" class="desk-screen"></div>
+      <div id="deskEmpty" class="desk-empty">
+        <p>Escolha uma máquina acima e clique em <strong>Conectar</strong>.</p>
+        <p class="hint">Hosts com protocolo <strong>VNC</strong> ou <strong>RDP</strong> aparecem na lista. Cadastre em <strong>Hosts</strong>.</p>
+      </div>
+    </div>
+  </section>
 
   <section id="tab-favorites" class="tab-panel">
     <div class="card">

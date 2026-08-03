@@ -181,6 +181,9 @@ function initTabs() {
     if (btn.dataset.tab === 'config') loadConfigTab();
     if (btn.dataset.tab === 'history') loadHistory();
     if (btn.dataset.tab === 'files') onFilesTabShown();
+    if (btn.dataset.tab === 'desktop') onDesktopTabShown();
+    // o teclado do RDP é global: só captura enquanto a aba está aberta
+    else if (window.vcDesktop) window.vcDesktop.pausarTeclado(true);
   }));
   document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
@@ -192,6 +195,7 @@ async function loadState() {
   renderPlaybooks();
   renderFavoritesTab();
   renderFileHostSelect();
+  renderDeskHostSelect();
   renderProfiles();
   renderGlobals();
   renderExecControls();
@@ -303,8 +307,13 @@ function openHostModal(existing) {
         <select id="f_protocol">
           <option value="ssh">SSH / SFTP (recomendado)</option>
           <option value="ftp">FTP / FTPS (transferência de arquivos)</option>
+          <option value="vnc">VNC (área de trabalho remota)</option>
+          <option value="rdp">RDP (área de trabalho do Windows)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
         </select>
+      </label>
+      <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
+        <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
       </label>
       <label id="f_ftpsWrap" hidden>Criptografia (FTPS)
         <select id="f_ftps">
@@ -361,30 +370,35 @@ function openHostModal(existing) {
   $('#f_port').value = existing ? existing.port : 22;
   $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
   $('#f_ftps').value = (existing && existing.ftps) || 'auto';
+  $('#f_rdpDomain').value = (existing && existing.rdpDomain) || '';
   // Telnet: porta padrão 23, autenticação some (login é no equipamento)
   const syncProtocol = () => {
     const proto = $('#f_protocol').value;
     const isTelnet = proto === 'telnet';
     const isFtp = proto === 'ftp';
+    const isVnc = proto === 'vnc';
+    const isRdp = proto === 'rdp';
     $('#f_telnetNote').hidden = !isTelnet;
     $('#f_ftpsWrap').hidden = !isFtp;
+    $('#f_rdpDomainWrap').hidden = !isRdp;
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
     // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
     // prompts do equipamento; se vazia, você digita no terminal como antes.
-    const soSenha = isFtp || isTelnet;
+    const soSenha = isFtp || isTelnet || isVnc || isRdp;
     $$('input[name="authType"]').forEach((r) => {
       const linha = r.closest('label');
       if (linha) linha.hidden = soSenha && r.value !== 'password';
     });
     const lblSenha = $('#f_passwordLabel');
-    if (lblSenha) lblSenha.textContent = isTelnet ? 'Senha (opcional — login automático)' : 'Senha';
+    if (lblSenha) lblSenha.textContent = isTelnet ? 'Senha (opcional — login automático)'
+      : isVnc ? 'Senha do VNC' : 'Senha';
     if (soSenha) {
       const senha = $$('input[name="authType"]').find((r) => r.value === 'password');
       if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
     }
     const port = $('#f_port');
-    const padroes = { telnet: 23, ftp: 21, ssh: 22 };
-    if (!existing && ['21', '22', '23', ''].includes(String(port.value))) port.value = padroes[proto];
+    const padroes = { telnet: 23, ftp: 21, vnc: 5900, rdp: 3389, ssh: 22 };
+    if (!existing && ['21', '22', '23', '3389', '5900', ''].includes(String(port.value))) port.value = padroes[proto];
   };
   $('#f_protocol').addEventListener('change', syncProtocol);
   syncProtocol();
@@ -475,6 +489,7 @@ function openHostModal(existing) {
       username: $('#f_user').value.trim(),
       protocol: $('#f_protocol').value,
       ftps: $('#f_ftps').value,
+      rdpDomain: $('#f_rdpDomain').value,
       vars,
       auth: { type: authType },
     };
@@ -1059,6 +1074,96 @@ function initFiles() {
 function onFilesTabShown() {
   renderFileHostSelect();
   if (!fileState.lists.local) fileList('local', '');
+}
+
+// ---------- área de trabalho remota (VNC / RDP) ----------
+const deskState = { conectado: false, protocolo: null, guacd: false };
+
+function deskHostsDisponiveis() {
+  return state.hosts.filter((h) => h.protocol === 'vnc' || h.protocol === 'rdp');
+}
+
+function renderDeskHostSelect() {
+  const sel = $('#deskHostSelect');
+  if (!sel) return;
+  const atual = sel.value;
+  sel.innerHTML = '';
+  const hosts = deskHostsDisponiveis();
+  if (!hosts.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'Nenhuma máquina VNC ou RDP — cadastre em Hosts';
+    sel.appendChild(o);
+    return;
+  }
+  for (const h of hosts) {
+    const o = document.createElement('option');
+    o.value = h.id;
+    o.textContent = `${h.name} — ${h.protocol.toUpperCase()} (${h.host}:${h.port})`;
+    sel.appendChild(o);
+  }
+  if (atual) sel.value = atual;
+}
+
+function deskEstado({ estado, erro }) {
+  const st = $('#deskStatus');
+  if (estado === 'conectado') {
+    deskState.conectado = true;
+    $('#deskEmpty').hidden = true;
+    $('#deskConnect').hidden = true;
+    $('#deskDisconnect').hidden = false;
+    if (st) st.textContent = 'conectado';
+  } else if (estado === 'desconectado' || estado === 'erro') {
+    deskState.conectado = false;
+    $('#deskEmpty').hidden = false;
+    $('#deskConnect').hidden = false;
+    $('#deskDisconnect').hidden = true;
+    $('#deskProtoBadge').hidden = true;
+    if (st) st.textContent = erro ? '' : 'desconectado';
+    if (erro) toast(erro, 'erro');
+  }
+}
+
+async function conectarDesktop() {
+  const id = $('#deskHostSelect').value;
+  if (!id) { toast('Cadastre uma máquina VNC ou RDP primeiro.', 'erro'); return; }
+  const host = state.hosts.find((h) => h.id === id);
+  if (!host) return;
+  if (!window.vcDesktop) { toast('Cliente de área de trabalho ainda carregando — tente de novo.', 'erro'); return; }
+  if (host.protocol === 'rdp' && !deskState.guacd) {
+    toast('O guacd não está no ar — veja as instruções acima para subir com Docker.', 'erro');
+    return;
+  }
+  const tela = $('#deskScreen');
+  const badge = $('#deskProtoBadge');
+  badge.hidden = false;
+  badge.textContent = host.protocol.toUpperCase();
+  $('#deskStatus').textContent = 'conectando…';
+  deskState.protocolo = host.protocol;
+  try {
+    if (host.protocol === 'vnc') {
+      window.vcDesktop.conectarVnc({ hostId: id, senha: '', container: tela, onEstado: deskEstado });
+    } else {
+      window.vcDesktop.conectarRdp({ hostId: id, container: tela, onEstado: deskEstado });
+    }
+  } catch (e) { deskEstado({ estado: 'erro', erro: e.message }); }
+}
+
+function desconectarDesktop() {
+  if (window.vcDesktop) window.vcDesktop.desconectar();
+  deskEstado({ estado: 'desconectado' });
+}
+
+async function onDesktopTabShown() {
+  renderDeskHostSelect();
+  try {
+    const r = await api('/api/desktop/status');
+    deskState.guacd = !!r.guacd;
+    // o aviso só aparece quando faz falta: existe host RDP e o guacd está fora
+    const temRdp = state.hosts.some((h) => h.protocol === 'rdp');
+    $('#deskGuacdAviso').hidden = r.guacd || !temRdp;
+  } catch {}
+  if (window.vcDesktop) window.vcDesktop.pausarTeclado(false);
 }
 
 // ---------- saudação nerd (barra no topo do terminal) ----------
@@ -2148,6 +2253,8 @@ function removeRecent(id) {
 function hostAddrLabel(h) {
   if (h.protocol === 'telnet') return `telnet://${h.host}:${h.port}`;
   if (h.protocol === 'ftp') return `ftp://${h.username || 'anonymous'}@${h.host}:${h.port}`;
+  if (h.protocol === 'vnc') return `vnc://${h.host}:${h.port}`;
+  if (h.protocol === 'rdp') return `rdp://${h.username ? h.username + '@' : ''}${h.host}:${h.port}`;
   return `${h.username}@${h.host}:${h.port}`;
 }
 
@@ -2170,6 +2277,8 @@ function renderHostSidebar() {
     el(nameRow, 'span', null, h.name);
     if (h.protocol === 'telnet') el(nameRow, 'span', 'proto-badge', 'TELNET');
     else if (h.protocol === 'ftp') el(nameRow, 'span', 'proto-badge', 'FTP');
+    else if (h.protocol === 'vnc') el(nameRow, 'span', 'proto-badge', 'VNC');
+    else if (h.protocol === 'rdp') el(nameRow, 'span', 'proto-badge', 'RDP');
     el(info, 'div', 'haddr', hostAddrLabel(h));
     if (nConn > 1) el(item, 'span', 'conn-count', String(nConn));
     el(item, 'span', 'dot');
@@ -3417,6 +3526,8 @@ function init() {
   initGreeting();
   initTermTabsScroll();
   initFiles();
+  $('#deskConnect').addEventListener('click', conectarDesktop);
+  $('#deskDisconnect').addEventListener('click', desconectarDesktop);
   ajustaModoEstreito();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
