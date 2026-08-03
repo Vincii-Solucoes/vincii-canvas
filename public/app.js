@@ -181,9 +181,6 @@ function initTabs() {
     if (btn.dataset.tab === 'config') loadConfigTab();
     if (btn.dataset.tab === 'history') loadHistory();
     if (btn.dataset.tab === 'files') onFilesTabShown();
-    if (btn.dataset.tab === 'desktop') onDesktopTabShown();
-    // o teclado do RDP é global: só captura enquanto a aba está aberta
-    else if (window.vcDesktop) window.vcDesktop.pausarTeclado(true);
   }));
   document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
@@ -195,7 +192,6 @@ async function loadState() {
   renderPlaybooks();
   renderFavoritesTab();
   renderFileHostSelect();
-  renderDeskHostSelect();
   renderProfiles();
   renderGlobals();
   renderExecControls();
@@ -1077,93 +1073,17 @@ function onFilesTabShown() {
 }
 
 // ---------- área de trabalho remota (VNC / RDP) ----------
-const deskState = { conectado: false, protocolo: null, guacd: false };
+// As sessões vivem como abas do Terminal (ver createDeskSession). Aqui fica só
+// o estado do guacd, consultado antes de abrir um RDP.
+const deskState = { guacd: false, checado: false };
 
-function deskHostsDisponiveis() {
-  return state.hosts.filter((h) => h.protocol === 'vnc' || h.protocol === 'rdp');
-}
-
-function renderDeskHostSelect() {
-  const sel = $('#deskHostSelect');
-  if (!sel) return;
-  const atual = sel.value;
-  sel.innerHTML = '';
-  const hosts = deskHostsDisponiveis();
-  if (!hosts.length) {
-    const o = document.createElement('option');
-    o.value = '';
-    o.textContent = 'Nenhuma máquina VNC ou RDP — cadastre em Hosts';
-    sel.appendChild(o);
-    return;
-  }
-  for (const h of hosts) {
-    const o = document.createElement('option');
-    o.value = h.id;
-    o.textContent = `${h.name} — ${h.protocol.toUpperCase()} (${h.host}:${h.port})`;
-    sel.appendChild(o);
-  }
-  if (atual) sel.value = atual;
-}
-
-function deskEstado({ estado, erro }) {
-  const st = $('#deskStatus');
-  if (estado === 'conectado') {
-    deskState.conectado = true;
-    $('#deskEmpty').hidden = true;
-    $('#deskConnect').hidden = true;
-    $('#deskDisconnect').hidden = false;
-    if (st) st.textContent = 'conectado';
-  } else if (estado === 'desconectado' || estado === 'erro') {
-    deskState.conectado = false;
-    $('#deskEmpty').hidden = false;
-    $('#deskConnect').hidden = false;
-    $('#deskDisconnect').hidden = true;
-    $('#deskProtoBadge').hidden = true;
-    if (st) st.textContent = erro ? '' : 'desconectado';
-    if (erro) toast(erro, 'erro');
-  }
-}
-
-async function conectarDesktop() {
-  const id = $('#deskHostSelect').value;
-  if (!id) { toast('Cadastre uma máquina VNC ou RDP primeiro.', 'erro'); return; }
-  const host = state.hosts.find((h) => h.id === id);
-  if (!host) return;
-  if (!window.vcDesktop) { toast('Cliente de área de trabalho ainda carregando — tente de novo.', 'erro'); return; }
-  if (host.protocol === 'rdp' && !deskState.guacd) {
-    toast('O guacd não está no ar — veja as instruções acima para subir com Docker.', 'erro');
-    return;
-  }
-  const tela = $('#deskScreen');
-  const badge = $('#deskProtoBadge');
-  badge.hidden = false;
-  badge.textContent = host.protocol.toUpperCase();
-  $('#deskStatus').textContent = 'conectando…';
-  deskState.protocolo = host.protocol;
-  try {
-    if (host.protocol === 'vnc') {
-      window.vcDesktop.conectarVnc({ hostId: id, senha: '', container: tela, onEstado: deskEstado });
-    } else {
-      window.vcDesktop.conectarRdp({ hostId: id, container: tela, onEstado: deskEstado });
-    }
-  } catch (e) { deskEstado({ estado: 'erro', erro: e.message }); }
-}
-
-function desconectarDesktop() {
-  if (window.vcDesktop) window.vcDesktop.desconectar();
-  deskEstado({ estado: 'desconectado' });
-}
-
-async function onDesktopTabShown() {
-  renderDeskHostSelect();
+async function verificaGuacd() {
   try {
     const r = await api('/api/desktop/status');
     deskState.guacd = !!r.guacd;
-    // o aviso só aparece quando faz falta: existe host RDP e o guacd está fora
-    const temRdp = state.hosts.some((h) => h.protocol === 'rdp');
-    $('#deskGuacdAviso').hidden = r.guacd || !temRdp;
-  } catch {}
-  if (window.vcDesktop) window.vcDesktop.pausarTeclado(false);
+    deskState.checado = true;
+  } catch { deskState.guacd = false; }
+  return deskState.guacd;
 }
 
 // ---------- saudação nerd (barra no topo do terminal) ----------
@@ -2345,10 +2265,12 @@ function xtermReady() {
 
 function fitActive() {
   const s = activeSession();
-  if (s) { try { s.fitAddon.fit(); } catch {} }
+  if (s && s.kind !== 'desk') { try { s.fitAddon.fit(); } catch {} }
 }
 
 function focusActive() {
+  const sa = activeSession();
+  if (sa && sa.kind === 'desk') return;
   // enquanto o usuário renomeia uma aba, o terminal não pode roubar o foco
   // (o campo de edição perderia o foco e a renomeação seria cancelada)
   if (renamingId !== null) return;
@@ -2359,7 +2281,7 @@ function focusActive() {
 // Re-mede a sessão e envia o tamanho atual ao servidor (corrige uma conexão que
 // nasceu estreita por o xterm ainda não ter sido pintado quando conectou).
 function sendResize(session) {
-  if (!session) return;
+  if (!session || session.kind === 'desk') return;
   try { session.fitAddon.fit(); } catch {}
   if (session.ws && session.ws.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify({ t: 'r', cols: session.term.cols || 80, rows: session.term.rows || 24 }));
@@ -2378,6 +2300,17 @@ function openSession(hostId) {
   const host = state.hosts.find((h) => h.id === hostId);
   if (!host) { toast('Host não encontrado.', 'erro'); return; }
   addRecent(hostId); // passa a aparecer na lista de recentes da sidebar
+  if (host.protocol === 'vnc' || host.protocol === 'rdp') {
+    if (host.protocol === 'rdp' && !deskState.guacd) {
+      verificaGuacd().then((ok) => {
+        if (ok) createDeskSession({ hostId, hostName: host.name, protocol: 'rdp' });
+        else toast('RDP precisa do guacd rodando. Veja as instruções em Configurações.', 'erro');
+      });
+      return;
+    }
+    createDeskSession({ hostId, hostName: host.name, protocol: host.protocol });
+    return;
+  }
   createSession({ hostId, hostName: host.name });
 }
 
@@ -2485,6 +2418,40 @@ function openQuickConnectModal() {
   };
 }
 
+// Abre uma sessão de ÁREA DE TRABALHO (VNC/RDP) como mais uma aba do Terminal:
+// mesma barra de abas, mesma lista de hosts. O conteúdo é um canvas em vez do
+// xterm, então tudo que é específico de terminal é pulado (fit, favoritos,
+// captura de histórico, painel de IA).
+function createDeskSession({ hostId, hostName, protocol }) {
+  const id = ++sessionSeq;
+  const container = el($('#termContainers'), 'div', 'term-instance desk-instance');
+  const session = { id, hostId, hostName, isLocal: false, kind: 'desk', protocol, container, status: 'conectando', desk: null };
+  sessions.push(session);
+  setActiveSession(id);
+  const abrir = () => {
+    if (!window.vcDesktop) { toast('Cliente de área de trabalho ainda carregando…', 'erro'); return; }
+    const onEstado = ({ estado, erro }) => {
+      if (estado === 'conectado') session.status = 'conectado';
+      else session.status = 'encerrado';
+      renderTermTabs();
+      renderHostSidebar();
+      if (erro) toast(`${hostName}: ${erro}`, 'erro');
+    };
+    try {
+      session.desk = protocol === 'vnc'
+        ? window.vcDesktop.conectarVnc({ hostId, senha: '', container, onEstado })
+        : window.vcDesktop.conectarRdp({ hostId, container, onEstado });
+    } catch (e) {
+      session.status = 'encerrado';
+      renderTermTabs();
+      toast(e.message, 'erro');
+    }
+  };
+  // espera o container ter tamanho real (o RDP pede a resolução na conexão)
+  if (container.clientWidth > 20) abrir(); else setTimeout(abrir, 120);
+  return session;
+}
+
 function createSession({ hostId, hostName, isLocal }) {
   const id = ++sessionSeq;
   const container = el($('#termContainers'), 'div', 'term-instance');
@@ -2498,7 +2465,7 @@ function createSession({ hostId, hostName, isLocal }) {
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(container);
-  const session = { id, hostId, hostName, isLocal: !!isLocal, term, fitAddon, ws: null, container, status: 'conectando' };
+  const session = { id, hostId, hostName, isLocal: !!isLocal, kind: 'term', term, fitAddon, ws: null, container, status: 'conectando' };
   // estado de IA POR SESSÃO: cada aba tem seu assistente e agente independentes
   session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
   term.onData((d) => {
@@ -2577,19 +2544,28 @@ function setActiveSession(id) {
   const s = activeSession();
   const empty = $('#termEmpty');
   if (empty) empty.hidden = !!s;
-  if (s) {
+  // o teclado do RDP é capturado no document: só a aba ativa pode ouvir
+  for (const outra of sessions) {
+    if (outra.desk) { try { outra.desk.pausarTeclado(outra.id !== id); } catch {} }
+  }
+  if (s && s.kind !== 'desk') {
     termSelectedHost = s.hostId;
     setTimeout(() => { sendResize(s); focusActive(); }, 20);
+  } else if (s) {
+    termSelectedHost = s.hostId;
+    setTimeout(() => { try { s.desk && s.desk.ajustar(); } catch {} }, 40);
   }
   renderTermTabs();
   renderHostSidebar();
   mountAiForActive(); // painel da direita reflete a IA (assistente + agente) da aba ativa
+  updateTermLayout(); // favoritos e IA só valem para terminal: some ao entrar numa aba de área de trabalho
 }
 
 function closeSession(id) {
   const idx = sessions.findIndex((s) => s.id === id);
   if (idx < 0) return;
   const s = sessions[idx];
+  if (s.desk) { try { s.desk.desconectar(); } catch {} s.desk = null; }
   // fechar a aba precisa PARAR o agente daquela sessão: sem isto ele seguia
   // rodando no servidor e o EventSource ficava aberto para sempre
   if (s.ai && s.ai.agent) {
@@ -2789,7 +2765,7 @@ function initTermTabsScroll() {
 
 function termSnapshot() {
   const s = activeSession();
-  if (!s) return '';
+  if (!s || s.kind === 'desk') return '';
   const buf = s.term.buffer.active;
   const lines = [];
   const start = Math.max(0, buf.length - 45);
@@ -2919,12 +2895,15 @@ function setPanelMode(mode) {
 
 // habilita/desabilita os controles do agente conforme a aba ativa
 // (o agente roda em host remoto via SSH ou na própria máquina, na aba local)
+// numa aba de área de trabalho não há terminal para a IA assistir
+function ehDesk(s) { return !!(s && s.kind === 'desk'); }
+
 function updateAgentControls(s) {
   const start = $('#agentStart'), auto = $('#agentAuto'), stop = $('#agentStop'), note = $('#agentLocalNote');
   const agent = s && s.ai && s.ai.agent;
   const running = !!(agent && agent.status === 'running');
   const isLocal = !!(s && s.isLocal);
-  const canAgent = !!(s && (isLocal || s.hostId));
+  const canAgent = !!(s && !ehDesk(s) && (isLocal || s.hostId));
   if (start) { start.hidden = running; start.disabled = !canAgent; }
   if (auto) { auto.hidden = running; auto.disabled = !canAgent; }
   if (stop) stop.hidden = !running;
@@ -3100,6 +3079,9 @@ function ajustaModoEstreito() {
 }
 
 function updateTermLayout() {
+  // o botão de favoritos insere comando no terminal: some na área de trabalho
+  const fav = document.querySelector('.fav-wrap');
+  if (fav) fav.hidden = ehDesk(activeSession());
   const grid = document.querySelector('.term-grid');
   const pane = document.querySelector('.ai-pane');
   const sidebar = document.querySelector('.host-sidebar');
@@ -3111,7 +3093,9 @@ function updateTermLayout() {
     grid.classList.toggle('no-sidebar', sidebarCollapsed);
   }
   const bAi = $('#toggleAiPane');
-  if (bAi) { bAi.hidden = !aiEnabled; bAi.classList.toggle('active', showAi); }
+  const desk = ehDesk(activeSession());
+  if (bAi) { bAi.hidden = !aiEnabled || desk; bAi.classList.toggle('active', showAi && !desk); }
+  if (desk && pane) pane.hidden = true; // área de trabalho não usa o painel de IA
   const bSb = $('#toggleSidebar');
   if (bSb) bSb.classList.toggle('active', !sidebarCollapsed);
   // o terminal muda de largura — reajusta o xterm
@@ -3526,8 +3510,13 @@ function init() {
   initGreeting();
   initTermTabsScroll();
   initFiles();
-  $('#deskConnect').addEventListener('click', conectarDesktop);
-  $('#deskDisconnect').addEventListener('click', desconectarDesktop);
+  const btnGuacd = $('#btnCheckGuacd');
+  if (btnGuacd) btnGuacd.addEventListener('click', async () => {
+    const el2 = $('#guacdState');
+    el2.textContent = 'verificando…';
+    const ok = await verificaGuacd();
+    el2.textContent = ok ? '✅ guacd respondendo — RDP disponível' : '⚠️ guacd fora do ar — só VNC por enquanto';
+  });
   ajustaModoEstreito();
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);

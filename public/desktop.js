@@ -10,7 +10,8 @@
 import RFB from '/vendor/novnc/core/rfb.js';
 import Guacamole from '/vendor/guacamole/dist/esm/guacamole-common.min.js';
 
-let sessao = null; // { tipo, cliente, teclado, mouse }
+// Cada conexão devolve uma ALÇA própria: o Terminal abre várias abas ao mesmo
+// tempo, então não pode existir "a sessão atual" global aqui.
 
 function urlWs(caminho, params) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -23,22 +24,35 @@ function limpar(container) {
   while (container.firstChild) container.removeChild(container.firstChild);
 }
 
-function desconectar() {
-  if (!sessao) return;
-  try {
-    if (sessao.tipo === 'vnc') sessao.cliente.disconnect();
-    else {
-      if (sessao.teclado) sessao.teclado.onkeydown = sessao.teclado.onkeyup = null;
-      if (sessao.mouse) sessao.mouse.onmousedown = sessao.mouse.onmouseup = sessao.mouse.onmousemove = null;
-      sessao.cliente.disconnect();
-    }
-  } catch {}
-  sessao = null;
+function alcaVnc(rfb) {
+  return {
+    tipo: 'vnc',
+    desconectar() { try { rfb.disconnect(); } catch {} },
+    pausarTeclado(p) { try { rfb.focusOnClick = !p; if (!p) rfb.focus(); else rfb.blur(); } catch {} },
+    ajustar() { try { rfb.scaleViewport = true; } catch {} },
+  };
+}
+
+function alcaRdp(cliente, teclado, mouse) {
+  const ligarTeclado = () => {
+    teclado.onkeydown = (k) => cliente.sendKeyEvent(1, k);
+    teclado.onkeyup = (k) => cliente.sendKeyEvent(0, k);
+  };
+  return {
+    tipo: 'rdp',
+    desconectar() {
+      try { teclado.onkeydown = teclado.onkeyup = null; } catch {}
+      try { mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = null; } catch {}
+      try { cliente.disconnect(); } catch {}
+    },
+    // o teclado do Guacamole é global (document): só captura na aba ativa
+    pausarTeclado(p) { if (p) { teclado.onkeydown = teclado.onkeyup = null; } else ligarTeclado(); },
+    ajustar() {},
+  };
 }
 
 // ---------- VNC ----------
 function conectarVnc({ hostId, senha, container, onEstado }) {
-  desconectar();
   limpar(container);
   const rfb = new RFB(container, urlWs('/api/vnc', { hostId }), {
     credentials: senha ? { password: senha } : undefined,
@@ -51,7 +65,6 @@ function conectarVnc({ hostId, senha, container, onEstado }) {
   rfb.addEventListener('disconnect', (e) => {
     const limpo = e.detail && e.detail.clean;
     onEstado({ estado: 'desconectado', erro: limpo ? '' : 'A conexão caiu.' });
-    sessao = null;
   });
   rfb.addEventListener('credentialsrequired', () => {
     onEstado({ estado: 'erro', erro: 'O servidor VNC pediu senha. Cadastre a senha no host.' });
@@ -59,13 +72,11 @@ function conectarVnc({ hostId, senha, container, onEstado }) {
   rfb.addEventListener('securityfailure', (e) => {
     onEstado({ estado: 'erro', erro: 'Falha de autenticação: ' + ((e.detail && e.detail.reason) || 'senha recusada') });
   });
-  sessao = { tipo: 'vnc', cliente: rfb };
-  return rfb;
+  return alcaVnc(rfb);
 }
 
 // ---------- RDP (via guacd) ----------
 function conectarRdp({ hostId, container, onEstado }) {
-  desconectar();
   limpar(container);
   const largura = Math.max(640, Math.round(container.clientWidth || 1280));
   const altura = Math.max(480, Math.round(container.clientHeight || 800));
@@ -79,7 +90,7 @@ function conectarRdp({ hostId, container, onEstado }) {
   cliente.onstatechange = (estado) => {
     // 3 = conectado, 5 = desconectado (constantes do Guacamole.Client)
     if (estado === 3) onEstado({ estado: 'conectado' });
-    if (estado === 5) { onEstado({ estado: 'desconectado' }); sessao = null; }
+    if (estado === 5) onEstado({ estado: 'desconectado' });
   };
 
   cliente.connect();
@@ -91,21 +102,8 @@ function conectarRdp({ hostId, container, onEstado }) {
   teclado.onkeydown = (k) => cliente.sendKeyEvent(1, k);
   teclado.onkeyup = (k) => cliente.sendKeyEvent(0, k);
 
-  sessao = { tipo: 'rdp', cliente, teclado, mouse };
-  return cliente;
+  return alcaRdp(cliente, teclado, mouse);
 }
 
-function ativa() { return !!sessao; }
-
-// controle de teclado: só captura enquanto a aba está visível
-function pausarTeclado(pausar) {
-  if (!sessao || sessao.tipo !== 'rdp' || !sessao.teclado) return;
-  if (pausar) { sessao.teclado.onkeydown = sessao.teclado.onkeyup = null; }
-  else {
-    sessao.teclado.onkeydown = (k) => sessao.cliente.sendKeyEvent(1, k);
-    sessao.teclado.onkeyup = (k) => sessao.cliente.sendKeyEvent(0, k);
-  }
-}
-
-window.vcDesktop = { conectarVnc, conectarRdp, desconectar, ativa, pausarTeclado };
+window.vcDesktop = { conectarVnc, conectarRdp };
 window.dispatchEvent(new Event('vc-desktop-pronto'));
