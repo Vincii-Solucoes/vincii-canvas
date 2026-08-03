@@ -13,11 +13,16 @@ import Guacamole from '/vendor/guacamole/dist/esm/guacamole-common.min.js';
 // Cada conexão devolve uma ALÇA própria: o Terminal abre várias abas ao mesmo
 // tempo, então não pode existir "a sessão atual" global aqui.
 
-function urlWs(caminho, params) {
+function urlWsPartes(caminho, params) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const q = new URLSearchParams(params);
   q.set('token', (window.VC_TOKEN || ''));
-  return `${proto}://${location.host}${caminho}?${q}`;
+  return { base: `${proto}://${location.host}${caminho}`, query: String(q) };
+}
+
+function urlWs(caminho, params) {
+  const { base, query } = urlWsPartes(caminho, params);
+  return `${base}?${query}`;
 }
 
 function limpar(container) {
@@ -81,7 +86,11 @@ function conectarRdp({ hostId, container, onEstado }) {
   const largura = Math.max(640, Math.round(container.clientWidth || 1280));
   const altura = Math.max(480, Math.round(container.clientHeight || 800));
 
-  const tunel = new Guacamole.WebSocketTunnel(urlWs('/api/guac', { hostId, width: largura, height: altura, dpi: 96 }));
+  // O WebSocketTunnel monta a URL como `base + "?" + data`, onde data é o argumento
+  // de connect(). Passar a query já embutida na base gera `...&token=X?undefined`,
+  // o token chega corrompido e o upgrade toma 403 — por isso vão separados.
+  const { base, query } = urlWsPartes('/api/guac', { hostId, width: largura, height: altura, dpi: 96 });
+  const tunel = new Guacamole.WebSocketTunnel(base);
   const cliente = new Guacamole.Client(tunel);
   container.appendChild(cliente.getDisplay().getElement());
 
@@ -93,7 +102,7 @@ function conectarRdp({ hostId, container, onEstado }) {
     if (estado === 5) onEstado({ estado: 'desconectado' });
   };
 
-  cliente.connect();
+  cliente.connect(query);
 
   const display = cliente.getDisplay();
   const mouse = new Guacamole.Mouse(display.getElement());
