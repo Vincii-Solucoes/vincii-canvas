@@ -399,6 +399,13 @@ app.get('/api/desktop/status', async (req, res) => {
   });
 });
 
+// Diz como a última conexão RDP a este host foi negociada. A interface usa
+// isto para avisar quando a sessão caiu no modo legado, em que o servidor não
+// é autenticado — o usuário não escolhe o modo, mas tem que saber qual saiu.
+app.get('/api/rdp/modo', (req, res) => {
+  res.json({ modo: rdp.modoDe(String(req.query.hostId || '')) });
+});
+
 // A senha de um host NUNCA sai daqui pelas rotas normais (ver publicHost).
 // Esta é a única exceção, e é deliberada: o CredSSP do RDP roda no WebAssembly,
 // dentro do navegador, então a credencial precisa chegar lá.
@@ -448,10 +455,11 @@ app.post('/api/quick-connect', (req, res) => {
   const b = req.body || {};
   const host = String(b.host || '').trim();
   const username = String(b.username || '').trim();
-  const protocol = b.protocol === 'telnet' ? 'telnet' : 'ssh';
+  const PROTOCOLOS = { telnet: 23, rdp: 3389, vnc: 5900, ssh: 22 };
+  const protocol = Object.prototype.hasOwnProperty.call(PROTOCOLOS, b.protocol) ? b.protocol : 'ssh';
   if (!host) return fail(res, 400, 'Informe o host ou IP.');
-  if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário.');
-  const port = Math.min(65535, Math.max(1, Number(b.port) || (protocol === 'telnet' ? 23 : 22)));
+  if (!username && (protocol === 'ssh' || protocol === 'rdp')) return fail(res, 400, 'Informe o usuário.');
+  const port = Math.min(65535, Math.max(1, Number(b.port) || PROTOCOLOS[protocol]));
   const a = b.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
   const auth = { type };
@@ -513,7 +521,6 @@ function publicHost(h) {
     protocol: ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh',
     ftps: h.ftps || 'auto',
     rdpDomain: h.rdpDomain || '',
-    rdpLegado: !!h.rdpLegado,
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
@@ -559,9 +566,7 @@ function parseHostBody(body, res) {
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
-  // Só faz sentido em RDP, e é uma decisão de segurança: nunca herdar por acidente.
-  const rdpLegado = protocol === 'rdp' && body.rdpLegado === true;
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, rdpLegado, group, icon, color, auth, vars };
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars

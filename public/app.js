@@ -80,7 +80,7 @@ function toast(message, kind = 'ok') {
   box.className = `toast ${kind}`;
   box.textContent = message;
   $('#toasts').appendChild(box);
-  setTimeout(() => box.remove(), kind === 'erro' ? 7000 : 4000);
+  setTimeout(() => box.remove(), kind === 'erro' ? 7000 : kind === 'aviso' ? 8000 : 4000);
 }
 
 function el(parent, tag, className, text) {
@@ -311,14 +311,10 @@ function openHostModal(existing) {
       <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
         <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
       </label>
-      <label id="f_rdpLegadoWrap" class="inline" hidden>
-        <input type="checkbox" id="f_rdpLegado">
-        <span>Permitir RDP legado (servidor sem TLS)</span>
-      </label>
       <p id="f_rdpLegadoNota" class="hint" hidden>
-        Alguns servidores Linux com xrdp recusam TLS. Marcando isto, o app conecta
-        assim mesmo — mas <strong>a identidade do servidor não é verificada</strong> e a
-        criptografia é a antiga do RDP (RC4). Use só em rede em que você confia.
+        O tipo de segurança do RDP é detectado sozinho. Se o servidor só oferecer o
+        modo antigo (comum em xrdp), o app conecta assim mesmo e avisa na hora —
+        nesse modo <strong>a identidade do servidor não é verificada</strong>.
       </p>
       <label id="f_ftpsWrap" hidden>Criptografia (FTPS)
         <select id="f_ftps">
@@ -376,7 +372,6 @@ function openHostModal(existing) {
   $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
   $('#f_ftps').value = (existing && existing.ftps) || 'auto';
   $('#f_rdpDomain').value = (existing && existing.rdpDomain) || '';
-  $('#f_rdpLegado').checked = !!(existing && existing.rdpLegado);
   // Telnet: porta padrão 23, autenticação some (login é no equipamento)
   const syncProtocol = () => {
     const proto = $('#f_protocol').value;
@@ -387,7 +382,6 @@ function openHostModal(existing) {
     $('#f_telnetNote').hidden = !isTelnet;
     $('#f_ftpsWrap').hidden = !isFtp;
     $('#f_rdpDomainWrap').hidden = !isRdp;
-    $('#f_rdpLegadoWrap').hidden = !isRdp;
     $('#f_rdpLegadoNota').hidden = !isRdp;
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
     // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
@@ -498,7 +492,6 @@ function openHostModal(existing) {
       protocol: $('#f_protocol').value,
       ftps: $('#f_ftps').value,
       rdpDomain: $('#f_rdpDomain').value,
-      rdpLegado: $('#f_rdpLegado').checked,
       vars,
       auth: { type: authType },
     };
@@ -2321,9 +2314,14 @@ function openLocalSession() {
 
 // Abre uma sessão para um host AVULSO (conexão rápida, não salvo). Não entra em
 // "recentes" (o id é temporário); some quando o app fecha.
-function openAdHocSession(hostId, name) {
+function openAdHocSession(hostId, name, protocol) {
   if (!xtermReady()) return;
-  createSession({ hostId, hostName: name || 'Conexão rápida' });
+  const rotulo = name || 'Conexão rápida';
+  if (protocol === 'vnc' || protocol === 'rdp') {
+    createDeskSession({ hostId, hostName: rotulo, protocol });
+    return;
+  }
+  createSession({ hostId, hostName: rotulo });
 }
 
 // Modal de conexão rápida: conecta a um servidor avulso sem cadastrá-lo.
@@ -2334,6 +2332,8 @@ function openQuickConnectModal() {
       <label>Protocolo
         <select id="qc_protocol">
           <option value="ssh">SSH (recomendado)</option>
+          <option value="rdp">RDP (área de trabalho do Windows)</option>
+          <option value="vnc">VNC (área de trabalho remota)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
         </select>
       </label>
@@ -2343,6 +2343,9 @@ function openQuickConnectModal() {
       <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
     </div>
     <p id="qc_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — a senha trafega em texto claro. O login é feito no próprio terminal do equipamento.</p>
+    <label id="qc_telaSenhaWrap" hidden>Senha
+      <input id="qc_telaSenha" type="password" autocomplete="new-password" placeholder="senha da área de trabalho">
+    </label>
     <fieldset id="qcAuthFs">
       <legend>Autenticação</legend>
       <div class="radios">
@@ -2369,12 +2372,21 @@ function openQuickConnectModal() {
   };
   $$('input[name="qcAuth"]').forEach((r) => { r.checked = r.value === 'agent'; r.addEventListener('change', syncQc); });
   syncQc();
+  const PORTAS = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
   const syncQcProto = () => {
-    const isTelnet = $('#qc_protocol').value === 'telnet';
+    const proto = $('#qc_protocol').value;
+    const isTelnet = proto === 'telnet';
+    const ehTela = proto === 'vnc' || proto === 'rdp';
     $('#qc_telnetNote').hidden = !isTelnet;
-    $('#qcAuthFs').hidden = isTelnet;
+    // Área de trabalho e Telnet não usam chave/agente SSH: só senha (e o VNC
+    // nem usuário).
+    $('#qcAuthFs').hidden = isTelnet || ehTela;
+    $('#qc_telaSenhaWrap').hidden = !ehTela;
+    const usuario = $('#qc_user').closest('label');
+    if (usuario) usuario.hidden = proto === 'vnc';
     const p = $('#qc_port');
-    if (p.value === '22' || p.value === '23' || !p.value) p.value = isTelnet ? 23 : 22;
+    // só troca a porta se ela ainda for a padrão de outro protocolo
+    if (!p.value || Object.values(PORTAS).includes(Number(p.value))) p.value = PORTAS[proto];
   };
   $('#qc_protocol').addEventListener('change', syncQcProto);
   syncQcProto();
@@ -2385,18 +2397,29 @@ function openQuickConnectModal() {
     const host = $('#qc_host').value.trim();
     const username = $('#qc_user').value.trim();
     const protocol = $('#qc_protocol').value;
+    const ehTela = protocol === 'vnc' || protocol === 'rdp';
     if (!host) { toast('Informe host/IP.', 'erro'); return; }
     if (!username && protocol === 'ssh') { toast('Informe o usuário.', 'erro'); return; }
-    const type = (($$('input[name="qcAuth"]').find((r) => r.checked)) || {}).value || 'agent';
-    const auth = { type };
-    if (type === 'key') {
-      auth.keyPath = $('#qc_keyPath').value.trim();
-      if ($('#qc_passphrase').value) auth.passphrase = $('#qc_passphrase').value;
-    } else if (type === 'password' && $('#qc_password').value) {
-      auth.password = $('#qc_password').value;
+    if (!username && protocol === 'rdp') { toast('Informe o usuário do Windows.', 'erro'); return; }
+    let auth;
+    if (ehTela) {
+      // VNC e RDP só usam senha; chave e agente do SSH não se aplicam.
+      auth = { type: 'password' };
+      const senha = $('#qc_telaSenha').value;
+      if (senha) auth.password = senha;
+    } else {
+      const type = (($$('input[name="qcAuth"]').find((r) => r.checked)) || {}).value || 'agent';
+      auth = { type };
+      if (type === 'key') {
+        auth.keyPath = $('#qc_keyPath').value.trim();
+        if ($('#qc_passphrase').value) auth.passphrase = $('#qc_passphrase').value;
+      } else if (type === 'password' && $('#qc_password').value) {
+        auth.password = $('#qc_password').value;
+      }
     }
     const name = $('#qc_name').value.trim();
-    const port = Number($('#qc_port').value) || (protocol === 'telnet' ? 23 : 22);
+    const PADRAO = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
+    const port = Number($('#qc_port').value) || PADRAO[protocol] || 22;
     const fallbackName = username ? `${username}@${host}` : host;
     submit.disabled = true;
     try {
@@ -2410,10 +2433,25 @@ function openQuickConnectModal() {
       } else {
         const r = await api('/api/quick-connect', { method: 'POST', body: { host, port, username, protocol, auth, name } });
         closeModal();
-        openAdHocSession(r.hostId, r.name);
+        openAdHocSession(r.hostId, r.name, protocol);
       }
     } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
   };
+}
+
+// O tipo de segurança do RDP é detectado pelo servidor, não escolhido pelo
+// usuário. Mas quando a negociação cai no modo antigo, a identidade da máquina
+// remota não é verificada — e isso ele precisa saber, uma vez por sessão.
+async function avisarSeLegado(session) {
+  try {
+    const r = await api(`/api/rdp/modo?hostId=${encodeURIComponent(session.hostId)}`);
+    if (r && r.modo === 'legado' && !session.avisouLegado) {
+      session.avisouLegado = true;
+      session.legado = true;
+      toast(`${session.hostName}: conectado em RDP antigo — o servidor não é autenticado.`, 'aviso');
+      renderTermTabs();
+    }
+  } catch {}
 }
 
 // Abre uma sessão de ÁREA DE TRABALHO (VNC/RDP) como mais uma aba do Terminal:
@@ -2442,6 +2480,7 @@ function createDeskSession({ hostId, hostName, protocol }) {
       renderTermTabs();
       renderHostSidebar();
       if (erro) toast(`${hostName}: ${erro}`, 'erro');
+      if (estado === 'conectado' && protocol === 'rdp') avisarSeLegado(session);
     };
     try {
       session.desk = protocol === 'vnc'
@@ -2614,6 +2653,8 @@ function tabTitle(s) {
     else parts.push('conexão rápida');
   }
   parts.push(`status: ${s.status}`);
+  // o modo antigo do RDP não autentica o servidor: fica registrado na dica da aba
+  if (s.legado) parts.push('RDP antigo — servidor não autenticado');
   return parts.join(' · ') + '\nDuplo clique para renomear';
 }
 
