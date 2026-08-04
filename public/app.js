@@ -311,6 +311,15 @@ function openHostModal(existing) {
       <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
         <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
       </label>
+      <label id="f_rdpLegadoWrap" class="inline" hidden>
+        <input type="checkbox" id="f_rdpLegado">
+        <span>Permitir RDP legado (servidor sem TLS)</span>
+      </label>
+      <p id="f_rdpLegadoNota" class="hint" hidden>
+        Alguns servidores Linux com xrdp recusam TLS. Marcando isto, o app conecta
+        assim mesmo — mas <strong>a identidade do servidor não é verificada</strong> e a
+        criptografia é a antiga do RDP (RC4). Use só em rede em que você confia.
+      </p>
       <label id="f_ftpsWrap" hidden>Criptografia (FTPS)
         <select id="f_ftps">
           <option value="auto">Automática — usa TLS se o servidor aceitar</option>
@@ -367,6 +376,7 @@ function openHostModal(existing) {
   $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
   $('#f_ftps').value = (existing && existing.ftps) || 'auto';
   $('#f_rdpDomain').value = (existing && existing.rdpDomain) || '';
+  $('#f_rdpLegado').checked = !!(existing && existing.rdpLegado);
   // Telnet: porta padrão 23, autenticação some (login é no equipamento)
   const syncProtocol = () => {
     const proto = $('#f_protocol').value;
@@ -377,6 +387,8 @@ function openHostModal(existing) {
     $('#f_telnetNote').hidden = !isTelnet;
     $('#f_ftpsWrap').hidden = !isFtp;
     $('#f_rdpDomainWrap').hidden = !isRdp;
+    $('#f_rdpLegadoWrap').hidden = !isRdp;
+    $('#f_rdpLegadoNota').hidden = !isRdp;
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
     // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
     // prompts do equipamento; se vazia, você digita no terminal como antes.
@@ -486,6 +498,7 @@ function openHostModal(existing) {
       protocol: $('#f_protocol').value,
       ftps: $('#f_ftps').value,
       rdpDomain: $('#f_rdpDomain').value,
+      rdpLegado: $('#f_rdpLegado').checked,
       vars,
       auth: { type: authType },
     };

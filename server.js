@@ -513,6 +513,7 @@ function publicHost(h) {
     protocol: ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh',
     ftps: h.ftps || 'auto',
     rdpDomain: h.rdpDomain || '',
+    rdpLegado: !!h.rdpLegado,
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
@@ -558,7 +559,9 @@ function parseHostBody(body, res) {
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth, vars };
+  // Só faz sentido em RDP, e é uma decisão de segurança: nunca herdar por acidente.
+  const rdpLegado = protocol === 'rdp' && body.rdpLegado === true;
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, rdpLegado, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars

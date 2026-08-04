@@ -111,8 +111,8 @@ function humanizaRdp(erro) {
   // sozinho, então merece a mensagem mais direta.
   if (tipo === ERRO_RDCLEANPATH || tipo === ERRO_NEGOCIACAO
       || /RDCleanPath negotiation|standard RDP security is not supported/i.test(texto)) {
-    return 'O servidor recusou TLS — provavelmente está em RDP legado. '
-      + 'No xrdp: troque para security_layer=negotiate em /etc/xrdp/xrdp.ini e reinicie.';
+    return 'O servidor recusou TLS. Marque "Permitir RDP legado" no cadastro deste host, '
+      + 'ou habilite TLS no servidor (no xrdp: security_layer=negotiate).';
   }
   if (tipo === ERRO_SENHA_ERRADA) return 'Senha incorreta.';
   if (tipo === ERRO_LOGIN) return 'Usuário ou senha recusados pelo servidor.';
