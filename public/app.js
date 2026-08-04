@@ -2424,6 +2424,14 @@ function createDeskSession({ hostId, hostName, protocol }) {
   const id = ++sessionSeq;
   const container = el($('#termContainers'), 'div', 'term-instance desk-instance');
   const session = { id, hostId, hostName, isLocal: false, kind: 'desk', protocol, container, status: 'conectando', desk: null };
+  // A aba de área de trabalho também tem IA — só que apenas para tirar dúvida:
+  // sem terminal, o agente autônomo fica indisponível (ver updateAgentControls)
+  // e os blocos de código não ganham botão de inserir. Sem este estado o
+  // assistente simplesmente não respondia nesta aba.
+  session.ai = {
+    history: [], aiBusy: false, mode: 'assist', goal: '', agent: null,
+    messagesEl: buildAiMessages(), feedEl: buildAgentFeed(),
+  };
   sessions.push(session);
   setActiveSession(id);
   const abrir = () => {
