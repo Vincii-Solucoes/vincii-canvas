@@ -1,7 +1,7 @@
 {
   "name": "vincii-canvas",
   "productName": "Vincii Canvas",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
   "author": "Vincii <contato@vincii.com.br>",
@@ -10,6 +10,13 @@
     "url": "https://github.com/Vincii-Solucoes/vincii-canvas"
   },
   "main": "desktop/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "desktop": "electron .",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir",
+    "test-server": "node test/sshd-local.js"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -25,5 +32,53 @@
     "ironrdp-wasm": "^1.1.0",
     "ssh2": "^1.15.0",
     "ws": "^8.21.1"
+  },
+  "build": {
+    "appId": "br.com.vincii.canvas",
+    "productName": "Vincii Canvas",
+    "afterPack": "build/afterPack.js",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Vincii-Solucoes",
+        "repo": "vincii-canvas",
+        "releaseType": "release"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**",
+      "lib/**",
+      "public/**",
+      "server.js",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
+  },
+  "devDependencies": {
+    "electron": "^41.7.1",
+    "electron-builder": "^26.15.3"
   }
 }
