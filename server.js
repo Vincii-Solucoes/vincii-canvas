@@ -1125,6 +1125,8 @@ app.post('/api/ai/chat', async (req, res) => {
       messages: body.messages,
       host,
       terminalContext: body.terminalContext,
+      modo: body.modo === 'desktop' ? 'desktop' : 'terminal',
+      protocolo: body.protocolo,
       onDelta: (t) => { if (!aborted) send({ type: 'delta', text: t }); },
     });
     if (!aborted) send({ type: 'done' });

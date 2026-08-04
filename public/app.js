@@ -2946,11 +2946,15 @@ function renderAssistantBody(container, text) {
       if (!code.trim()) { if (part.trim()) el(container, 'p', null, part); return; }
       const wrap = el(container, 'div', 'ai-code');
       el(wrap, 'pre').textContent = code;
-      const actions = el(wrap, 'div', 'code-actions');
-      const bInsert = el(actions, 'button', 'btn small', 'Inserir');
-      bInsert.addEventListener('click', () => insertCommand(code, false));
-      const bRun = el(actions, 'button', 'btn small primary', 'Inserir e executar');
-      bRun.addEventListener('click', () => insertCommand(code, true));
+      // Numa aba de área de trabalho não existe terminal onde inserir: mostrar
+      // os botões seria oferecer algo que não funciona.
+      if (!ehDesk(activeSession())) {
+        const actions = el(wrap, 'div', 'code-actions');
+        const bInsert = el(actions, 'button', 'btn small', 'Inserir');
+        bInsert.addEventListener('click', () => insertCommand(code, false));
+        const bRun = el(actions, 'button', 'btn small primary', 'Inserir e executar');
+        bRun.addEventListener('click', () => insertCommand(code, true));
+      }
     } else if (part.trim()) {
       for (const para of part.split(/\n{2,}/)) {
         if (para.trim()) el(container, 'p', null, para.trim());
@@ -2979,7 +2983,13 @@ async function aiSend(question) {
     const res = await fetch('/api/ai/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: ai.history, hostId: s.hostId, terminalContext: termSnapshot() }),
+      body: JSON.stringify({
+        messages: ai.history,
+        hostId: s.hostId,
+        modo: ehDesk(s) ? 'desktop' : 'terminal',
+        protocolo: ehDesk(s) ? s.protocol : undefined,
+        terminalContext: ehDesk(s) ? '' : termSnapshot(),
+      }),
     });
     if (!res.ok || !res.body) throw new Error(`Erro ${res.status}`);
     const reader = res.body.getReader();
@@ -3077,23 +3087,32 @@ function ajustaModoEstreito() {
 }
 
 function updateTermLayout() {
+  const desk = ehDesk(activeSession());
   // o botão de favoritos insere comando no terminal: some na área de trabalho
   const fav = document.querySelector('.fav-wrap');
-  if (fav) fav.hidden = ehDesk(activeSession());
+  if (fav) fav.hidden = desk;
   const grid = document.querySelector('.term-grid');
   const pane = document.querySelector('.ai-pane');
   const sidebar = document.querySelector('.host-sidebar');
-  const showAi = aiEnabled && !aiCollapsed;
-  if (pane) pane.hidden = !showAi;
+  const mostraIa = aiEnabled && !aiCollapsed;
+  if (pane) pane.hidden = !mostraIa;
   if (sidebar) sidebar.hidden = sidebarCollapsed;
   if (grid) {
-    grid.classList.toggle('no-ai', !showAi);
+    // `no-ai` precisa acompanhar o painel de verdade, não só a preferência:
+    // sem isso a coluna de 360px continuava reservada com o painel escondido e
+    // a área de trabalho não crescia para ocupar o espaço.
+    grid.classList.toggle('no-ai', !mostraIa);
     grid.classList.toggle('no-sidebar', sidebarCollapsed);
   }
   const bAi = $('#toggleAiPane');
-  const desk = ehDesk(activeSession());
-  if (bAi) { bAi.hidden = !aiEnabled || desk; bAi.classList.toggle('active', showAi && !desk); }
-  if (desk && pane) pane.hidden = true; // área de trabalho não usa o painel de IA
+  if (bAi) { bAi.hidden = !aiEnabled; bAi.classList.toggle('active', mostraIa); }
+  // Na área de trabalho a IA só tira dúvida: não há terminal para ela assistir,
+  // nem onde inserir comando. O agente autônomo fica indisponível.
+  const modos = document.querySelector('.ai-modes');
+  if (modos) modos.hidden = desk;
+  if (desk) setPanelMode('assist');
+  const dica = $('#aiDicaDesk');
+  if (dica) dica.hidden = !desk;
   const bSb = $('#toggleSidebar');
   if (bSb) bSb.classList.toggle('active', !sidebarCollapsed);
   // o terminal muda de largura — reajusta o xterm

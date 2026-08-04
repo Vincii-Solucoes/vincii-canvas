@@ -808,6 +808,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .ai-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
 .ai-head h2 { margin: 0; font-size: 15px; }
+/* o display:flex vence o [hidden] do navegador — sem isto, esconder os modos
+   na aba de área de trabalho não surtiria efeito nenhum */
+.ai-modes[hidden] { display: none !important; }
 .ai-modes { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
 .ai-modes button { background: none; border: none; color: var(--muted); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .ai-modes button.active { background: var(--panel2); color: var(--text); }
