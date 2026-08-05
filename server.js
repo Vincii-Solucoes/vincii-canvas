@@ -389,7 +389,7 @@ function transferir(origem, caminhoOrigem, destino, caminhoDestino) {
 // isto para avisar quando a sessão caiu no modo legado, em que o servidor não
 // é autenticado — o usuário não escolhe o modo, mas tem que saber qual saiu.
 app.get('/api/rdp/modo', (req, res) => {
-  res.json({ modo: rdp.modoDe(String(req.query.hostId || '')) });
+  res.json(rdp.modoDe(String(req.query.hostId || '')));
 });
 
 // Registra que o usuário aceitou falar RDP antigo com este host. Fica na
@@ -465,7 +465,10 @@ app.post('/api/quick-connect', (req, res) => {
   const PROTOCOLOS = { telnet: 23, rdp: 3389, vnc: 5900, ssh: 22 };
   const protocol = Object.prototype.hasOwnProperty.call(PROTOCOLOS, b.protocol) ? b.protocol : 'ssh';
   if (!host) return fail(res, 400, 'Informe o host ou IP.');
-  if (!username && (protocol === 'ssh' || protocol === 'rdp')) return fail(res, 400, 'Informe o usuário.');
+  // RDP e VNC podem ir sem usuário e sem senha: nesse caso a própria máquina
+  // remota mostra a tela de login dela, que é o comportamento normal do xrdp e
+  // do Windows quando o cliente não manda credencial.
+  if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário.');
   const port = Math.min(65535, Math.max(1, Number(b.port) || PROTOCOLOS[protocol]));
   const a = b.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';

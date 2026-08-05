@@ -311,6 +311,10 @@ function openHostModal(existing) {
       <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
         <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
       </label>
+      <p id="f_telaCredNota" class="hint" hidden>
+        Usuário e senha são opcionais: em branco, a própria máquina remota mostra a
+        tela de login dela.
+      </p>
       <p id="f_rdpLegadoNota" class="hint" hidden>
         O tipo de segurança do RDP é detectado sozinho. Se o servidor só oferecer o
         modo antigo (comum em xrdp), o app conecta assim mesmo e avisa na hora —
@@ -383,6 +387,7 @@ function openHostModal(existing) {
     $('#f_ftpsWrap').hidden = !isFtp;
     $('#f_rdpDomainWrap').hidden = !isRdp;
     $('#f_rdpLegadoNota').hidden = !isRdp;
+    $('#f_telaCredNota').hidden = !(isRdp || isVnc);
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
     // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
     // prompts do equipamento; se vazia, você digita no terminal como antes.
@@ -2343,9 +2348,10 @@ function openQuickConnectModal() {
       <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
     </div>
     <p id="qc_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — a senha trafega em texto claro. O login é feito no próprio terminal do equipamento.</p>
-    <label id="qc_telaSenhaWrap" hidden>Senha
-      <input id="qc_telaSenha" type="password" autocomplete="new-password" placeholder="senha da área de trabalho">
+    <label id="qc_telaSenhaWrap" hidden>Senha (opcional)
+      <input id="qc_telaSenha" type="password" autocomplete="new-password" placeholder="deixe em branco para logar na tela do servidor">
     </label>
+    <p id="qc_telaNota" class="hint" hidden>Usuário e senha são opcionais: em branco, a própria máquina remota mostra a tela de login dela.</p>
     <fieldset id="qcAuthFs">
       <legend>Autenticação</legend>
       <div class="radios">
@@ -2382,6 +2388,7 @@ function openQuickConnectModal() {
     // nem usuário).
     $('#qcAuthFs').hidden = isTelnet || ehTela;
     $('#qc_telaSenhaWrap').hidden = !ehTela;
+    $('#qc_telaNota').hidden = !ehTela;
     const usuario = $('#qc_user').closest('label');
     if (usuario) usuario.hidden = proto === 'vnc';
     const p = $('#qc_port');
@@ -2400,7 +2407,6 @@ function openQuickConnectModal() {
     const ehTela = protocol === 'vnc' || protocol === 'rdp';
     if (!host) { toast('Informe host/IP.', 'erro'); return; }
     if (!username && protocol === 'ssh') { toast('Informe o usuário.', 'erro'); return; }
-    if (!username && protocol === 'rdp') { toast('Informe o usuário do Windows.', 'erro'); return; }
     let auth;
     if (ehTela) {
       // VNC e RDP só usam senha; chave e agente do SSH não se aplicam.
@@ -2442,6 +2448,41 @@ function openQuickConnectModal() {
 // O tipo de segurança do RDP é detectado pelo servidor, não escolhido pelo
 // usuário. Mas quando a negociação cai no modo antigo, a identidade da máquina
 // remota não é verificada — e isso ele precisa saber, uma vez por sessão.
+// Todo erro do IronRDP na fase de RDCleanPath chega com o MESMO código,
+// inclusive timeout — então classificar por ele fazia o app confundir "o
+// servidor não respondeu" com "precisa consentir com o modo antigo", perguntar,
+// reconectar, dar timeout de novo, e perguntar de novo. Laço.
+//
+// Quem sabe o que houve é o proxy. Perguntamos a ele.
+const consentimentoJaPerguntado = new Set();
+
+async function tratarErroDesk(session, erro) {
+  const generico = window.vcDesktop && erro === window.vcDesktop.ERRO_RDCLEANPATH_GENERICO;
+  let estado = null;
+  if (session.protocol === 'rdp') {
+    try {
+      estado = await api(`/api/rdp/modo?hostId=${encodeURIComponent(session.hostId)}`);
+    } catch {}
+  }
+
+  if (estado && estado.modo === 'legado-pendente') {
+    // Uma vez por host por execução do app: se o usuário recusar, não
+    // insistimos, e se aceitar e ainda assim falhar, o motivo real aparece.
+    if (consentimentoJaPerguntado.has(session.hostId)) {
+      toast(`${session.hostName}: ${estado.erro || 'conexão recusada.'}`, 'erro');
+      return;
+    }
+    consentimentoJaPerguntado.add(session.hostId);
+    pedirConsentimentoLegado(session);
+    return;
+  }
+
+  // O proxy registrou o motivo de verdade (timeout, recusa, host inalcançável).
+  // Ele vale mais que a tradução genérica do cliente.
+  const msg = (estado && estado.erro) || (generico ? 'A conexão falhou.' : erro);
+  toast(`${session.hostName}: ${msg}`, 'erro');
+}
+
 // O proxy recusou porque o servidor só oferece RDP antigo e este host ainda
 // não foi confirmado. A senha NÃO saiu da máquina — o Client Info só é montado
 // depois da negociação, e ela parou antes. Perguntamos aqui, uma vez por host.
@@ -2461,8 +2502,12 @@ async function pedirConsentimentoLegado(session) {
   } catch (e) { toast(e.message, 'erro'); return; }
   await loadState();
   toast(`${session.hostName}: reconectando em modo antigo…`, 'aviso');
+  const { hostId, hostName, protocol } = session;
   closeSession(session.id);
-  openSession(session.hostId);
+  // Host de conexão rápida não está em state.hosts — openSession não o acha e
+  // responde "Host não encontrado". Reabre pelo caminho de onde ele veio.
+  if (state.hosts.some((x) => x.id === hostId)) openSession(hostId);
+  else openAdHocSession(hostId, hostName, protocol);
 }
 
 async function avisarSeLegado(session) {
@@ -2502,11 +2547,7 @@ function createDeskSession({ hostId, hostName, protocol }) {
       else session.status = 'encerrado';
       renderTermTabs();
       renderHostSidebar();
-      if (erro === (window.vcDesktop && window.vcDesktop.PRECISA_CONSENTIR)) {
-        pedirConsentimentoLegado(session);
-      } else if (erro) {
-        toast(`${hostName}: ${erro}`, 'erro');
-      }
+      if (erro) tratarErroDesk(session, erro);
       if (estado === 'conectado' && protocol === 'rdp') avisarSeLegado(session);
     };
     try {
