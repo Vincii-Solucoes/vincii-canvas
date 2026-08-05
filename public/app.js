@@ -404,8 +404,10 @@ function openHostModal(existing) {
       if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
     }
     const port = $('#f_port');
-    const padroes = { telnet: 23, ftp: 21, vnc: 5900, rdp: 3389, ssh: 22 };
-    if (!existing && ['21', '22', '23', '3389', '5900', ''].includes(String(port.value))) port.value = padroes[proto];
+    // Só sobrescreve a porta se ela ainda for a padrão de algum protocolo —
+    // porta digitada pelo usuário é preservada.
+    const ehPadrao = port.value === '' || PORTAS_PADRAO.includes(Number(port.value));
+    if (!existing && ehPadrao) port.value = portaPadrao(proto);
   };
   $('#f_protocol').addEventListener('change', syncProtocol);
   syncProtocol();
@@ -1675,13 +1677,20 @@ function xmlToConfig(text) {
         return {
           name: h.getAttribute('name'),
           host: h.getAttribute('host'),
-          port: Number(h.getAttribute('port')) || ({ telnet: 23, ftp: 21 }[h.getAttribute('protocol')] || 22),
-          username: h.getAttribute('username'),
-          group: h.getAttribute('group') || '',
-          icon: h.getAttribute('icon') || '',
-          color: h.getAttribute('color') || '',
-          protocol: ['telnet', 'ftp'].includes(h.getAttribute('protocol')) ? h.getAttribute('protocol') : 'ssh',
+          port: Number(h.getAttribute('port')) || portaPadrao(h.getAttribute('protocol')),
+          username: h.getAttribute('username') || '',
+          // getAttribute devolve null quando o atributo não existe. Mantido
+          // como undefined, o JSON nem carrega a chave — e o servidor sabe
+          // diferenciar "o arquivo não diz" de "apague isto".
+          group: h.getAttribute('group') ?? undefined,
+          icon: h.getAttribute('icon') ?? undefined,
+          color: h.getAttribute('color') ?? undefined,
+          // Esta lista já esqueceu RDP e VNC uma vez: enquanto ela viveu aqui
+          // copiada, todo host RDP restaurava como SSH e todo VNC era
+          // descartado. Agora vem de protocolos.js, junto com o servidor.
+          protocol: normalizarProtocolo(h.getAttribute('protocol')),
           ftps: h.getAttribute('ftps') || 'auto',
+          rdpDomain: h.getAttribute('rdpDomain') ?? undefined,
           // fingerprint NÃO vem do arquivo: é a prova de identidade do servidor,
           // aprendida na primeira conexão. Aceitá-la daqui permitiria desviar
           // uma conexão para outro servidor sem alarme.
@@ -1702,6 +1711,9 @@ function xmlToConfig(text) {
       favorites: [...root.querySelectorAll(':scope > favorites > favorite')].map((f) => ({
         label: f.getAttribute('label') || '',
         hostName: f.getAttribute('host') || '',
+        hostAddr: f.getAttribute('hostAddr') || '',
+        hostPort: Number(f.getAttribute('hostPort')) || 0,
+        hostUser: f.getAttribute('hostUser') || '',
         command: f.textContent,
       })),
       settings: (() => {
@@ -1733,40 +1745,112 @@ async function importFromText(text) {
   let parsed;
   try { parsed = xmlToConfig(text); } catch (e) { toast(e.message, 'erro'); return; }
   const c = parsed.config;
-  const counts = `${c.hosts.length} host(s), ${c.playbooks.length} playbook(s), ${c.profiles.length} perfil(is), ${(c.favorites || []).length} favorito(s), ${Object.keys(c.globals).length} variável(is) global(is)`;
-  const secretsNote = parsed.includesSecrets ? '\n\nO arquivo contém senhas/chave da API — serão importadas.' : '';
 
-  // Avisa quando o arquivo aponta um host JÁ EXISTENTE para outro endereço:
-  // é assim que um arquivo de terceiro tentaria desviar uma conexão sua.
-  const porNome = new Map(state.hosts.map((h) => [h.name, h]));
-  const reaponta = [];
+  // O aviso de segredo sai do CONTEÚDO já lido, não do atributo includesSecrets
+  // do arquivo. O atributo é escrito por quem gerou o arquivo: um XML com
+  // includesSecrets="false" carregando password= e apiKey= produzia um diálogo
+  // que não falava em segredo nenhum, e mesmo assim plantava senhas e trocava a
+  // chave da API — porque a leitura desses campos nunca consultou o atributo.
+  const temSenha = (c.hosts || []).some((h) => h.auth && (h.auth.password || h.auth.passphrase));
+  const temChave = !!(c.settings && c.settings.apiKey);
+  // /api/settings nunca devolve a chave, só se existe uma — é o suficiente para
+  // avisar que a importação vai substituí-la.
+  let jaTemChave = false;
+  if (temChave) { try { jaTemChave = !!(await api('/api/settings')).hasApiKey; } catch {} }
+  const trocaChave = temChave && jaTemChave;
+
+  const linhas = [];
+  const conta = (n, sing, plur) => { if (n) linhas.push(`• ${n} ${n === 1 ? sing : plur}`); };
+  conta(c.hosts.length, 'host', 'hosts');
+  conta(c.playbooks.length, 'playbook', 'playbooks');
+  conta(c.profiles.length, 'perfil', 'perfis');
+  conta((c.favorites || []).length, 'favorito', 'favoritos');
+  conta(Object.keys(c.globals).length, 'variável global', 'variáveis globais');
+  // Configurações e preferências entravam sem constar em aviso nenhum: dava
+  // para trocar modelo de IA, fonte do terminal e tema com o diálogo dizendo
+  // "0 host(s), 0 playbook(s)…".
+  if (c.settings && Object.keys(c.settings).length) linhas.push('• configurações (IA e terminal)');
+  if (c.prefs) linhas.push('• preferências da interface (tema, painéis)');
+  if (!linhas.length) { toast('Este arquivo não tem nada para importar.', 'erro'); return; }
+
+  const avisos = [];
+  if (temSenha) avisos.push('senhas/passphrases de hosts');
+  if (temChave) avisos.push(trocaChave
+    ? 'a chave da API — ela SUBSTITUI a que você já tem configurada'
+    : 'a chave da API');
+  const notaSegredo = avisos.length
+    ? `\n\nATENÇÃO: o arquivo traz ${avisos.join(' e ')}.`
+    : '';
+
+  // Hosts homônimos em outro endereço NÃO são sobrescritos — o servidor casa
+  // por nome+endereço+porta+usuário e adiciona o do arquivo à parte. O aviso
+  // antigo dizia o contrário ("muda o ENDEREÇO", "a senha será descartada"), e
+  // disparava até ao reimportar o próprio backup. Um alerta antifraude que dá
+  // falso positivo ensina justamente a ignorá-lo no dia em que for verdadeiro.
+  const homonimos = [];
   for (const h of c.hosts || []) {
-    const ex = porNome.get(String(h.name || '').trim());
-    if (!ex) continue;
-    const novoPorto = Number(h.port) || 22;
-    if (ex.host !== h.host || (ex.port || 22) !== novoPorto || ex.username !== h.username) {
-      reaponta.push(`• ${ex.name}: ${ex.username}@${ex.host}:${ex.port || 22}  →  ${h.username}@${h.host}:${novoPorto}`);
-    }
+    const nome = String(h.name || '').trim();
+    const porta = Number(h.port) || portaPadrao(h.protocol);
+    const user = String(h.username || '');
+    const igual = state.hosts.find((x) => x.name === nome && x.host === h.host
+      && (x.port || 22) === porta && (x.username || '') === user);
+    if (igual) continue;
+    const ex = state.hosts.find((x) => x.name === nome);
+    if (ex) homonimos.push(`• ${nome}: você tem ${ex.username || '(sem usuário)'}@${ex.host}:${ex.port || 22}`
+      + `, o arquivo traz ${user || '(sem usuário)'}@${h.host}:${porta}`);
   }
-  if (reaponta.length && !confirm(
-    `ATENÇÃO: este arquivo muda o ENDEREÇO de ${reaponta.length} host(s) que você já tem:\n\n${reaponta.join('\n')}\n\n` +
-    'Se você não esperava isso, cancele — um arquivo de origem duvidosa pode estar tentando desviar sua conexão para outro servidor.\n' +
-    'As senhas salvas NÃO serão levadas para o novo endereço, e a identidade do servidor será verificada de novo.\n\nContinuar mesmo assim?'
+  if (homonimos.length && !confirm(
+    `${homonimos.length} host(s) do arquivo têm o mesmo NOME de hosts seus, mas endereço diferente:\n\n${homonimos.join('\n')}\n\n`
+    + 'Eles serão adicionados como hosts NOVOS — os seus não serão alterados e nenhuma senha sua é tocada.\n'
+    + 'Se você não reconhece esses endereços, cancele: um arquivo de origem duvidosa pode estar tentando plantar um host parecido com o seu.\n\nContinuar?'
   )) return;
 
-  if (!confirm(`Importar deste arquivo: ${counts}.\nItens com o mesmo nome serão atualizados; nada é apagado.${secretsNote}\n\nContinuar?`)) return;
+  // "Substituídos", não "atualizados": playbook casa só por nome e a lista de
+  // comandos é trocada inteira. O texto antigo dizia "nada é apagado", e o
+  // usuário lia isso como mesclagem segura.
+  const pbSubstituidos = (c.playbooks || [])
+    .filter((pb) => state.playbooks.some((x) => x.name === String(pb.name || '').trim()))
+    .map((pb) => pb.name);
+  const notaPb = pbSubstituidos.length
+    ? `\n\nEstes playbooks JÁ EXISTEM e terão os comandos SUBSTITUÍDOS pelos do arquivo:\n• ${pbSubstituidos.join('\n• ')}`
+    : '';
+
+  if (!confirm(`Importar deste arquivo:\n\n${linhas.join('\n')}\n\n`
+    + 'Hosts e perfis com o mesmo nome e endereço são atualizados (variáveis são mescladas, nada é removido).'
+    + `${notaPb}${notaSegredo}\n\nContinuar?`)) return;
+
   try {
     const r = await api('/api/import', { method: 'POST', body: c });
     await loadState();
     const p = (o) => `${o.added} novo(s), ${o.updated} atualizado(s)`;
-    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}; perfis: ${p(r.profiles)}${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}.`);
-    if (r.rebound && r.rebound.length) {
-      toast(`${r.rebound.length} host(s) tiveram o endereço alterado — a senha salva foi descartada por segurança: ${r.rebound.join(' | ')}`, 'erro');
-    }
-    if (r.skipped && r.skipped.length) toast(`${r.skipped.length} item(ns) ignorado(s): ${r.skipped.slice(0, 3).join('; ')}`, 'erro');
+    const extras = [];
+    if (r.settings) extras.push('configurações');
+    if (r.prefs) extras.push('preferências');
+    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}; perfis: ${p(r.profiles)}`
+      + `${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}${extras.length ? '; ' + extras.join(' e ') + ' aplicadas' : ''}.`);
+    // A lista de ignorados vinha cortada em 3 num toast de 7 s, sem onde revê-la.
+    if (r.skipped && r.skipped.length) mostrarIgnorados(r.skipped);
   } catch (e) {
     toast(e.message, 'erro');
   }
+}
+
+// Painel persistente com tudo o que a importação deixou de fora. Fica na tela
+// até ser fechado — numa restauração grande, saber QUAIS itens faltaram é a
+// diferença entre consertar e descobrir meses depois.
+function mostrarIgnorados(itens) {
+  document.getElementById('importIgnorados')?.remove();
+  const box = el(document.body, 'div', 'card');
+  box.id = 'importIgnorados';
+  box.style.cssText = 'position:fixed;right:16px;bottom:16px;max-width:min(560px,92vw);'
+    + 'max-height:60vh;overflow:auto;z-index:60;box-shadow:0 8px 32px rgba(0,0,0,.3)';
+  const head = el(box, 'div', 'card-head');
+  el(head, 'h2', '', `${itens.length} item(ns) não importado(s)`);
+  const fechar = el(head, 'button', 'btn', 'Fechar');
+  fechar.addEventListener('click', () => box.remove());
+  const ul = el(box, 'ul');
+  ul.style.cssText = 'margin:0;padding-left:20px;line-height:1.6';
+  for (const i of itens) el(ul, 'li', '', String(i));
 }
 
 function onImportFile(ev) {
@@ -2378,7 +2462,7 @@ function openQuickConnectModal() {
   };
   $$('input[name="qcAuth"]').forEach((r) => { r.checked = r.value === 'agent'; r.addEventListener('change', syncQc); });
   syncQc();
-  const PORTAS = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
+
   const syncQcProto = () => {
     const proto = $('#qc_protocol').value;
     const isTelnet = proto === 'telnet';
@@ -2393,7 +2477,7 @@ function openQuickConnectModal() {
     if (usuario) usuario.hidden = proto === 'vnc';
     const p = $('#qc_port');
     // só troca a porta se ela ainda for a padrão de outro protocolo
-    if (!p.value || Object.values(PORTAS).includes(Number(p.value))) p.value = PORTAS[proto];
+    if (!p.value || PORTAS_PADRAO.includes(Number(p.value))) p.value = portaPadrao(proto);
   };
   $('#qc_protocol').addEventListener('change', syncQcProto);
   syncQcProto();
@@ -2424,8 +2508,7 @@ function openQuickConnectModal() {
       }
     }
     const name = $('#qc_name').value.trim();
-    const PADRAO = { ssh: 22, telnet: 23, rdp: 3389, vnc: 5900 };
-    const port = Number($('#qc_port').value) || PADRAO[protocol] || 22;
+    const port = Number($('#qc_port').value) || portaPadrao(protocol);
     const fallbackName = username ? `${username}@${host}` : host;
     submit.disabled = true;
     try {

@@ -19,6 +19,7 @@ const desktop = require('./lib/desktop');
 const rdp = require('./lib/rdp');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
+const proto = require('./public/protocolos');
 const pkg = require('./package.json');
 
 const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e executa comandos
@@ -424,7 +425,7 @@ app.post('/api/desktop/credencial', (req, res) => {
   if (host.protocol !== 'rdp' && host.protocol !== 'vnc') {
     return fail(res, 400, 'Este host não é de área de trabalho remota.');
   }
-  const padrao = host.protocol === 'vnc' ? 5900 : 3389;
+  const padrao = proto.portaPadrao(host.protocol);
   res.set('Cache-Control', 'no-store');
   res.json({
     protocolo: host.protocol,
@@ -462,14 +463,14 @@ app.post('/api/quick-connect', (req, res) => {
   const b = req.body || {};
   const host = String(b.host || '').trim();
   const username = String(b.username || '').trim();
-  const PROTOCOLOS = { telnet: 23, rdp: 3389, vnc: 5900, ssh: 22 };
-  const protocol = Object.prototype.hasOwnProperty.call(PROTOCOLOS, b.protocol) ? b.protocol : 'ssh';
+  // FTP fica de fora de propósito: transferência de arquivo não abre sessão.
+  const protocol = proto.PROTOCOLOS_SESSAO.includes(b.protocol) ? b.protocol : 'ssh';
   if (!host) return fail(res, 400, 'Informe o host ou IP.');
   // RDP e VNC podem ir sem usuário e sem senha: nesse caso a própria máquina
   // remota mostra a tela de login dela, que é o comportamento normal do xrdp e
   // do Windows quando o cliente não manda credencial.
   if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário.');
-  const port = Math.min(65535, Math.max(1, Number(b.port) || PROTOCOLOS[protocol]));
+  const port = Math.min(65535, Math.max(1, Number(b.port) || proto.portaPadrao(protocol)));
   const a = b.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
   const auth = { type };
@@ -528,7 +529,7 @@ function publicHost(h) {
     host: h.host,
     port: h.port,
     username: h.username,
-    protocol: ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh',
+    protocol: proto.normalizarProtocolo(h.protocol),
     ftps: h.ftps || 'auto',
     rdpDomain: h.rdpDomain || '',
     rdpLegadoOk: !!h.rdpLegadoOk,
@@ -552,9 +553,8 @@ function parseHostBody(body, res) {
   if (!name) return fail(res, 400, 'Informe um nome para o host.');
   const hostAddr = String(body.host || '').trim();
   if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
-  const protocol = ['telnet', 'ftp', 'vnc', 'rdp'].includes(body.protocol) ? body.protocol : 'ssh';
-  const PORTA_PADRAO = { telnet: 23, ftp: 21, vnc: 5900, rdp: 3389, ssh: 22 };
-  const port = Number(body.port || PORTA_PADRAO[protocol]);
+  const protocol = proto.normalizarProtocolo(body.protocol);
+  const port = Number(body.port || proto.portaPadrao(protocol));
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail(res, 400, 'Porta inválida.');
   const username = String(body.username || '').trim();
   // no Telnet o login é feito no próprio terminal do equipamento
@@ -604,6 +604,19 @@ app.post('/api/export.xml', (req, res) => {
 function asArray(v) {
   return Array.isArray(v) ? v : [];
 }
+// Atributo ausente no arquivo significa "não sei", não "apague". O export omite
+// atributo vazio, então um backup feito num host sem grupo/ícone/cor chega aqui
+// sem essas chaves — e aplicá-las como string vazia zerava o host existente,
+// contra a promessa de que importar nunca apaga nada.
+function opcional(v, transformar) {
+  return v === undefined || v === null ? undefined : transformar(v);
+}
+function soDefinidos(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v;
+  return out;
+}
+
 function cleanVarsLenient(obj) {
   const out = {};
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
@@ -618,7 +631,20 @@ function cleanVarsLenient(obj) {
 // upsert por nome — nada é apagado.
 app.post('/api/import', (req, res) => {
   const body = req.body || {};
-  const d = store.get();
+  // Trabalha sobre uma CÓPIA. A rota muta cinco coleções em sequência; se algo
+  // estourasse no meio, as mutações já feitas continuavam vivas na memória e a
+  // PRÓXIMA gravação de qualquer outra rota despejava a importação pela metade
+  // no disco — com o usuário achando que nada tinha entrado, porque a tela
+  // mostrou erro. Assim, ou entra tudo, ou não entra nada.
+  const vivo = store.get();
+  const d = structuredClone(vivo);
+  // Um data.json de outra versão (ou editado à mão) pode trazer coleção com
+  // tipo errado. Normaliza aqui em vez de estourar no meio do laço.
+  for (const k of ['hosts', 'playbooks', 'profiles', 'favorites']) {
+    if (!Array.isArray(d[k])) d[k] = [];
+  }
+  if (!d.globals || typeof d.globals !== 'object' || Array.isArray(d.globals)) d.globals = {};
+  if (!d.settings || typeof d.settings !== 'object' || Array.isArray(d.settings)) d.settings = {};
   const summary = {
     globals: 0,
     profiles: { added: 0, updated: 0 },
@@ -628,139 +654,160 @@ app.post('/api/import', (req, res) => {
     skipped: [],
     favorites: { added: 0, updated: 0 },
     prefs: false,
-    rebound: [], // hosts existentes que o arquivo reapontou para outro endereço
   };
 
-  // Variáveis globais (merge de chaves)
-  if (body.globals && typeof body.globals === 'object' && !Array.isArray(body.globals)) {
-    for (const [k, v] of Object.entries(body.globals)) {
-      if (VAR_NAME_RE.test(k)) { d.globals[k] = String(v); summary.globals++; }
-      else summary.skipped.push('variável global inválida: ' + k);
+  try {
+    // Variáveis globais (merge de chaves)
+    if (body.globals && typeof body.globals === 'object' && !Array.isArray(body.globals)) {
+      for (const [k, v] of Object.entries(body.globals)) {
+        if (VAR_NAME_RE.test(k)) { d.globals[k] = String(v); summary.globals++; }
+        else summary.skipped.push('variável global inválida: ' + k);
+      }
     }
-  }
 
-  // Perfis
-  for (const p of asArray(body.profiles)) {
-    const name = String((p && p.name) || '').trim();
-    if (!name) continue;
-    const vars = cleanVarsLenient(p.vars);
-    const ex = d.profiles.find((x) => x.name === name);
-    if (ex) { ex.vars = vars; summary.profiles.updated++; }
-    else { d.profiles.push({ id: crypto.randomUUID(), name, vars }); summary.profiles.added++; }
-  }
+    // Perfis
+    for (const p of asArray(body.profiles)) {
+      const name = String((p && p.name) || '').trim();
+      if (!name) continue;
+      const vars = cleanVarsLenient(p.vars);
+      const ex = d.profiles.find((x) => x.name === name);
+      if (ex) { ex.vars = { ...(ex.vars || {}), ...vars }; summary.profiles.updated++; }
+      else { d.profiles.push({ id: crypto.randomUUID(), name, vars }); summary.profiles.added++; }
+    }
 
-  // Hosts
-  for (const h of asArray(body.hosts)) {
-    const name = String((h && h.name) || '').trim();
-    const hostAddr = String((h && h.host) || '').trim();
-    const username = String((h && h.username) || '').trim();
-    const proto = ['telnet', 'ftp', 'vnc', 'rdp'].includes(h && h.protocol) ? h.protocol : 'ssh';
-    // Telnet e FTP podem legitimamente não ter usuário (login no equipamento):
-    // exigir usuário aqui fazia esses hosts sumirem na restauração.
-    if (!name || !hostAddr || (!username && proto === 'ssh')) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
-    let port = Number(h.port) || ({ telnet: 23, ftp: 21, vnc: 5900, rdp: 3389 }[h.protocol] || 22);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) port = 22;
-    const a = h.auth || {};
-    const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
-    const auth = { type };
-    if (type === 'key') {
-      auth.keyPath = String(a.keyPath || '');
-      if (a.passphrase) auth.passphrase = String(a.passphrase);
-    }
-    if (type === 'password' && a.password) auth.password = String(a.password);
-    const vars = cleanVarsLenient(h.vars);
-    const protocol = ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh';
-    const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
-    const group = String(h.group || '').trim().slice(0, 60);
-    const icon = slug(h.icon);
-    const color = slug(h.color);
-    // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
-    // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
-    // deixaria um arquivo de terceiro apontar o host para outro servidor já
-    // "aprovado", e a senha salva seria entregue a ele sem nenhum alerta.
-    // Casa por NOME + ENDEREÇO. Só por nome, dois hosts homônimos (comuns em
-    // parques com "Firewall" por filial) colapsavam num só na restauração — e a
-    // guarda anti-reapontamento ainda apagava a senha do sobrevivente.
-    const mesmoDestino = (x) => x.name === name && x.host === hostAddr && (x.port || 22) === port && x.username === username;
-    // Só correspondência EXATA atualiza. Qualquer outra coisa entra como host
-    // novo: importar nunca deve destruir um registro existente, e sem o endereço
-    // não há como saber se "Firewall" do arquivo é o mesmo "Firewall" daqui.
-    const ex = d.hosts.find(mesmoDestino);
-    if (!ex && d.hosts.some((x) => x.name === name)) {
-      summary.skipped.push(`"${name}": já existe um host com este nome em outro endereço — o do arquivo foi adicionado à parte, nada foi sobrescrito`);
-    }
-    if (ex) {
-      const enderecoMudou = ex.host !== hostAddr || (ex.port || 22) !== port || ex.username !== username;
-      if (enderecoMudou) {
-        // credencial pertence ao endereço para o qual foi guardada
-        delete auth.password;
-        delete auth.passphrase;
-        summary.rebound.push(`${name}: ${ex.username}@${ex.host}:${ex.port || 22} → ${username}@${hostAddr}:${port}`);
-      } else {
-        // mesmo destino: preserva segredo existente quando o arquivo não traz um
+    // Hosts
+    for (const h of asArray(body.hosts)) {
+      const name = String((h && h.name) || '').trim();
+      const hostAddr = String((h && h.host) || '').trim();
+      const username = String((h && h.username) || '').trim();
+      const protocolo = proto.normalizarProtocolo(h && h.protocol);
+      // Telnet e FTP podem legitimamente não ter usuário (login no equipamento):
+      // exigir usuário aqui fazia esses hosts sumirem na restauração.
+      if (!name || !hostAddr || (!username && protocolo === 'ssh')) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
+      let port = Number(h.port) || proto.portaPadrao(protocolo);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) port = proto.portaPadrao(protocolo);
+      const a = h.auth || {};
+      const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
+      const auth = { type };
+      if (type === 'key') {
+        auth.keyPath = String(a.keyPath || '');
+        if (a.passphrase) auth.passphrase = String(a.passphrase);
+      }
+      if (type === 'password' && a.password) auth.password = String(a.password);
+      const vars = cleanVarsLenient(h.vars);
+      const protocol = protocolo;
+      const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
+      const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
+      const rdpDomain = opcional(h.rdpDomain, (v) => String(v).trim().slice(0, 80));
+      const icon = opcional(h.icon, slug);
+      const color = opcional(h.color, slug);
+      // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
+      // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
+      // deixaria um arquivo de terceiro apontar o host para outro servidor já
+      // "aprovado", e a senha salva seria entregue a ele sem nenhum alerta.
+      // Casa por NOME + ENDEREÇO. Só por nome, dois hosts homônimos (comuns em
+      // parques com "Firewall" por filial) colapsavam num só na restauração — e a
+      // guarda anti-reapontamento ainda apagava a senha do sobrevivente.
+      const mesmoDestino = (x) => x.name === name && x.host === hostAddr && (x.port || 22) === port && x.username === username;
+      // Só correspondência EXATA atualiza. Qualquer outra coisa entra como host
+      // novo: importar nunca deve destruir um registro existente, e sem o endereço
+      // não há como saber se "Firewall" do arquivo é o mesmo "Firewall" daqui.
+      const ex = d.hosts.find(mesmoDestino);
+      if (!ex && d.hosts.some((x) => x.name === name)) {
+        summary.skipped.push(`"${name}": já existe um host com este nome em outro endereço — o do arquivo foi adicionado à parte, nada foi sobrescrito`);
+      }
+      if (ex) {
+        // Aqui o destino é NECESSARIAMENTE o mesmo: `mesmoDestino` já exigiu nome,
+        // endereço, porta e usuário iguais. O bloco que existia para o caso
+        // "mudou de endereço" era inalcançável (medido: 810 entradas casando,
+        // zero com endereço diferente) e alimentava um aviso que o cliente
+        // exibia como se algo tivesse sido reapontado.
+        // Preserva o segredo existente quando o arquivo não traz um.
         if (type === 'password' && !auth.password && ex.auth && ex.auth.type === 'password' && ex.auth.password) auth.password = ex.auth.password;
         if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
+        // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
+        // um arquivo sem a variável X não é motivo para apagar o X daqui.
+        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth }),
+          { vars: { ...(ex.vars || {}), ...vars } });
+        summary.hosts.updated++;
+      } else {
+        // rdpLegadoOk fica de fora de propósito, pela mesma razão do fingerprint:
+        // é consentimento de segurança dado pelo usuário nesta máquina, não
+        // configuração. Restaurando, o app pergunta de novo — um clique.
+        d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps,
+          rdpDomain: rdpDomain || '', group: group || '', icon: icon || '', color: color || '', auth, vars });
+        summary.hosts.added++;
       }
-      Object.assign(ex, { name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars });
-      if (enderecoMudou) ex.fingerprint = null; // TOFU aprende de novo, no destino novo
-      summary.hosts.updated++;
-    } else {
-      d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps, group, icon, color, auth, vars });
-      summary.hosts.added++;
     }
-  }
 
-  // Playbooks
-  for (const pb of asArray(body.playbooks)) {
-    const name = String((pb && pb.name) || '').trim();
-    if (!name) continue;
-    const commands = asArray(pb.commands).map((c) => String(c).replace(/\r/g, ''));
-    if (!parseCommands(commands).length) { summary.skipped.push('playbook sem comandos: ' + name); continue; }
-    const description = String(pb.description || '').trim();
-    const ex = d.playbooks.find((x) => x.name === name);
-    if (ex) { ex.description = description; ex.commands = commands; summary.playbooks.updated++; }
-    else { d.playbooks.push({ id: crypto.randomUUID(), name, description, commands }); summary.playbooks.added++; }
-  }
-
-  // Configurações da IA
-  const s = body.settings;
-  if (s && typeof s === 'object') {
-    d.settings = d.settings || {};
-    if (typeof s.model === 'string' && ai.KNOWN_MODELS.includes(s.model)) { d.settings.model = s.model; summary.settings = true; }
-    if (typeof s.apiKey === 'string' && s.apiKey.trim()) { d.settings.apiKey = s.apiKey.trim(); summary.settings = true; }
-    if (typeof s.termFont === 'string' && s.termFont.length <= 200 && /^[A-Za-z0-9 ,"'\-]+$/.test(s.termFont)) { d.settings.termFont = s.termFont; summary.settings = true; }
-    if (Number.isFinite(Number(s.termFontSize))) { d.settings.termFontSize = Math.min(28, Math.max(8, Math.round(Number(s.termFontSize)))); summary.settings = true; }
-  }
-
-  // Favoritos: o arquivo referencia o host pelo NOME (ids mudam entre
-  // instalações); resolvemos para o id local aqui. Upsert por comando+escopo,
-  // para reimportar o mesmo arquivo não duplicar.
-  d.favorites = Array.isArray(d.favorites) ? d.favorites : [];
-  for (const f of asArray(body.favorites)) {
-    const command = String((f && f.command) || '').trim();
-    if (!command || command.length > 4000) { summary.skipped.push('favorito inválido'); continue; }
-    const label = String((f && f.label) || '').trim().slice(0, 80);
-    let hostId = null;
-    if (f && f.hostName) {
-      const alvo = d.hosts.find((h) => h.name === String(f.hostName));
-      if (!alvo) { summary.skipped.push(`favorito de host inexistente: ${f.hostName}`); continue; }
-      hostId = alvo.id;
+    // Playbooks
+    for (const pb of asArray(body.playbooks)) {
+      const name = String((pb && pb.name) || '').trim();
+      if (!name) continue;
+      const commands = asArray(pb.commands).map((c) => String(c).replace(/\r/g, ''));
+      if (!parseCommands(commands).length) { summary.skipped.push('playbook sem comandos: ' + name); continue; }
+      const description = String(pb.description || '').trim();
+      const ex = d.playbooks.find((x) => x.name === name);
+      if (ex) { ex.description = description; ex.commands = commands; summary.playbooks.updated++; }
+      else { d.playbooks.push({ id: crypto.randomUUID(), name, description, commands }); summary.playbooks.added++; }
     }
-    const ex = d.favorites.find((x) => x.command === command && (x.hostId || null) === hostId);
-    if (ex) { ex.label = label; summary.favorites.updated++; }
-    else { d.favorites.push({ id: crypto.randomUUID(), command, label, hostId }); summary.favorites.added++; }
-  }
 
-  // Preferências da interface
-  if (body.prefs && typeof body.prefs === 'object') {
-    const ui = uiPrefs();
-    if (body.prefs.theme === 'light' || body.prefs.theme === 'dark') ui.theme = body.prefs.theme;
-    for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
-      if (typeof body.prefs[k] === 'boolean') ui[k] = body.prefs[k];
+    // Configurações da IA
+    const s = body.settings;
+    if (s && typeof s === 'object') {
+      d.settings = d.settings || {};
+      if (typeof s.model === 'string' && ai.KNOWN_MODELS.includes(s.model)) { d.settings.model = s.model; summary.settings = true; }
+      if (typeof s.apiKey === 'string' && s.apiKey.trim()) { d.settings.apiKey = s.apiKey.trim(); summary.settings = true; }
+      if (typeof s.termFont === 'string' && s.termFont.length <= 200 && /^[A-Za-z0-9 ,"'\-]+$/.test(s.termFont)) { d.settings.termFont = s.termFont; summary.settings = true; }
+      if (Number.isFinite(Number(s.termFontSize))) { d.settings.termFontSize = Math.min(28, Math.max(8, Math.round(Number(s.termFontSize)))); summary.settings = true; }
     }
-    summary.prefs = true;
+
+    // Favoritos: o arquivo referencia o host pelo NOME (ids mudam entre
+    // instalações); resolvemos para o id local aqui. Upsert por comando+escopo,
+    // para reimportar o mesmo arquivo não duplicar.
+    d.favorites = Array.isArray(d.favorites) ? d.favorites : [];
+    for (const f of asArray(body.favorites)) {
+      const command = String((f && f.command) || '').trim();
+      if (!command || command.length > 4000) { summary.skipped.push('favorito inválido'); continue; }
+      const label = String((f && f.label) || '').trim().slice(0, 80);
+      let hostId = null;
+      if (f && f.hostName) {
+        const nome = String(f.hostName);
+        // Mesmo critério do casamento de hosts: nome + endereço + porta + usuário.
+        // Arquivos antigos não trazem o endereço; nesses, cai para o nome — mas
+        // se houver mais de um homônimo não há como escolher, então avisa em vez
+        // de chutar o primeiro.
+        const exatos = f.hostAddr
+          ? d.hosts.filter((h) => h.name === nome && h.host === String(f.hostAddr)
+              && (h.port || 22) === (Number(f.hostPort) || 22)
+              && (h.username || '') === String(f.hostUser || ''))
+          : d.hosts.filter((h) => h.name === nome);
+        if (!exatos.length) { summary.skipped.push(`favorito de host inexistente: ${nome}`); continue; }
+        if (exatos.length > 1) { summary.skipped.push(`favorito "${label || command}": há ${exatos.length} hosts chamados "${nome}" e o arquivo não diz qual`); continue; }
+        hostId = exatos[0].id;
+      }
+      const ex = d.favorites.find((x) => x.command === command && (x.hostId || null) === hostId);
+      if (ex) { ex.label = label; summary.favorites.updated++; }
+      else { d.favorites.push({ id: crypto.randomUUID(), command, label, hostId }); summary.favorites.added++; }
+    }
+
+    // Preferências da interface
+    if (body.prefs && typeof body.prefs === 'object') {
+      if (!d.settings.ui || typeof d.settings.ui !== 'object' || Array.isArray(d.settings.ui)) d.settings.ui = {};
+      const ui = d.settings.ui;
+      if (body.prefs.theme === 'light' || body.prefs.theme === 'dark') ui.theme = body.prefs.theme;
+      for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
+        if (typeof body.prefs[k] === 'boolean') ui[k] = body.prefs[k];
+      }
+      summary.prefs = true;
+    }
+  } catch (e) {
+    // A cópia é descartada: nada do que foi montado chega ao disco.
+    return fail(res, 500, 'Falha ao importar o arquivo: ' + (e && e.message ? e.message : e));
   }
 
+  // Só agora o estado real muda.
+  Object.assign(vivo, d);
   store.save();
   res.json(summary);
 });

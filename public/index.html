@@ -19,6 +19,7 @@ try {
 <link rel="stylesheet" href="style.css">
 <script src="/vendor/xterm/lib/xterm.js"></script>
 <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+<script src="protocolos.js" defer></script>
 <script src="host-icons.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
@@ -404,7 +405,7 @@ try {
           <button id="btnExportXml" class="btn primary">⤓ Exportar .xml</button>
         </div>
       </div>
-      <p class="hint">Exporta ou importa toda a configuração — playbooks, hosts, perfis e variáveis globais — em um arquivo XML. Ao importar, itens com o mesmo nome são atualizados e nada é apagado.</p>
+      <p class="hint">Exporta ou importa a configuração num arquivo XML: hosts, playbooks, perfis, variáveis globais, favoritos, configurações de IA/terminal e preferências da interface. Ficam de fora o histórico de comandos e as provas de identidade dos servidores (fingerprint e consentimento de RDP legado), que valem só nesta máquina. Ao importar, nenhum registro é removido — hosts e perfis com mesmo nome e endereço são atualizados; playbooks de mesmo nome têm os comandos substituídos, e o app lista quais antes de confirmar. Mesmo sem segredos, variáveis e comandos vão em texto claro: revise antes de compartilhar.</p>
       <label class="check-danger"><input type="checkbox" id="exportSecrets"> Incluir <strong>senhas e chave da API</strong> no arquivo exportado (texto claro — guarde com cuidado)</label>
       <input type="file" id="importFile" accept=".xml,application/xml,text/xml" hidden>
     </div>

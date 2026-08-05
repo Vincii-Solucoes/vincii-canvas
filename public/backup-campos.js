@@ -1,0 +1,44 @@
+'use strict';
+
+// Que campos de um host o backup leva — e, para os que não leva, por quê.
+//
+// Existe porque o pior defeito do backup foi um campo órfão: quando RDP e VNC
+// entraram, ninguém lembrou do parser de importação, e a restauração passou a
+// devolver todo host RDP como SSH e a descartar todo host VNC. `rdpDomain`
+// nasceu órfão do mesmo jeito — o usuário digitava o domínio, o backup não o
+// levava, e o logon com Active Directory falhava depois de restaurar, com o
+// cadastro parecendo completo na tela.
+//
+// A lista abaixo é conferida por test/backup.test.js contra um host de
+// referência: acrescentar um campo novo ao host sem classificá-lo aqui QUEBRA
+// o teste. É de propósito — a decisão "isto vai no backup?" passa a ser
+// obrigatória, em vez de silenciosa.
+
+// Atributos do <host>. A ordem é a mesma da saída, para facilitar a leitura.
+const HOST_ATRIBUTOS = [
+  'name', 'host', 'port', 'username', 'protocol', 'ftps', 'rdpDomain',
+  'group', 'icon', 'color',
+];
+
+// Atributos que só fazem sentido num protocolo — o export os omite nos demais,
+// para o arquivo não carregar campo morto.
+const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp' };
+
+// Vão como elementos filhos (<auth/> e <vars>), não como atributos.
+const HOST_FILHOS = ['auth', 'vars'];
+
+// Fora do arquivo de propósito. O motivo fica junto: sem ele, o próximo a ler
+// isto vai "consertar" a ausência e reabrir um buraco de segurança.
+const HOST_EXCLUIDOS = {
+  id: 'gerado por instalação; o casamento é por nome+endereço, não por id',
+  fingerprint: 'prova de identidade do servidor, aprendida na primeira conexão (TOFU). '
+    + 'Aceitá-la de um arquivo deixaria um XML de terceiro apontar um host seu para '
+    + 'outro servidor já "aprovado", e a senha salva iria para ele sem alarme.',
+  rdpLegadoOk: 'consentimento de segurança dado pelo usuário NESTA máquina, não '
+    + 'configuração. Restaurando, o app pergunta de novo — um clique.',
+  rdpLegado: 'resíduo inerte: nenhuma linha do projeto lê ou escreve este campo.',
+};
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { HOST_ATRIBUTOS, HOST_ATRIBUTOS_CONDICIONAIS, HOST_FILHOS, HOST_EXCLUIDOS };
+}
