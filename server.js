@@ -1241,8 +1241,14 @@ app.post('/api/agent/start', (req, res) => {
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');
   if (goal.length > 4000) return fail(res, 400, 'Tarefa longa demais.');
+  // 'escrita' é o padrão: roda sozinho o que for leitura reconhecida e pergunta
+  // no resto. 'perigosos' é o comportamento antigo (só a lista de padrões) e
+  // 'nunca' não pergunta nada — os dois só entram se pedidos explicitamente.
+  const MODOS = ['tudo', 'escrita', 'perigosos', 'nunca'];
+  let aprovacao = MODOS.includes(body.aprovacao) ? body.aprovacao : 'escrita';
+  if (body.aprovacao === undefined && body.confirmDangerous === false) aprovacao = 'nunca';
   const options = {
-    confirmDangerous: body.confirmDangerous !== false,
+    aprovacao,
     timeoutSec: Math.min(600, Math.max(5, Number(body.timeoutSec) || 120)),
   };
   const run = agent.start({ host, goal, options, saveData: () => store.save() });
@@ -1271,14 +1277,19 @@ app.get('/api/agent/:id/stream', (req, res) => {
 app.post('/api/agent/:id/approve', (req, res) => {
   const run = agent.getRun(req.params.id);
   if (!run) return fail(res, 404, 'Execução do agente não encontrada.');
-  agent.approve(run, (req.body || {}).approve === true);
+  // Devolve o que de fato aconteceu: approve() responde false quando não há
+  // aprovação pendente (run já terminado, clique duplicado). Responder sempre
+  // {ok:true} fazia a tela escrever "→ aprovado" embaixo de um comando negado.
+  const efetivou = agent.approve(run, (req.body || {}).approve === true);
+  if (!efetivou) return fail(res, 409, 'Não havia aprovação pendente nesta execução.');
   res.json({ ok: true });
 });
 
 app.post('/api/agent/:id/stop', (req, res) => {
   const run = agent.getRun(req.params.id);
   if (!run) return fail(res, 404, 'Execução do agente não encontrada.');
-  agent.stop(run);
+  const efetivou = agent.stop(run);
+  if (!efetivou) return fail(res, 409, 'Esta execução já havia terminado.');
   res.json({ ok: true });
 });
 

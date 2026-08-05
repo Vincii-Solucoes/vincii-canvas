@@ -3049,7 +3049,7 @@ function logHistory(session, command, source, origin) {
 
 // ---------- IA por sessão: builders + montagem no painel ----------
 const AI_EMPTY_ASSIST = 'Peça ajuda com comandos em linguagem natural — ex.: <em>"como vejo o uso de disco?"</em>. A IA sugere comandos; você decide inserir e executar. Nada roda sozinho.';
-const AI_EMPTY_AGENT = 'A IA vai executar comandos no servidor <strong>sozinha</strong> para cumprir a tarefa, e você acompanha cada passo aqui. Você pode parar a qualquer momento; comandos perigosos pedem sua aprovação.';
+const AI_EMPTY_AGENT = 'A IA vai executar comandos no servidor <strong>sozinha</strong> para cumprir a tarefa, e você acompanha cada passo aqui. Você pode parar a qualquer momento; comandos de leitura rodam sozinhos e qualquer um que altere o sistema pede sua aprovação.';
 
 function buildAiMessages() {
   const box = document.createElement('div');
@@ -3378,8 +3378,10 @@ function agentStart(auto) {
   if (!goal) { toast('Descreva a tarefa para o agente.', 'erro'); return; }
   const alvo = s.isLocal ? 'nesta máquina (seu computador)' : 'no servidor';
   if (auto && !confirm(
-    `Modo AUTOMÁTICO: a IA vai executar sozinha todos os comandos necessários para cumprir a tarefa, sem pedir confirmação — inclusive comandos que alteram ou apagam dados ${alvo}. ` +
-    'Você acompanha ao vivo e pode clicar em "Parar" a qualquer momento.\n\nDeseja continuar?'
+    `Modo AUTOMÁTICO: a IA vai executar sozinha TODOS os comandos que julgar necessários ${alvo}, sem pedir confirmação — inclusive apagar arquivos, parar serviços e alterar configuração. ` +
+    'Nenhuma verificação é feita antes de executar.\n\n' +
+    'No modo supervisionado (botão "Iniciar"), comandos de leitura rodam sozinhos e qualquer comando que altere o sistema pede sua aprovação.\n\n' +
+    'Você acompanha ao vivo e pode clicar em "Parar" a qualquer momento.\n\nDeseja continuar assim mesmo?'
   )) return;
   const ai = s.ai;
   ai.goal = goal;
@@ -3389,8 +3391,10 @@ function agentStart(auto) {
   api('/api/agent/start', {
     method: 'POST',
     body: s.isLocal
-      ? { local: true, goal, confirmDangerous: !auto }
-      : { hostId: s.hostId, goal, confirmDangerous: !auto },
+      // 'escrita': roda sozinho o que for leitura reconhecida e pergunta em
+      // tudo que altere o sistema. 'nunca': não pergunta nada (modo automático).
+      ? { local: true, goal, aprovacao: auto ? 'nunca' : 'escrita' }
+      : { hostId: s.hostId, goal, aprovacao: auto ? 'nunca' : 'escrita' },
   })
     .then((r) => {
       if (!ai.agent) return; // cancelado antes de iniciar
@@ -3439,7 +3443,9 @@ function handleAgentEvent(session, evt) {
       el(box, 'div', 'agent-goal').textContent = `Objetivo: ${evt.goal}`;
       el(box, 'div', 'muted small', `${evt.host.name} — ${evt.host.address}`);
       el(box, 'div', 'agent-mode ' + (agent.auto ? 'auto' : 'sup'),
-        agent.auto ? '⚡ Modo automático — executando sem pedir confirmação' : '🛡 Modo supervisionado — comandos perigosos pedem aprovação');
+        agent.auto
+          ? '⚡ Modo automático — executando sem pedir confirmação, inclusive comandos que apagam dados'
+          : '🛡 Modo supervisionado — só comandos de leitura rodam sozinhos; qualquer um que altere o sistema pede aprovação');
       break;
     }
     case 'thinking-start': {
@@ -3491,26 +3497,44 @@ function handleAgentEvent(session, evt) {
       renderTermTabs();
       const wrap = el(box, 'div', 'agent-approval');
       wrap.dataset.id = evt.id;
-      el(wrap, 'div', 'warn', `⚠ Comando perigoso — ${evt.reason}. Aprovar execução?`);
+      // Nem todo comando que pede aprovação é "perigoso": a maioria só não é
+      // reconhecidamente de leitura. Chamar tudo de perigoso gasta o alarme.
+      el(wrap, 'div', 'warn', evt.alteraSistema === false
+        ? `⚠ Aprovação pedida — ${evt.reason}. Executar?`
+        : `⚠ Este comando altera o sistema — ${evt.reason}. Aprovar execução?`);
       el(wrap, 'pre').textContent = evt.command;
       const row = el(wrap, 'div', 'btn-row');
       const deny = el(row, 'button', 'btn small', 'Negar');
       const ok = el(row, 'button', 'btn small danger', 'Aprovar e executar');
       const resolve = (approve) => {
-        api(`/api/agent/${agent.id}/approve`, { method: 'POST', body: { approve } }).catch(() => {});
         deny.disabled = ok.disabled = true;
         agent.needsApproval = false;
         renderTermTabs();
-        el(wrap, 'div', 'muted small', approve ? '→ aprovado' : '→ negado');
+        // Quem escreve o resultado é o evento do servidor ('approved' /
+        // 'command-denied'), não este clique: se o run já tiver terminado, a
+        // rota responde 409 e nada é escrito — em vez de mentir na tela.
+        api(`/api/agent/${agent.id}/approve`, { method: 'POST', body: { approve } })
+          .catch((e) => { el(wrap, 'div', 'muted small', `não aplicado: ${e.message}`); });
       };
       deny.addEventListener('click', () => resolve(false));
       ok.addEventListener('click', () => resolve(true));
       agentScroll(ai);
       break;
     }
-    case 'command-denied':
-    case 'approved':
+    case 'command-denied': {
+      // O rótulo era escrito de forma otimista no clique, sem esperar o
+      // servidor — dava para clicar em "Parar" e depois em "Aprovar" no cartão
+      // que continuava na tela, e o feed gravava "→ aprovado" embaixo de um
+      // comando negado. Agora quem escreve é o evento.
+      const w = box.querySelector(`.agent-approval[data-id="${evt.id}"]`);
+      if (w) { w.replaceChildren(); el(w, 'div', 'agent-denied', '⛔ Comando negado por você — não executado.'); }
       break;
+    }
+    case 'approved': {
+      const w = box.querySelector(`.agent-approval[data-id="${evt.id}"]`);
+      if (w) { w.replaceChildren(); el(w, 'div', 'agent-approved', '✓ Aprovado por você — executando.'); }
+      break;
+    }
     case 'notice': {
       clearThinking(ai);
       agent.text = null;
@@ -3532,7 +3556,9 @@ function handleAgentEvent(session, evt) {
       agentScroll(ai);
       break;
     }
-    case 'agent-end': {
+    case 'agent-end':
+      // Cartão de aprovação que ficou na tela não pode continuar clicável.
+      box.querySelectorAll('.agent-approval button').forEach((btn) => { btn.disabled = true; }); {
       const label = { ok: 'Tarefa concluída', erro: 'Encerrado com erro', cancelado: 'Parado pelo analista' }[evt.status] || evt.status;
       el(box, 'div', 'agent-meta ' + (evt.status === 'ok' ? 'ok' : 'fail'), `— ${label} (${fmtMs(evt.durationMs)})`);
       agentScroll(ai);

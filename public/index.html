@@ -180,10 +180,10 @@ try {
           <div class="agent-controls">
             <textarea id="agentGoal" rows="5" placeholder="Descreva a tarefa para a IA executar sozinha… ex.: verifique quais serviços estão parados e tente reiniciá-los"></textarea>
             <div class="agent-opts">
-              <span class="hint small">Supervisionado pausa em comandos perigosos; Automático executa tudo sozinho.</span>
+              <span class="hint small">Supervisionado roda leitura sozinho e pede aprovação em tudo que altere o sistema; Automático executa tudo sozinho.</span>
               <span class="spacer"></span>
-              <button id="agentStart" class="btn" title="Executa a tarefa, mas pausa e pede sua aprovação em comandos perigosos">Supervisionado</button>
-              <button id="agentAuto" class="btn auto" title="A IA executa todos os comandos sozinha, sem pedir confirmação">Automático</button>
+              <button id="agentStart" class="btn" title="Executa a tarefa, mas roda comandos de leitura sozinho e pede sua aprovação em qualquer um que altere o sistema">Supervisionado</button>
+              <button id="agentAuto" class="btn auto" title="A IA executa todos os comandos sozinha, sem nenhuma verificação — inclusive comandos que apagam dados">Automático</button>
               <button id="agentStop" class="btn danger" hidden>Parar</button>
             </div>
             <p id="agentLocalNote" class="hint" hidden>⚠️ Nesta aba o agente executa comandos <strong>nesta máquina</strong> (seu computador), não em um servidor remoto.</p>

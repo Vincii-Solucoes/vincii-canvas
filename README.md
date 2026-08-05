@@ -75,10 +75,10 @@ Para ligar:
 - **Terminal** (aba própria) — um **terminal SSH interativo** de verdade (shell com PTY, via xterm.js) para o host escolhido. Também é possível abrir **vários** terminais ao mesmo tempo (inclusive para o mesmo host), cada um numa aba. **Cada aba tem seu próprio assistente e agente de IA, independentes** — dá para ter um agente instalando algo num host, outro configurando um switch e um terminal manual **ao mesmo tempo** (o backend suporta até 20 agentes simultâneos); uma bolinha na aba indica quando o agente daquela sessão está trabalhando (teal) ou aguardando aprovação (amarelo), mesmo enquanto você olha outra aba. Quando **não há nenhuma conexão remota**, o app abre automaticamente um **terminal local da própria máquina** ("Meu computador") — um shell de verdade no seu sistema (zsh/bash no macOS/Linux; PowerShell/cmd no Windows), detectado automaticamente. Ao lado, um painel de IA (Claude) com **dois modos**:
   - **Assistente** — a IA **sugere** comandos a partir de linguagem natural; cada um aparece em um bloco com os botões **Inserir** (digita no terminal, sem Enter) e **Inserir e executar**. Nada roda sozinho.
   - **Agente autônomo** — você descreve uma **tarefa** e a IA a cumpre **sozinha**: executa comandos via SSH, lê as saídas e decide os próximos passos, num laço, enquanto você **acompanha cada passo ao vivo**. Dois botões de partida:
-    - **Supervisionado** — pausa e pede sua aprovação em **comandos perigosos** (rm -rf, mkfs, dd, shutdown, firewall, etc.).
+    - **Supervisionado** (padrão) — só rodam sozinhos os comandos **reconhecidamente de leitura** (`ls`, `cat`, `df`, `journalctl`, `systemctl status`, `docker ps`…). Qualquer outro — inclusive os que a lista não conhece — **pede sua aprovação**, com o motivo escrito. Leitura de caminho sensível (`~/.ssh`, `/etc/shadow`, `.env`, credenciais, os dados do próprio app) também pede, porque a saída de cada comando é enviada à API do modelo.
     - **Automático** — executa tudo sem pedir confirmação, para você não precisar interagir; há um aviso único antes de iniciar.
 
-    Em ambos há **Parar** imediato e limite de 30 passos por tarefa. A saída dos comandos é sempre tratada como **dado não confiável** — o agente é instruído a nunca seguir instruções embutidas nela (defesa contra prompt injection vindo de um servidor comprometido). O modo ativo (🛡 supervisionado / ⚡ automático) fica indicado no topo do feed.
+    Em ambos, **Parar** interrompe o agente na hora (nenhum comando novo é emitido) e limite de 30 passos por tarefa. No comando que já está em execução: na máquina local ele é morto junto com o grupo de processos; no servidor remoto é enviado um sinal KILL — mas nem todo servidor SSH honra esse sinal, então um comando já em voo pode terminar sozinho lá. A saída dos comandos é sempre tratada como **dado não confiável** — o agente é instruído a nunca seguir instruções embutidas nela (defesa contra prompt injection vindo de um servidor comprometido). O modo ativo (🛡 supervisionado / ⚡ automático) fica indicado no topo do feed.
 
   A aparência do terminal (fonte e tamanho) é ajustável na aba **Configurações** → "Aparência do terminal", com prévia ao vivo; a escolha é aplicada na hora e salva para as próximas aberturas.
 - **Tema claro/escuro** — a interface tem modo **claro** (padrão) e **escuro**, alternável pelo botão de sol/lua no cabeçalho ou na aba **Configurações** → "Tema". A preferência é lembrada nesta máquina. O terminal e os blocos de código permanecem escuros nos dois temas (visual de console).
@@ -90,7 +90,7 @@ Para ligar:
 - O servidor escuta **apenas em 127.0.0.1** — nada é exposto na rede.
 - Os dados ficam em `data.json` (criado com permissão `600`). **Senhas, passphrases e a chave da API Anthropic são gravadas nesse arquivo em texto claro** — prefira agente SSH ou chave sempre que possível; a chave da API nunca é devolvida ao navegador.
 - **IA (assistente)**: só devolve texto; quem executa é você.
-- **IA (agente autônomo)**: aí sim a IA executa comandos por conta própria — por isso as salvaguardas: acompanhamento ao vivo, parar a qualquer momento, limite de passos e confirmação de comandos perigosos (ligada por padrão). Use com um usuário SSH de privilégio adequado à tarefa. A saída dos comandos é tratada como dado não confiável.
+- **IA (agente autônomo)**: aí sim a IA executa comandos por conta própria — por isso as salvaguardas: acompanhamento ao vivo, parar a qualquer momento, limite de passos e, no modo supervisionado (padrão), **aprovação obrigatória para tudo que não seja leitura reconhecida**. O que o classificador não entende cai em aprovação: errar aí custa uma pergunta a mais, não um servidor a menos. Use com um usuário SSH de privilégio adequado à tarefa. A saída dos comandos volta ao modelo cercada e rotulada como dado não confiável, e senhas guardadas no app são removidas dela. **Atenção:** tudo que o agente lê é enviado à API da Anthropic.
 - Autenticação por agente exige a variável `SSH_AUTH_SOCK` no ambiente em que o app foi iniciado (inicie pelo terminal).
 - Timeout encerra a conexão SSH do host, mas o processo remoto pode continuar rodando em alguns casos.
 
@@ -139,7 +139,8 @@ lib/runner.js      motor SSH (ssh2): conexões, execução, eventos SSE
 lib/terminal.js    terminal SSH interativo (WebSocket + shell/PTY)
 lib/localterm.js   terminal local da própria máquina (WebSocket + PTY)
 lib/ai.js          assistente de IA (Anthropic Claude), streaming
-lib/agent.js       agente autônomo: laço tool-use, guarda de comandos perigosos
+lib/agent.js       agente autônomo: laço tool-use e portão de aprovação
+lib/agent-leitura.js  classifica comando como somente-leitura (lista de permissão)
 public/            interface web (HTML/CSS/JS puro)
 desktop/main.js    processo principal do Electron (app desktop)
 build/icon.png     ícone do aplicativo
