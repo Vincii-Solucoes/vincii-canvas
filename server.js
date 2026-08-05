@@ -423,24 +423,29 @@ app.post('/api/rdp/consentir', (req, res) => {
 });
 
 // A senha de um host NUNCA sai daqui pelas rotas normais (ver publicHost).
-// Esta é a única exceção, e é deliberada: o CredSSP do RDP roda no WebAssembly,
-// dentro do navegador, então a credencial precisa chegar lá.
+// Esta é a única exceção, e é deliberada: quem autentica nas áreas de trabalho
+// remotas é o código que roda no navegador — o CredSSP do RDP no WebAssembly, e
+// a autenticação do VNC dentro do noVNC. A credencial precisa chegar lá.
 //
 // Barreiras: guarda de origem (como todas as rotas) MAIS o token do processo,
 // que não está em disco e é sorteado a cada abertura do app. É POST para a
 // credencial nunca aparecer em URL, histórico ou log de acesso.
-app.post('/api/rdp/credencial', (req, res) => {
+app.post('/api/desktop/credencial', (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
   const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId);
   if (!host) return fail(res, 404, 'Host não encontrado.');
-  if (host.protocol !== 'rdp') return fail(res, 400, 'Este host não é RDP.');
+  if (host.protocol !== 'rdp' && host.protocol !== 'vnc') {
+    return fail(res, 400, 'Este host não é de área de trabalho remota.');
+  }
+  const padrao = host.protocol === 'vnc' ? 5900 : 3389;
   res.set('Cache-Control', 'no-store');
   res.json({
+    protocolo: host.protocol,
     username: host.username || '',
     password: (host.auth && host.auth.password) || '',
     domain: host.rdpDomain || '',
-    destino: `${host.host}:${host.port || 3389}`,
+    destino: `${host.host}:${host.port || padrao}`,
   });
 });
 

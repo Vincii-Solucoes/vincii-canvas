@@ -2511,7 +2511,7 @@ function createDeskSession({ hostId, hostName, protocol }) {
     };
     try {
       session.desk = protocol === 'vnc'
-        ? window.vcDesktop.conectarVnc({ hostId, senha: '', container, onEstado })
+        ? window.vcDesktop.conectarVnc({ hostId, container, onEstado })
         : window.vcDesktop.conectarRdp({ hostId, container, onEstado });
     } catch (e) {
       session.status = 'encerrado';

@@ -46,12 +46,17 @@ function alcaVnc(rfb) {
 }
 
 // ---------- VNC ----------
-function conectarVnc({ hostId, senha, container, onEstado }) {
+function conectarVnc({ hostId, container, onEstado }) {
   limpar(container);
-  const rfb = new RFB(container, urlWs('/api/vnc', { hostId }), {
-    credentials: senha ? { password: senha } : undefined,
-    wsProtocols: [],
-  });
+  // A senha do VNC é validada DENTRO do noVNC (desafio-resposta com DES), então
+  // ela precisa chegar ao navegador — mesmo caminho e mesmas barreiras do RDP.
+  // Antes ia string vazia fixa daqui, e uma senha cadastrada no host
+  // simplesmente não era usada: o servidor pedia autenticação e a conexão
+  // morria com "cadastre a senha no host", com a senha cadastrada.
+  // Busca já: o pedido de credencial pode chegar em milissegundos, e esperar o
+  // evento para só então ir ao servidor perderia tempo à toa.
+  const credencial = pegarCredencial(hostId).catch(() => null);
+  const rfb = new RFB(container, urlWs('/api/vnc', { hostId }), { wsProtocols: [] });
   rfb.scaleViewport = true;      // ajusta a tela remota ao tamanho do painel
   rfb.resizeSession = false;     // não força o servidor a mudar de resolução
   rfb.background = '#0a0d12';
@@ -60,7 +65,12 @@ function conectarVnc({ hostId, senha, container, onEstado }) {
     const limpo = e.detail && e.detail.clean;
     onEstado({ estado: 'desconectado', erro: limpo ? '' : 'A conexão caiu.' });
   });
-  rfb.addEventListener('credentialsrequired', () => {
+  rfb.addEventListener('credentialsrequired', async () => {
+    // Responder pelo evento (e não setando credentials antes de conectar) evita
+    // uma corrida: o RFB começa a falar com o servidor no mesmo instante em que
+    // é construído, e a senha vem de uma requisição assíncrona.
+    const cred = await credencial;
+    if (cred && cred.password) { try { rfb.sendCredentials({ password: cred.password }); return; } catch {} }
     onEstado({ estado: 'erro', erro: 'O servidor VNC pediu senha. Cadastre a senha no host.' });
   });
   rfb.addEventListener('securityfailure', (e) => {
@@ -240,7 +250,7 @@ function alcaRdp(sessao, entrada, canvas) {
 }
 
 async function pegarCredencial(hostId) {
-  const r = await fetch('/api/rdp/credencial', {
+  const r = await fetch('/api/desktop/credencial', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hostId, token: window.VC_TOKEN || '' }),
