@@ -55,17 +55,22 @@ teste('ignora um comprimento que estoura o buffer', () => {
 });
 
 console.log('\nCS_SECURITY — anunciar métodos ao servidor');
-teste('troca 0 por 40|128|56 sem mudar tamanho', () => {
+teste('troca 0 por RC4-128 sem mudar tamanho', () => {
   const buf = Buffer.concat([outroBloco(0xc001, 216), blocoCs(0), outroBloco(0xc003, 8)]);
   const antes = buf.length;
   const r = m.anunciarMetodos(buf);
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.antes, 0);
-  assert.strictEqual(buf.readUInt32LE(r.posicao + 4), 0x0b);
+  assert.strictEqual(buf.readUInt32LE(r.posicao + 4), 0x02);
   assert.strictEqual(buf.length, antes, 'o tamanho mudou — quebraria o BER/PER');
 });
 teste('não anuncia FIPS (não implementamos 3DES)', () => {
   assert.strictEqual(m.METODOS_SUPORTADOS & 0x10, 0);
+});
+teste('não anuncia 40 nem 56 bits — não escolhemos o elo fraco pelo usuário', () => {
+  assert.strictEqual(m.METODOS_SUPORTADOS & 0x01, 0);
+  assert.strictEqual(m.METODOS_SUPORTADOS & 0x08, 0);
+  assert.strictEqual(m.METODOS_SUPORTADOS, 0x02);
 });
 teste('falha com motivo quando não há bloco', () => {
   const r = m.anunciarMetodos(outroBloco(0xc001, 216));

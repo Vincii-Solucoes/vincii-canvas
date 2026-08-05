@@ -94,6 +94,11 @@ const ERRO_RDCLEANPATH = 4;
 const ERRO_PROXY = 5;
 const ERRO_NEGOCIACAO = 6;
 
+// Sinal interno: o proxy recusou porque o servidor só fala RDP antigo e o
+// usuário ainda não confirmou para este host. Não é mensagem de erro final —
+// o app.js troca por uma pergunta.
+const PRECISA_CONSENTIR = '\u0000precisa-consentir';
+
 // Erros do IronRDP vêm como IronError, cujo texto é técnico demais para a
 // interface. Traduzimos os que o usuário consegue agir em cima.
 //
@@ -111,8 +116,7 @@ function humanizaRdp(erro) {
   // sozinho, então merece a mensagem mais direta.
   if (tipo === ERRO_RDCLEANPATH || tipo === ERRO_NEGOCIACAO
       || /RDCleanPath negotiation|standard RDP security is not supported/i.test(texto)) {
-    return 'O servidor recusou TLS. Marque "Permitir RDP legado" no cadastro deste host, '
-      + 'ou habilite TLS no servidor (no xrdp: security_layer=negotiate).';
+    return PRECISA_CONSENTIR;
   }
   if (tipo === ERRO_SENHA_ERRADA) return 'Senha incorreta.';
   if (tipo === ERRO_LOGIN) return 'Usuário ou senha recusados pelo servidor.';
@@ -324,5 +328,5 @@ function conectarRdp({ hostId, container, onEstado }) {
   return provisoria;
 }
 
-window.vcDesktop = { conectarVnc, conectarRdp };
+window.vcDesktop = { conectarVnc, conectarRdp, PRECISA_CONSENTIR };
 window.dispatchEvent(new Event('vc-desktop-pronto'));

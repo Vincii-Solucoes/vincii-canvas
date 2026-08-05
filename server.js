@@ -406,6 +406,22 @@ app.get('/api/rdp/modo', (req, res) => {
   res.json({ modo: rdp.modoDe(String(req.query.hostId || '')) });
 });
 
+// Registra que o usuário aceitou falar RDP antigo com este host. Fica na
+// memória do processo para hosts avulsos e no data.json para hosts salvos —
+// perguntar de novo a cada abertura do app seria ruído, e o usuário já decidiu.
+app.post('/api/rdp/consentir', (req, res) => {
+  const corpo = req.body || {};
+  if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
+  const id = String(corpo.hostId || '');
+  const host = store.get().hosts.find((h) => h.id === id) || quickhosts.get(id);
+  if (!host) return fail(res, 404, 'Host não encontrado.');
+  if (host.protocol !== 'rdp') return fail(res, 400, 'Este host não é RDP.');
+  rdp.consentir(id);
+  const salvo = store.get().hosts.find((h) => h.id === id);
+  if (salvo) { salvo.rdpLegadoOk = true; store.save(); }
+  res.json({ ok: true });
+});
+
 // A senha de um host NUNCA sai daqui pelas rotas normais (ver publicHost).
 // Esta é a única exceção, e é deliberada: o CredSSP do RDP roda no WebAssembly,
 // dentro do navegador, então a credencial precisa chegar lá.
@@ -521,6 +537,7 @@ function publicHost(h) {
     protocol: ['telnet', 'ftp', 'vnc', 'rdp'].includes(h.protocol) ? h.protocol : 'ssh',
     ftps: h.ftps || 'auto',
     rdpDomain: h.rdpDomain || '',
+    rdpLegadoOk: !!h.rdpLegadoOk,
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',

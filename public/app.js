@@ -2442,6 +2442,29 @@ function openQuickConnectModal() {
 // O tipo de segurança do RDP é detectado pelo servidor, não escolhido pelo
 // usuário. Mas quando a negociação cai no modo antigo, a identidade da máquina
 // remota não é verificada — e isso ele precisa saber, uma vez por sessão.
+// O proxy recusou porque o servidor só oferece RDP antigo e este host ainda
+// não foi confirmado. A senha NÃO saiu da máquina — o Client Info só é montado
+// depois da negociação, e ela parou antes. Perguntamos aqui, uma vez por host.
+async function pedirConsentimentoLegado(session) {
+  const h = state.hosts.find((x) => x.id === session.hostId);
+  const onde = h ? `${h.host}:${h.port || 3389}` : session.hostName;
+  const ok = confirm(
+    `${session.hostName} (${onde}) só oferece RDP antigo.\n\n`
+    + 'Nesse modo a identidade do servidor NÃO é verificada, e a sua senha vai '
+    + 'protegida apenas pela criptografia antiga do RDP. Se alguém estiver no '
+    + 'caminho da rede, pode ter forçado esse rebaixamento para capturá-la.\n\n'
+    + 'Conectar assim mesmo? Não perguntarei de novo para este host.',
+  );
+  if (!ok) { toast(`${session.hostName}: conexão cancelada.`); return; }
+  try {
+    await api('/api/rdp/consentir', { method: 'POST', body: { hostId: session.hostId, token: window.VC_TOKEN } });
+  } catch (e) { toast(e.message, 'erro'); return; }
+  await loadState();
+  toast(`${session.hostName}: reconectando em modo antigo…`, 'aviso');
+  closeSession(session.id);
+  openSession(session.hostId);
+}
+
 async function avisarSeLegado(session) {
   try {
     const r = await api(`/api/rdp/modo?hostId=${encodeURIComponent(session.hostId)}`);
@@ -2479,7 +2502,11 @@ function createDeskSession({ hostId, hostName, protocol }) {
       else session.status = 'encerrado';
       renderTermTabs();
       renderHostSidebar();
-      if (erro) toast(`${hostName}: ${erro}`, 'erro');
+      if (erro === (window.vcDesktop && window.vcDesktop.PRECISA_CONSENTIR)) {
+        pedirConsentimentoLegado(session);
+      } else if (erro) {
+        toast(`${hostName}: ${erro}`, 'erro');
+      }
       if (estado === 'conectado' && protocol === 'rdp') avisarSeLegado(session);
     };
     try {
