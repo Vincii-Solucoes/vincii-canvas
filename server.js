@@ -139,10 +139,7 @@ function pkgDir(id) {
 app.use('/vendor/xterm', express.static(pkgDir('@xterm/xterm')));
 app.use('/vendor/addon-fit', express.static(pkgDir('@xterm/addon-fit')));
 // Clientes de área de trabalho remota: noVNC (VNC) e ironrdp-wasm (RDP).
-// O guacamole-common-js continua servido, mas nada o importa: o caminho do
-// guacd ficou dormente e só sai depois que o IronRDP for validado em campo.
 app.use('/vendor/novnc', express.static(pkgDir('@novnc/novnc')));
-app.use('/vendor/guacamole', express.static(pkgDir('guacamole-common-js')));
 app.use('/vendor/ironrdp', express.static(pkgDir('ironrdp-wasm')));
 
 function fail(res, status, error) {
@@ -387,17 +384,6 @@ function transferir(origem, caminhoOrigem, destino, caminhoDestino) {
     r.pipe(w);
   });
 }
-
-app.get('/api/desktop/status', async (req, res) => {
-  res.json({
-    // RDP passou a rodar em WebAssembly no próprio app: não depende de nada
-    // instalado. O guacd continua reportado só para quem ainda o usa.
-    rdp: true,
-    guacd: await desktop.guacdDisponivel(),
-    guacdHost: desktop.GUACD_HOST,
-    guacdPort: desktop.GUACD_PORT,
-  });
-});
 
 // Diz como a última conexão RDP a este host foi negociada. A interface usa
 // isto para avisar quando a sessão caiu no modo legado, em que o servidor não
@@ -1277,7 +1263,6 @@ function start(port = PORT, host = HOST) {
         return;
       }
       if (pathname === '/api/vnc') desktop.vncWss.handleUpgrade(req, socket, head, (ws) => desktop.vncWss.emit('connection', ws, req));
-      else if (pathname === '/api/guac') desktop.guacWss.handleUpgrade(req, socket, head, (ws) => desktop.guacWss.emit('connection', ws, req));
       else if (pathname === '/api/rdp') rdp.rdpWss.handleUpgrade(req, socket, head, (ws) => rdp.rdpWss.emit('connection', ws, req));
       else if (pathname === '/api/terminal') termWss.handleUpgrade(req, socket, head, (ws) => termWss.emit('connection', ws, req));
       else if (pathname === '/api/localterminal') localWss.handleUpgrade(req, socket, head, (ws) => localWss.emit('connection', ws, req));

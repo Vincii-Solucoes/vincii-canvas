@@ -94,6 +94,31 @@ Para ligar:
 - Autenticação por agente exige a variável `SSH_AUTH_SOCK` no ambiente em que o app foi iniciado (inicie pelo terminal).
 - Timeout encerra a conexão SSH do host, mas o processo remoto pode continuar rodando em alguns casos.
 
+### Área de trabalho remota: o que assumimos
+
+Estas são escolhas conscientes, e é melhor você saber delas do que descobrir depois.
+
+- **A senha de hosts RDP e VNC chega ao navegador.** Quem autentica é o código
+  que roda lá — o CredSSP do RDP em WebAssembly, o desafio-resposta do VNC no
+  noVNC. Ela vai por POST autenticado com um token sorteado a cada abertura do
+  app, nunca em URL, e não é gravada em lugar nenhum além da conexão em curso.
+  Nas conexões SSH isso **não** acontece: lá a senha nunca sai do servidor local.
+- **Nenhum caminho de RDP verifica a identidade do servidor.** Nem o TLS (sem
+  fixação de certificado) nem o modo antigo. É diferente do SSH, que fixa o
+  fingerprint na primeira conexão e bloqueia se ele mudar. Enquanto isso não
+  existir para o RDP, trate uma conexão RDP em rede que você não controla como
+  uma conexão que pode estar sendo observada.
+- **O modo antigo do RDP (Standard Security) usa RC4** e não autentica ninguém.
+  O app conecta assim mesmo quando é o que o servidor oferece, mas pergunta uma
+  vez por host antes — e a senha não sai da sua máquina enquanto você não
+  aceitar. O motivo do portão: quem estiver no caminho da rede pode forçar esse
+  rebaixamento reescrevendo quatro bytes, e colher a credencial de um servidor
+  que falaria TLS.
+- **O que vai para a Anthropic** na aba de área de trabalho: as suas mensagens
+  mais o nome e o endereço do host. A imagem da tela **não** vai — a IA não vê
+  o que você está vendo. No terminal vai também a saída recente, marcada como
+  dado não confiável.
+
 ## Servidor SSH de teste
 
 Para experimentar sem tocar em servidores reais:
@@ -126,18 +151,22 @@ dist/              instaladores gerados (não versionar)
 ## Área de trabalho remota (VNC e RDP)
 
 Cadastre o host com protocolo **VNC** (porta padrão 5900) ou **RDP** (3389) e
-conecte pela aba **Área de trabalho**.
+clique nele na barra lateral do **Terminal** — a área de trabalho abre como
+mais uma aba, ao lado dos terminais. Também dá para conectar sem cadastrar,
+pela **conexão rápida** (o botão ⚡).
 
-- **VNC funciona sem instalar nada**: o app fala RFB direto com o servidor.
-- **RDP exige o guacd**, daemon do Apache Guacamole. O RDP moderno usa
-  NLA/CredSSP, que não tem implementação viável em JavaScript; o guacd faz a
-  tradução. Suba com Docker:
+**Os dois funcionam sem instalar nada**: nem Docker, nem guacd, nem binário
+nativo. O VNC fala RFB direto; o RDP roda em WebAssembly dentro do próprio app,
+com NLA/CredSSP, e o servidor local entra só como ponte de rede — o que também
+significa que ele enxerga a sua VPN e as rotas da sua máquina.
 
-  ```
-  docker run -d --name guacd -p 4822:4822 guacamole/guacd
-  ```
+O tipo de segurança do RDP é **detectado**, não configurado. Se o servidor só
+oferecer o modo antigo (comum em Linux com xrdp), o app pergunta uma vez por
+host antes de conectar — ver *Segurança* abaixo.
 
-  O endereço pode ser mudado com as variáveis `GUACD_HOST` e `GUACD_PORT`.
+Na aba de área de trabalho a IA fica disponível **só para tirar dúvida**: não
+há terminal ali, então o agente autônomo some e os blocos de comando não ganham
+botão de inserir.
 
-Execução em lote e o agente de IA continuam exigindo SSH — hosts VNC e RDP são
-recusados por essas funções, com mensagem clara.
+Execução em lote e o agente autônomo continuam exigindo SSH — hosts VNC e RDP
+são recusados por essas funções, com mensagem clara.

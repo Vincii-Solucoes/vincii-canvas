@@ -6,8 +6,17 @@
 // recusa certificados que o Node aceita, por exemplo).
 //
 // Uso:
-//   npx electron . --remote-debugging-port=9222 &
+//   npx electron . --remote-debugging-port=9222 \
+//     --disable-background-timer-throttling \
+//     --disable-renderer-backgrounding \
+//     --disable-backgrounding-occluded-windows &
 //   node test/cdp.js caminho/para/expressao.js
+//
+// As três flags NÃO são opcionais. Sem elas, o Chromium congela os timers da
+// janela quando ela fica em segundo plano — e como o teste roda pelo terminal,
+// ela sempre fica. Um setTimeout de 1 s deixa de retornar por MINUTOS, e o
+// sintoma é o teste pendurar como se o app tivesse travado. Já custou uma
+// caçada a uma regressão que não existia.
 //
 // O arquivo passado deve conter UMA expressão JavaScript (normalmente uma
 // função assíncrona autoinvocada) cujo valor é impresso na saída.
