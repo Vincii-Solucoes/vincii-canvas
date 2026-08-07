@@ -5,7 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app: electronApp, BrowserWindow, shell, dialog } = require('electron');
+const { app: electronApp, BrowserWindow, shell, dialog, session } = require('electron');
 
 // Marca que estamos no app desktop — o servidor usa em /api/update-check para
 // decidir: Mac/web mostram a faixa de aviso; Windows/Linux fazem auto-update.
@@ -88,6 +88,30 @@ if (!electronApp.requestSingleInstanceLock()) {
       },
     });
 
+    // Janela nova pedida por uma PÁGINA REMOTA. O app tinha
+    // setWindowOpenHandler só em win.webContents — a janela da interface — e um
+    // listener 'new-window' no elemento <webview>, evento removido no Electron
+    // 22 (aqui roda 41). Ou seja: as duas travas eram código morto, e uma
+    // página podia abrir janela nativa do app, sem barra de endereço e com o
+    // título que quisesse. Aqui pega de verdade, para todo guest.
+    electronApp.on('web-contents-created', (_e, contents) => {
+      if (contents.getType() !== 'webview') return;
+      contents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+        return { action: 'deny' };
+      });
+      // Permissão não se decide em webPreferences, e sim na sessão — que nunca
+      // recebia handler. Sem handler, o padrão do Electron é CONCEDER: medido,
+      // a página remota abria microfone e câmera ao vivo, sem prompt nenhum, e
+      // disparava notificação do sistema assinada com o nome do app.
+      const ses = contents.session;
+      if (ses && !ses.__vcPermissoesNegadas) {
+        ses.__vcPermissoesNegadas = true;
+        ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+        ses.setPermissionCheckHandler(() => false);
+      }
+    });
+
     // Trava do <webview>: vale mesmo que alguém consiga injetar HTML na
     // interface, porque quem decide aqui é o processo principal, não o atributo
     // escrito na tag.
@@ -118,6 +142,11 @@ if (!electronApp.requestSingleInstanceLock()) {
     // SSH já faz com o fingerprint: aceita na PRIMEIRA visita, guarda, e a
     // partir daí recusa se mudar — porque aí ou trocaram o equipamento, ou
     // alguém está no meio do caminho.
+    //
+    // Alcance real, para o comentário não prometer demais: isto só roda quando
+    // o Chromium REJEITA o certificado. Um certificado que encadeia numa CA
+    // confiável nunca chega aqui e nunca é fixado — daí a etiqueta na interface
+    // dizer "certificado autoassinado fixado", e não "certificado verificado".
     electronApp.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
       let alvo;
       try { alvo = new URL(url); } catch { return callback(false); }
@@ -128,13 +157,38 @@ if (!electronApp.requestSingleInstanceLock()) {
       const hosts = Array.isArray(dados.hosts) ? dados.hosts : [];
       // Casa pelo host+porta da URL: o pino pertence ao endereço, não ao rótulo.
       const porta = Number(alvo.port) || (alvo.protocol === 'https:' ? 443 : 80);
-      // Host salvo primeiro; se não houver, um avulso da conexão rápida. Um
-      // avulso recebe a MESMA regra: a exposição na primeira visita é idêntica
-      // à de um host salvo, e recusar só ele deixaria a conexão rápida sem saída
-      // diante de qualquer equipamento com certificado autoassinado.
-      const host = hosts.find((h) => h.protocol === 'web'
-          && String(h.host) === alvo.hostname && Number(h.port || 443) === porta)
-        || quickhosts.acharPorEndereco('web', alvo.hostname, porta);
+      // QUAL host? Casar só por endereço escolhia o PRIMEIRO registro com
+      // aquele host:porta — que pode não ser o que abriu a aba. Com dois
+      // cadastros para o mesmo equipamento, o pino consultado era o do outro
+      // registro: aceitava certificado novo em silêncio, gravava no lugar
+      // errado, e "esquecer certificado" no host certo não resolvia nada.
+      //
+      // Cada aba web roda numa partição própria (persist:web-<hostId>), e
+      // session.fromPartition devolve SEMPRE o mesmo objeto para a mesma
+      // string. Comparar a sessão do webContents com a partição de cada
+      // candidato identifica o host exato que abriu a página.
+      const daSessao = (h) => {
+        try {
+          const nome = String(h.id).startsWith('qc_') ? 'web-' + h.id : 'persist:web-' + h.id;
+          return webContents && webContents.session === session.fromPartition(nome);
+        } catch { return false; }
+      };
+      const candidatos = hosts.filter((h) => h.protocol === 'web');
+      const avulsos = quickhosts.listar ? quickhosts.listar('web') : [];
+      const host = candidatos.find(daSessao) || avulsos.find(daSessao)
+        // Recuo para arquivos antigos/casos sem partição reconhecível: só aceita
+        // quando NÃO houver ambiguidade de endereço.
+        || (() => {
+          const mesmos = candidatos.filter((h) => String(h.host) === alvo.hostname
+            && Number(h.port || 443) === porta);
+          if (mesmos.length === 1) return mesmos[0];
+          if (mesmos.length > 1) {
+            console.error(`[desktop] certificado recusado: ${mesmos.length} hosts web`
+              + ` no mesmo endereço ${alvo.host} e não deu para saber qual abriu a aba`);
+            return null;
+          }
+          return quickhosts.acharPorEndereco('web', alvo.hostname, porta);
+        })();
       if (!host) {
         console.error(`[desktop] certificado recusado (host não cadastrado): ${alvo.host}`);
         return callback(false);

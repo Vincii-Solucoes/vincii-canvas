@@ -35,6 +35,17 @@ function normalizarUrl(entrada) {
   try { u = new URL(texto); } catch { return null; }
   if (!ESQUEMAS.includes(u.protocol)) return null;
   if (!u.hostname) return null;
+  // Usuário e senha embutidos (http://admin:senha@10.0.0.9) saem fora.
+  //
+  // Funcionavam de verdade — o webview autenticava sozinho por Basic auth — e
+  // era esse o incentivo para gravar assim. Só que a senha ia parar no rótulo
+  // do host na tela, na barra de endereço da aba, no data.json e, pior, no
+  // backup SEM segredos: lib/exportxml.js emite `url` sem olhar includeSecrets,
+  // então o arquivo que se declara "sem senhas" saía com a senha dentro.
+  // O modelo de segredos do backup foi feito com cuidado; uma senha entrando
+  // por outro campo contornava tudo.
+  u.username = '';
+  u.password = '';
   return u.toString();
 }
 

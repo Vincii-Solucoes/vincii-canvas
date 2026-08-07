@@ -46,4 +46,30 @@ igual(partesDaUrl('https://x.io/a').port, 443, 'https sem porta é 443');
 igual(partesDaUrl('http://x.io/a').port, 80, 'http sem porta é 80');
 igual(partesDaUrl('javascript:x'), null, 'partes de URL recusada é null');
 
+// ---------- usuário e senha embutidos na URL ----------
+
+// http://admin:senha@10.0.0.9 FUNCIONA (o webview autentica sozinho por Basic
+// auth), e era esse o incentivo para gravar assim. Só que a senha ia parar no
+// rótulo do host na tela, na barra de endereço da aba, no data.json — e no
+// backup SEM segredos, porque o export emite `url` sem olhar includeSecrets.
+// Uma senha entrando por outro campo contornava todo o modelo de segredos.
+{
+  const semSegredo = (u) => {
+    const r = normalizarUrl(u);
+    ok(r !== null, `deveria aceitar a URL: ${u}`);
+    ok(!/admin|S3nh4|senha/i.test(r), `usuário ou senha sobreviveu em: ${r}`);
+    return r;
+  };
+  igual(semSegredo('http://admin:S3nh4@10.0.0.9/'), 'http://10.0.0.9/',
+    'usuário e senha somem da URL');
+  igual(semSegredo('https://admin@roteador.local/cgi'), 'https://roteador.local/cgi',
+    'só usuário também sai');
+  // O userinfo também servia para disfarçar o destino: isto se lê pelo começo
+  // como a LAN, mas o host real é evil.example.
+  igual(normalizarUrl('https://192.168.1.1@evil.example/'), 'https://evil.example/',
+    'o endereço real aparece, sem o disfarce do userinfo');
+  igual(normalizarUrl('https://x.io/a?b=1#c'), 'https://x.io/a?b=1#c',
+    'URL sem userinfo passa intacta');
+}
+
 console.log(`\n${n} verificações passaram`);

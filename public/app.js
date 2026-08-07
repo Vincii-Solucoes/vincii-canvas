@@ -245,7 +245,7 @@ function hostCard(h) {
   const nv = Object.keys(h.vars || {}).length;
   if (nv) el(meta, 'span', 'tag', `${nv} var(s)`);
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
-  if (h.webCert) el(meta, 'span', 'tag', 'certificado fixado');
+  if (h.webCert) el(meta, 'span', 'tag', 'certificado autoassinado fixado');
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
   btnConn.addEventListener('click', () => connectFromHosts(h.id));
@@ -481,7 +481,7 @@ function openHostModal(existing) {
   certRow.replaceChildren();
   certRow.hidden = !(existing && existing.webCert);
   if (existing && existing.webCert) {
-    el(certRow, 'span', 'mono', `Certificado fixado: ${String(existing.webCert).slice(0, 26)}… `);
+    el(certRow, 'span', 'mono', `Certificado autoassinado fixado: ${String(existing.webCert).slice(0, 26)}… `);
     const esquecer = el(certRow, 'button', 'btn small', 'Esquecer certificado');
     esquecer.type = 'button';
     esquecer.addEventListener('click', async () => {
@@ -2323,7 +2323,12 @@ function hostAddrLabel(h) {
   if (h.protocol === 'vnc') return `vnc://${h.host}:${h.port}`;
   if (h.protocol === 'rdp') return `rdp://${h.username ? h.username + '@' : ''}${h.host}:${h.port}`;
   // Página web não tem usuário: mostra a própria URL, sem "@" pendurado.
-  if (h.protocol === 'web') return h.url || `https://${h.host}:${h.port}`;
+  if (h.protocol === 'web') {
+    // Mostra o endereço efetivo, não a string crua: uma URL como
+    // https://192.168.1.1@evil.example/ se lê pelo começo como a LAN.
+    try { const u = new URL(h.url); return u.origin + (u.pathname === '/' ? '' : u.pathname); }
+    catch { return h.url || `https://${h.host}:${h.port}`; }
+  }
   return `${h.username}@${h.host}:${h.port}`;
 }
 
@@ -2725,8 +2730,16 @@ function createWebSession({ hostId, hostName, url }) {
   view.setAttribute('src', endereco);
   // Sessão separada por host: o cookie do roteador da filial A não vale na B,
   // e nada disso encosta na sessão da própria interface do app.
-  view.setAttribute('partition', `persist:web-${hostId}`);
-  view.setAttribute('allowpopups', 'false');
+  // Host salvo guarda a sessão (senão a gerência do roteador pede login a cada
+  // recarga). Host avulso NÃO: o id é novo a cada conexão, então cada uso
+  // deixaria um diretório de ~2 MB para sempre no perfil, com cookie de sessão
+  // do equipamento em texto claro — e sem nem servir para reaproveitar login.
+  view.setAttribute('partition', String(hostId).startsWith('qc_')
+    ? `web-${hostId}` : `persist:web-${hostId}`);
+  // NÃO acrescentar allowpopups: é atributo booleano, lido com hasAttribute().
+  // Escrever "false" DEIXA o atributo presente e portanto HABILITA popups — o
+  // contrário do pretendido. Quem nega janela nova é o processo principal, em
+  // web-contents-created (desktop/main.js).
   view.className = 'web-view';
   container.appendChild(view);
 
@@ -2755,6 +2768,11 @@ function createWebSession({ hostId, hostName, url }) {
     renderHostSidebar();
   });
   view.addEventListener('did-fail-load', (e) => {
+    // Só a navegação PRINCIPAL conta. Sem esta guarda, um <iframe> ou uma
+    // imagem de outra origem que falhasse marcava a aba inteira como
+    // "encerrada", com faixa vermelha de certificado — numa página que tinha
+    // carregado perfeitamente.
+    if (e.isMainFrame === false) return;
     // -3 é ABORTED: acontece em toda navegação cancelada, não é erro de verdade.
     if (e.errorCode === -3) return;
     const desc = String(e.errorDescription || e.errorCode || '');
@@ -2763,20 +2781,27 @@ function createWebSession({ hostId, hostName, url }) {
     // aparecia para certificado trocado — dizendo a coisa errada justamente no
     // caso em que o app está protegendo o usuário.
     if (/CERT/i.test(desc)) {
-      dica = ' O app fixa o certificado do equipamento na primeira visita e recusa'
-        + ' se ele mudar — ou trocaram o equipamento, ou alguém está no meio do caminho.'
-        + ' Se a troca foi você, use "esquecer certificado" no cadastro do host.';
+      // Pode ser o pino recusando (o equipamento mudou) OU um endereço que não
+      // está cadastrado — redirecionamento do próprio equipamento para outro
+      // nome, por exemplo. Acusar "alguém está no meio do caminho" nos dois
+      // casos gasta o alarme e manda usar um botão que não resolve o segundo.
+      let alvoFalhou = '';
+      try { alvoFalhou = new URL(e.validatedURL || endereco).host; } catch {}
+      const mesmoEndereco = !alvoFalhou || alvoFalhou === (() => {
+        try { return new URL(endereco).host; } catch { return ''; }
+      })();
+      dica = mesmoEndereco
+        ? ' O app fixa o certificado do equipamento na primeira visita e recusa'
+          + ' se ele mudar — ou trocaram o equipamento, ou alguém está no meio do caminho.'
+          + ' Se a troca foi você, use "esquecer certificado" no cadastro do host.'
+        : ` O endereço ${alvoFalhou} não está cadastrado e apresentou certificado`
+          + ' inválido. Se o equipamento redireciona para lá, cadastre também esse'
+          + ' endereço como host.';
     } else if (/SSL|ERR_EMPTY_RESPONSE/i.test(desc) && /^https:/i.test(endereco)) {
       const alternativa = endereco.replace(/^https:/i, 'http:');
       dica = ` Este endereço foi aberto como https. Se o equipamento só fala http, use ${alternativa} no cadastro.`;
     }
     falhou = `Não foi possível abrir: ${desc}.${dica}`;
-  });
-  // Link que abriria janela nova vai para o navegador do sistema, como o resto
-  // do app já faz.
-  view.addEventListener('new-window', (e) => {
-    e.preventDefault();
-    if (/^https?:\/\//i.test(e.url || '')) window.open(e.url, '_blank');
   });
 
   voltar.addEventListener('click', () => { try { view.goBack(); } catch {} });

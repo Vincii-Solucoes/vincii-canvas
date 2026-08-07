@@ -757,6 +757,14 @@ app.post('/api/import', (req, res) => {
         // Preserva o segredo existente quando o arquivo não traz um.
         if (type === 'password' && !auth.password && ex.auth && ex.auth.type === 'password' && ex.auth.password) auth.password = ex.auth.password;
         if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
+        // Num host web o destino REAL é a url — e ela não entra em `mesmoDestino`.
+        // Sem isto, um XML reapontava a página de um host existente para outro
+        // lugar mantendo o certificado já fixado, sem aviso nenhum.
+        if (protocolo === 'web' && url && ex.url && url !== ex.url) {
+          delete ex.webCert;
+          summary.skipped.push(`"${name}": o arquivo mudou a URL de ${ex.url} para ${url}`
+            + ' — o certificado fixado foi descartado e será aprendido de novo');
+        }
         // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
         // um arquivo sem a variável X não é motivo para apagar o X daqui.
         Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, auth }),
@@ -881,7 +889,13 @@ app.put('/api/hosts/:id', (req, res) => {
     v.auth.passphrase = host.auth.passphrase;
   }
   // endereço mudou → o fingerprint antigo deixa de valer
-  if (v.host !== host.host || v.port !== host.port) host.fingerprint = null;
+  if (v.host !== host.host || v.port !== host.port || v.url !== host.url) {
+    host.fingerprint = null;
+    // O pino do certificado pertence ao ENDEREÇO. Sem isto, editar a URL
+    // mantinha o pino do equipamento antigo valendo para o novo: o equipamento
+    // certo era recusado com a acusação de "alguém está no meio do caminho".
+    delete host.webCert;
+  }
   Object.assign(host, v);
   store.save();
   res.json(publicHost(host));
