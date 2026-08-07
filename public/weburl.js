@@ -48,30 +48,10 @@ function partesDaUrl(entrada) {
   return { url, host: u.hostname, port };
 }
 
-// Endereço de rede privada (RFC 1918, loopback, link-local, .local). Não muda o
-// que é permitido — serve para a interface avisar quando a página NÃO é da rede
-// interna, já que o caso de uso descrito é gerência de equipamento próprio.
-function ehRedePrivada(entrada) {
-  const url = normalizarUrl(entrada);
-  if (!url) return false;
-  const h = new URL(url).hostname.toLowerCase();
-  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home')) return true;
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  if (a === 10 || a === 127) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 169 && b === 254) return true;
-  return false;
-}
-
-// No navegador, deixa disponível para app.js (carregado depois deste script).
 if (typeof window !== 'undefined') {
   window.normalizarUrl = normalizarUrl;
-  window.ehRedePrivada = ehRedePrivada;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { normalizarUrl, partesDaUrl, ehRedePrivada, ESQUEMAS };
+  module.exports = { normalizarUrl, partesDaUrl, ESQUEMAS };
 }

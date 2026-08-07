@@ -492,7 +492,10 @@ app.post('/api/quick-connect', (req, res) => {
     auth.password = String(a.password || '');
   }
   const name = String(b.name || '').trim() || (username ? `${username}@${endereco}` : endereco);
-  const id = quickhosts.add({ name, host: endereco, port, username, protocol, url, auth });
+  // Página web não tem login do lado do app — guardar credencial aqui seria
+  // segredo parado sem nada que o consuma.
+  const credencial = protocol === 'web' ? { type: 'agent' } : auth;
+  const id = quickhosts.add({ name, host: endereco, port, username: protocol === 'web' ? '' : username, protocol, url, auth: credencial });
   res.json({ hostId: id, name, protocol, url });
 });
 
@@ -585,7 +588,9 @@ function parseHostBody(body, res) {
   const ftps = ['auto', 'yes', 'no'].includes(body.ftps) ? body.ftps : 'auto';
 
   const a = body.auth || {};
-  const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
+  // Página web não autentica pelo app: quem pede usuário e senha é a página.
+  const type = protocol === 'web' ? 'agent'
+    : (['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent');
   const auth = { type };
   if (type === 'key') {
     auth.keyPath = String(a.keyPath || '').trim();

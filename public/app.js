@@ -420,6 +420,11 @@ function openHostModal(existing) {
     mostrarCampo($('#f_url'), isWeb);
     mostrarCampo($('#f_host'), !isWeb);
     mostrarCampo($('#f_port'), !isWeb);
+    // Página web não tem login de SSH: usuário, chave e agente não significam
+    // nada aqui. Quem pede senha é a própria página, no formulário dela.
+    mostrarCampo($('#f_user'), !isWeb);
+    const fsAuth = $('#authFieldset');
+    if (fsAuth) fsAuth.hidden = isWeb;
     $('#f_rdpLegadoNota').hidden = !isRdp;
     $('#f_telaCredNota').hidden = !(isRdp || isVnc);
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
@@ -2538,14 +2543,15 @@ function openQuickConnectModal() {
     $('#qc_telnetNote').hidden = !isTelnet;
     // Área de trabalho e Telnet não usam chave/agente SSH: só senha (e o VNC
     // nem usuário).
-    $('#qcAuthFs').hidden = isTelnet || ehTela;
+    // Página web não tem login nenhum do lado do app: quem pede usuário e senha
+    // é a própria página, no formulário dela. Nada de agente, chave ou senha.
+    const ehWebProto = proto === 'web';
+    $('#qcAuthFs').hidden = isTelnet || ehTela || ehWebProto;
     $('#qc_telaSenhaWrap').hidden = !ehTela;
     $('#qc_telaNota').hidden = !ehTela;
-    const usuario = $('#qc_user').closest('label');
-    if (usuario) usuario.hidden = proto === 'vnc' || proto === 'web';
+    mostrarCampo($('#qc_user'), !(proto === 'vnc' || ehWebProto));
     // Numa página web a porta vem da URL digitada no campo de host.
-    const porta = $('#qc_port').closest('label');
-    if (porta) porta.hidden = proto === 'web';
+    mostrarCampo($('#qc_port'), !ehWebProto);
     const p = $('#qc_port');
     // só troca a porta se ela ainda for a padrão de outro protocolo
     if (!p.value || PORTAS_PADRAO.includes(Number(p.value))) p.value = portaPadrao(proto);
@@ -2745,10 +2751,6 @@ function createWebSession({ hostId, hostName, url }) {
     try { campo.value = view.getURL() || endereco; } catch {}
     try { voltar.disabled = !view.canGoBack(); avancar.disabled = !view.canGoForward(); } catch {}
     if (falhou) mostrarAviso(falhou, 'erro');
-    else if (!ehRedePrivadaUrl(endereco)) {
-      mostrarAviso('Esta página não é da sua rede interna — ela roda dentro do app. '
-        + 'Se for só um site, prefira abrir no navegador.', 'aviso');
-    }
     renderTermTabs();
     renderHostSidebar();
   });
@@ -2794,10 +2796,6 @@ function createWebSession({ hostId, hostName, url }) {
   renderTermTabs();
   renderHostSidebar();
   return session;
-}
-
-function ehRedePrivadaUrl(u) {
-  try { return window.ehRedePrivada ? window.ehRedePrivada(u) : false; } catch { return false; }
 }
 
 // Abre uma sessão de ÁREA DE TRABALHO (VNC/RDP) como mais uma aba do Terminal:

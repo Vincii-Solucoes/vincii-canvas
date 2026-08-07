@@ -9,7 +9,7 @@
 // recusar o que é perigoso sem recusar o que o usuário digita todo dia.
 
 const assert = require('assert');
-const { normalizarUrl, partesDaUrl, ehRedePrivada } = require('../public/weburl');
+const { normalizarUrl, partesDaUrl } = require('../public/weburl');
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n += 1; };
@@ -45,14 +45,5 @@ igual(partesDaUrl('roteador:8443/admin'),
 igual(partesDaUrl('https://x.io/a').port, 443, 'https sem porta é 443');
 igual(partesDaUrl('http://x.io/a').port, 80, 'http sem porta é 80');
 igual(partesDaUrl('javascript:x'), null, 'partes de URL recusada é null');
-
-// ---------- rede privada (só para o aviso da interface) ----------
-for (const priv of ['192.168.1.1', '10.0.0.5:8443', '172.16.0.1', '172.31.255.254',
-  '127.0.0.1', 'localhost', 'roteador.local', 'nas.lan', '169.254.1.1']) {
-  ok(ehRedePrivada(priv), `deveria ser rede privada: ${priv}`);
-}
-for (const pub of ['https://app.exemplo.com', '8.8.8.8', '172.32.0.1', '11.0.0.1']) {
-  ok(!ehRedePrivada(pub), `não deveria ser rede privada: ${pub}`);
-}
 
 console.log(`\n${n} verificações passaram`);
