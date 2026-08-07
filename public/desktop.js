@@ -39,6 +39,11 @@ function limpar(container) {
 function alcaVnc(rfb) {
   return {
     tipo: 'vnc',
+    // Colar aqui é colar na área de transferência DA MÁQUINA REMOTA. Não dá
+    // para "digitar" o texto: sintetizar tecla a tecla exigiria mapear cada
+    // caractere para keysym e erraria em teclado não-ABNT. Com o texto na área
+    // de transferência de lá, o Ctrl+V do próprio sistema remoto resolve.
+    colar(texto) { rfb.clipboardPasteFrom(String(texto)); return 'clipboard'; },
     desconectar() { try { rfb.disconnect(); } catch {} },
     pausarTeclado(p) { try { rfb.focusOnClick = !p; if (!p) rfb.focus(); else rfb.blur(); } catch {} },
     ajustar() { try { rfb.scaleViewport = true; } catch {} },
@@ -228,10 +233,19 @@ function ligarEntrada(sessao, canvas, m) {
   };
 }
 
-function alcaRdp(sessao, entrada, canvas) {
+function alcaRdp(sessao, entrada, canvas, m) {
   let vivo = true;
   return {
     tipo: 'rdp',
+    // Mesma ideia do VNC: entrega o texto à área de transferência remota, e o
+    // Ctrl+V de lá cola onde o cursor estiver. Sintetizar as teclas exigiria
+    // scancode por caractere e quebraria em layout diferente do previsto.
+    colar(texto) {
+      const dados = new m.ClipboardData();
+      dados.addText('text/plain', String(texto));
+      sessao.onClipboardPaste(dados);
+      return 'clipboard';
+    },
     desconectar() {
       if (!vivo) return;
       vivo = false;
@@ -307,7 +321,7 @@ function conectarRdp({ hostId, container, onEstado }) {
       if (cancelado) { try { sessao.shutdown(); } catch {} return; }
 
       const entrada = ligarEntrada(sessao, canvas, m);
-      alca = alcaRdp(sessao, entrada, canvas);
+      alca = alcaRdp(sessao, entrada, canvas, m);
       // troca a alça provisória pela real, para o app.js enxergar a de verdade
       Object.assign(provisoria, alca);
       onEstado({ estado: 'conectado' });

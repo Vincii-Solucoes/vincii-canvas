@@ -143,6 +143,9 @@ function servir(porta, { autenticar, aceitar }) {
           if (buf.length < 8) return;
           const n = buf.readUInt32BE(4);
           if (buf.length < 8 + n) return;
+          // Registra o texto: é assim que se confere se "colar variável" chegou
+          // mesmo à área de transferência da máquina remota.
+          log(`ClientCutText recebido (${n} bytes): ${JSON.stringify(buf.slice(8, 8 + n).toString('latin1'))}`);
           buf = buf.slice(8 + n);
           continue;
         }

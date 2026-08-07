@@ -1609,6 +1609,120 @@ function renderFavMenu() {
   add.addEventListener('click', () => { closeFavMenu(); openFavoriteModal({ hostId }); });
 }
 
+// ---------- variáveis do host, prontas para colar na sessão ----------
+//
+// Vale em QUALQUER aba, mas o caminho muda conforme o que existe do outro lado:
+//   terminal (SSH/Telnet/local) → escreve o texto no terminal, sem executar
+//   área de trabalho (RDP/VNC)  → põe na área de transferência REMOTA (Ctrl+V lá)
+//   página web                  → insere no campo em foco dentro da página
+//
+// Digitar caractere a caractere numa área de trabalho remota exigiria mapear
+// cada letra para scancode/keysym e erraria em qualquer teclado diferente do
+// previsto; a área de transferência é o caminho que os clientes de RDP e VNC
+// oferecem justamente para isso.
+
+// Campos do cadastro que valem como variável na prática — é o que o usuário
+// mais cola: endereço, porta, usuário. Os nomes seguem os embutidos que os
+// playbooks já usam ({{host.host}} e companhia).
+function variaveisEmbutidas(h) {
+  if (!h) return [];
+  const out = [
+    ['host.name', h.name],
+    ['host.host', h.host],
+    ['host.port', h.port],
+    ['host.user', h.username],
+  ];
+  if (h.protocol === 'rdp' && h.rdpDomain) out.push(['host.domain', h.rdpDomain]);
+  if (h.protocol === 'web' && h.url) out.push(['host.url', h.url]);
+  return out.filter(([, v]) => v !== undefined && v !== null && String(v) !== '');
+}
+
+function varsDaSessaoAtiva() {
+  const s = activeSession();
+  if (!s) return { sessao: null, host: null, proprias: [], embutidas: [] };
+  const host = s.hostId ? state.hosts.find((h) => h.id === s.hostId) : null;
+  const proprias = Object.entries((host && host.vars) || {});
+  return { sessao: s, host, proprias, embutidas: variaveisEmbutidas(host) };
+}
+
+// Entrega o texto ao outro lado. Devolve como foi entregue, para a mensagem na
+// tela poder dizer a verdade.
+function colarNaSessao(valor) {
+  const s = activeSession();
+  if (!s) { toast('Abra uma aba antes de colar.', 'erro'); return; }
+  const texto = String(valor);
+  if (s.kind === 'web') {
+    const wv = s.container.querySelector('webview');
+    if (!wv) { toast('Esta aba ainda não terminou de abrir.', 'erro'); return; }
+    try { wv.insertText(texto); toast('Colado no campo em foco da página.'); }
+    catch (e) { toast('Não deu para colar na página: ' + e.message, 'erro'); }
+    return;
+  }
+  if (s.kind === 'desk') {
+    if (!s.desk || typeof s.desk.colar !== 'function') {
+      toast('Esta área de trabalho ainda não terminou de conectar.', 'erro');
+      return;
+    }
+    try {
+      s.desk.colar(texto);
+      toast('Enviado para a área de transferência da máquina remota — cole com Ctrl+V lá dentro.');
+    } catch (e) { toast('Não deu para enviar: ' + e.message, 'erro'); }
+    return;
+  }
+  // terminal: escreve sem executar, igual ao favorito — você revisa e dá Enter
+  if (!s.ws || s.ws.readyState !== WebSocket.OPEN) {
+    toast('Abra uma conexão antes de colar.', 'erro');
+    return;
+  }
+  s.ws.send(JSON.stringify({ t: 'i', d: texto }));
+  focusActive();
+}
+
+function renderVarMenu() {
+  const menu = $('#varMenu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  const { sessao, host, proprias, embutidas } = varsDaSessaoAtiva();
+  if (!sessao) { el(menu, 'p', 'fav-empty', 'Abra uma aba para colar variáveis.'); return; }
+
+  const comoCola = sessao.kind === 'desk'
+    ? 'Vai para a área de transferência da máquina remota (cole com Ctrl+V lá).'
+    : sessao.kind === 'web'
+      ? 'Insere no campo em foco dentro da página.'
+      : 'Escreve no terminal sem executar — você revisa e dá Enter.';
+
+  const linha = (nome, valor) => {
+    const row = el(menu, 'div', 'fav-item');
+    const body = el(row, 'div', 'fav-body');
+    body.title = comoCola;
+    el(body, 'div', 'fav-label', nome);
+    el(body, 'code', 'fav-cmd', String(valor));
+    body.addEventListener('click', () => { colarNaSessao(valor); fecharVarMenu(); });
+  };
+
+  if (proprias.length) {
+    el(menu, 'div', 'fav-group', `{ } Deste host (${host ? host.name : ''})`);
+    proprias.forEach(([n, v]) => linha(n, v));
+  }
+  if (embutidas.length) {
+    el(menu, 'div', 'fav-group', '🖥 Do cadastro');
+    embutidas.forEach(([n, v]) => linha(n, v));
+  }
+  if (!proprias.length && !embutidas.length) {
+    el(menu, 'p', 'fav-empty', sessao.hostId
+      ? 'Este host não tem variáveis. Cadastre em Hosts → editar → Variáveis.'
+      : 'Esta aba não é de um host salvo, então não há variáveis de host.');
+  }
+  el(menu, 'p', 'fav-empty', comoCola);
+}
+
+function fecharVarMenu() { const m = $('#varMenu'); if (m) m.hidden = true; }
+function alternarVarMenu() {
+  const m = $('#varMenu');
+  if (!m) return;
+  if (m.hidden) { closeFavMenu(); renderVarMenu(); m.hidden = false; } else m.hidden = true;
+}
+
 function closeFavMenu() { const m = $('#favMenu'); if (m) m.hidden = true; }
 
 function toggleFavMenu() {
@@ -1668,10 +1782,13 @@ function openFavoriteModal(ctx = {}) {
 
 function initFavorites() {
   $('#favBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleFavMenu(); });
+  $('#varBtn').addEventListener('click', (e) => { e.stopPropagation(); alternarVarMenu(); });
   // fecha o menu ao clicar fora dele
   document.addEventListener('click', (e) => {
     const m = $('#favMenu');
     if (m && !m.hidden && !m.contains(e.target) && e.target !== $('#favBtn')) closeFavMenu();
+    const mv = $('#varMenu');
+    if (mv && !mv.hidden && !mv.contains(e.target) && e.target !== $('#varBtn')) fecharVarMenu();
   });
 }
 
