@@ -21,6 +21,7 @@ try {
 <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
 <script src="protocolos.js" defer></script>
 <script src="weburl.js" defer></script>
+<script src="colar.js" defer></script>
 <script src="host-icons.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
@@ -297,7 +298,7 @@ try {
           <button id="btnHistClear" class="btn danger">Apagar histórico</button>
         </div>
       </div>
-      <p class="hint">Comandos executados no terminal (você e a IA) e em lote, com data, máquina e IP. Filtre por <strong>período</strong>, marque comandos e clique em <strong>Criar playbook</strong> para reaproveitá-los ou em <strong>⤓ Relatório</strong> para baixar o que foi feito na janela — útil para anexar a um chamado. Senhas não são registradas (não aparecem na tela).</p>
+      <p class="hint">Comandos executados no terminal (você e a IA) e em lote, com data, máquina e IP. Filtre por <strong>período</strong>, marque comandos e clique em <strong>Criar playbook</strong> para reaproveitá-los ou em <strong>⤓ Relatório</strong> para baixar o que foi feito na janela — útil para anexar a um chamado. Senha digitada em <strong>prompt</strong> não é capturada (não ecoa na tela); senha passada como <strong>argumento</strong> (<code>mysql -p…</code>, <code>curl -u…</code>) aparece aqui e no relatório — revise antes de anexar.</p>
       <div class="hist-toolbar">
         <div class="hist-seges" id="histSourceSeg" role="group" aria-label="Filtrar por fonte">
           <button data-src="" class="active">Todos</button>

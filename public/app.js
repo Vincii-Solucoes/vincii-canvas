@@ -684,11 +684,26 @@ function relatorioHistorico() {
     ? histEntries.filter((e) => histState.selected.has(e.id))
     : histEntries;
   if (!alvo.length) { toast('Nada para exportar com os filtros atuais.', 'erro'); return; }
-  const emOrdem = alvo.slice().sort((x, y) => x.ts - y.ts);   // cronológico, como aconteceu
-  const periodo = (histState.de || histState.ate)
+  // Cronológico, como aconteceu. O desempate por ÍNDICE é necessário: um
+  // playbook grava os comandos num laço síncrono, então todos ficam com o mesmo
+  // `ts`, e um sort estável preservaria a ordem invertida que veio do servidor —
+  // o relatório documentava "subir serviço" antes de "parar serviço".
+  const emOrdem = alvo.map((e, i) => [e, i])
+    .sort((a, b) => (a[0].ts - b[0].ts) || (b[1] - a[1]))
+    .map((par) => par[0]);
+  // Dois períodos diferentes, e a diferença importa: o PEDIDO é o que o usuário
+  // escolheu; o COBERTO é o que o arquivo realmente contém. Quando o teto corta,
+  // eles divergem — e declarar só o pedido faz um relatório de 2,6 dias se
+  // apresentar como de 7.
+  const pedido = (histState.de || histState.ate)
     ? `${histState.de ? fmtHistDate(Date.parse(histState.de)) : 'início'} até `
       + `${histState.ate ? fmtHistDate(Date.parse(histState.ate)) : 'agora'}`
-    : `${fmtHistDate(emOrdem[0].ts)} até ${fmtHistDate(emOrdem[emOrdem.length - 1].ts)}`;
+    : null;
+  const coberto = `${fmtHistDate(emOrdem[0].ts)} até ${fmtHistDate(emOrdem[emOrdem.length - 1].ts)}`;
+  // O corte acontece na consulta, então quem manda é o tamanho do conjunto que
+  // veio do servidor — não o que está selecionado.
+  const truncou = histEntries.length >= HIST_TETO;
+  const periodo = pedido && !truncou ? pedido : coberto;
 
   const filtros = [];
   if (histState.source) filtros.push(histState.source === 'ai' ? 'somente IA' : 'somente humano');
@@ -704,29 +719,56 @@ function relatorioHistorico() {
     `Comandos: ${emOrdem.length}`,
   ];
   if (filtros.length) linhas.push(`Filtros : ${filtros.join(' · ')}`);
+  // O aviso NÃO pode depender de haver seleção: marcar "selecionar tudo" é
+  // justamente o gesto de quem quer tudo, e era ele que apagava o aviso — a
+  // caixa seleciona as 3000 que já vieram truncadas.
+  if (truncou) {
+    linhas.push('');
+    linhas.push(`ATENÇÃO: a consulta atingiu o teto de ${HIST_TETO} comandos e foi CORTADA`);
+    linhas.push('         pela ponta mais ANTIGA. Se você pediu um período maior,');
+    if (pedido) linhas.push(`         ele era "${pedido}" — este arquivo cobre menos.`);
+    linhas.push('         Estreite o período e gere de novo para cobrir tudo.');
+  }
   linhas.push('');
 
   // Agrupa por máquina: é assim que se lê um relatório de manutenção.
+  // Agrupa por DESTINO, não pelo nome da máquina: dois cadastros com o mesmo
+  // nome em endereços diferentes (comum — o próprio import trata homônimo como
+  // normal) eram fundidos numa seção só, e os comandos de um apareciam sob o
+  // usuário e o IP do outro.
   const porMaquina = new Map();
   for (const e of emOrdem) {
-    const chave = e.local ? 'Meu computador' : (e.machine || e.ip || 'sem máquina');
+    const chave = e.local ? 'local'
+      : (e.hostId || `${e.username || ''}@${e.ip || ''}:${e.port || ''}`);
     if (!porMaquina.has(chave)) porMaquina.set(chave, []);
     porMaquina.get(chave).push(e);
   }
-  for (const [maquina, itens] of porMaquina) {
+  for (const itens of porMaquina.values()) {
     const um = itens[0];
+    const nome = um.local ? 'Meu computador' : (um.machine || um.ip || 'sem máquina');
     const destino = um.local ? '' : ` (${um.username ? um.username + '@' : ''}${um.ip || ''}${um.port ? ':' + um.port : ''})`;
-    linhas.push(`## ${maquina}${destino} — ${itens.length} comando(s)`);
+    linhas.push(`## ${nome}${destino} — ${itens.length} comando(s)`);
     linhas.push('-'.repeat(60));
     for (const e of itens) {
       const quem = e.source === 'ai' ? 'IA' : 'humano';
       const onde = ORIGIN_LABEL[e.origin] || e.origin || '';
       linhas.push(`[${fmtHistDate(e.ts)}] (${quem}${onde ? '/' + onde : ''})`);
-      linhas.push(`  ${e.command}`);
+      // Todas as linhas do comando recuadas, e controles neutralizados: sem
+      // isso um comando com quebra de linha imitava a estrutura do arquivo e
+      // dava para forjar uma seção de outra máquina.
+      linhas.push(sanearParaRelatorio(e.command));
     }
     linhas.push('');
   }
-  linhas.push('Senhas não são registradas pelo app e não aparecem neste relatório.');
+  // A frase antiga dizia "senhas não aparecem neste relatório" — e aparecem:
+  // senha passada como ARGUMENTO (mysql -p, curl -u, PGPASSWORD=) é capturada
+  // como qualquer comando, e a execução em lote grava a linha com as variáveis
+  // JÁ SUBSTITUÍDAS. Dizer o contrário é o que faz o usuário não reler antes de
+  // anexar o arquivo a um chamado.
+  linhas.push('Senha digitada em PROMPT não é capturada (não ecoa na tela).');
+  linhas.push('Senha passada como ARGUMENTO de comando (mysql -p…, curl -u…,');
+  linhas.push('PGPASSWORD=…) APARECE aqui, e a execução em lote grava a linha com');
+  linhas.push('as variáveis já substituídas. Revise antes de anexar ou enviar.');
 
   const nome = `relatorio-comandos-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`;
   const blob = new Blob([linhas.join('\n')], { type: 'text/plain;charset=utf-8' });
@@ -787,6 +829,12 @@ function fillHistHostFilter() {
 
 async function loadHistory() {
   const params = new URLSearchParams();
+  // O servidor corta em 1000 por padrão (teto 3000) DEPOIS de filtrar. Num
+  // histórico cheio, um relatório de 7 dias saía com os 1000 mais recentes e
+  // NADA dizia isso — um relatório truncado que parece completo é pior que
+  // nenhum. Pedindo o teto, o corte só acontece no extremo, e aí a interface
+  // avisa (ver renderHistory).
+  params.set('limit', '3000');
   if (histState.source) params.set('source', histState.source);
   if (histState.hostId) params.set('hostId', histState.hostId);
   if (histState.q) params.set('q', histState.q);
@@ -807,11 +855,19 @@ async function loadHistory() {
   renderHistory();
 }
 
+const HIST_TETO = 3000;   // o mesmo teto que o servidor aplica
+
 function renderHistory() {
   const wrap = $('#historyList');
   if (!wrap) return;
   fillHistHostFilter();
   wrap.innerHTML = '';
+  // Bateu no teto: o que está na tela (e no relatório) pode não ser tudo.
+  if (histEntries.length >= HIST_TETO) {
+    const aviso = el(wrap, 'p', 'hint warn-hint');
+    aviso.textContent = `Mostrando os ${HIST_TETO} comandos mais recentes deste filtro — `
+      + 'pode haver mais fora da lista. Estreite o período para ver (e relatar) tudo.';
+  }
   if (!histEntries.length) {
     el(wrap, 'p', 'empty', 'Nenhum comando no histórico ainda. Use o terminal ou a IA e eles aparecem aqui.');
     updateHistSelUI();
@@ -1781,7 +1837,24 @@ function colarNaSessao(valor) {
     toast('Abra uma conexão antes de colar.', 'erro');
     return;
   }
-  s.ws.send(JSON.stringify({ t: 'i', d: texto }));
+  // Mandar o valor cru é o MESMO que digitá-lo: uma quebra de linha dentro dele
+  // vale como Enter e EXECUTA — medido, com o valor
+  // "primeira\nid > /tmp/arquivo" a primeira linha rodou sozinha. Como o valor
+  // vem do cadastro (ou de um XML importado de terceiro), a promessa "escreve
+  // sem executar" só se sustenta tirando o que submete. ESC também sai: com ele
+  // dá para mexer no cursor e forjar o que aparece na tela.
+  // Colar é o mesmo que digitar: o saneamento vive em public/colar.js, com
+  // teste próprio, porque é fronteira de segurança e não detalhe de interface.
+  const { texto: limpo, mudou, excedeu } = sanearParaTerminal(texto);
+  if (excedeu) {
+    toast('A variável é longa demais para colar de uma vez no terminal.', 'erro');
+    return;
+  }
+  s.ws.send(JSON.stringify({ t: 'i', d: limpo }));
+  if (mudou) {
+    toast('A variável tinha quebra de linha ou caractere de controle — foi colada '
+      + 'sem eles, para não executar nem reescrever a linha sozinha.', 'aviso');
+  }
   focusActive();
 }
 

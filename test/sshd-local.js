@@ -17,7 +17,9 @@ const { Server } = require('ssh2');
 const KEY = path.join(__dirname, '.host_key');
 const USER = 'demo';
 const PASS = 'segredo123';
-const PORT = 2222;
+// Porta configurável: com vários testes rodando em paralelo, porta fixa faz um
+// teste falar com o servidor do outro. O padrão continua 2222.
+const PORT = Number(process.env.SSHD_LOCAL_PORT) || 2222;
 
 if (!fs.existsSync(KEY)) {
   execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', KEY, '-N', '', '-q']);
