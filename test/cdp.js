@@ -41,9 +41,18 @@ http.get(`http://127.0.0.1:${PORTA}/json`, (res) => {
   let corpo = '';
   res.on('data', (d) => { corpo += d; });
   res.on('end', () => {
+    // Com janelas soltas o app tem mais de uma página. CDP_URL escolhe qual
+    // (um pedaço da URL basta); sem ela, a primeira que aparecer.
+    const filtro = process.env.CDP_URL || '';
     let alvo;
     try {
-      alvo = JSON.parse(corpo).find((t) => t.type === 'page' && t.url.startsWith('http://127.0.0.1'));
+      const paginas = JSON.parse(corpo)
+        .filter((t) => t.type === 'page' && t.url.startsWith('http://127.0.0.1'));
+      alvo = filtro ? paginas.find((t) => t.url.includes(filtro)) : paginas[0];
+      if (!alvo && filtro) {
+        console.error(`nenhuma página com "${filtro}" — abertas:`);
+        paginas.forEach((t) => console.error('  ' + t.url));
+      }
     } catch (e) { console.error('resposta do CDP ilegível:', e.message); process.exit(1); }
     if (!alvo) { console.error('nenhuma página do app encontrada'); process.exit(1); }
 

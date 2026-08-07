@@ -1331,3 +1331,35 @@ body.term-full .term-grid.no-ai.no-sidebar {
   border: 1px solid var(--border); background: var(--panel); color: var(--text);
 }
 .hist-periodo .small { color: var(--muted); }
+
+
+/* ---------- janela solta: uma sessão só, sem o resto da interface ---------- */
+/* A janela nasce para conter UMA aba. Some tudo que serve para navegar entre
+   abas ou entre seções — o que fica é a sessão ocupando a janela inteira. */
+.modo-solo .topbar,
+.modo-solo .tabs,
+.modo-solo .host-sidebar,
+.modo-solo .term-tabs-wrap,
+.modo-solo .tabs-arrow,
+.modo-solo #toggleGreet,
+/* não há barra lateral nesta janela — o botão de mostrá-la não teria o que fazer */
+.modo-solo #toggleSidebar,
+.modo-solo .greet-bar { display: none !important; }
+/* a grade do terminal tem barra lateral + painel; solta, sobra só o painel */
+.modo-solo .term-grid { grid-template-columns: 1fr !important; }
+.modo-solo .term-topbar { padding: 4px 8px; }
+/* o nome da sessão ocupa o espaço que era das abas, empurrando os botões
+   para a direita — sem ele a barra ficaria toda amontoada à esquerda */
+.solo-titulo { display: none; }
+.modo-solo .solo-titulo {
+  display: block; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+}
+/* o painel ocupa a janela inteira */
+.modo-solo .tab-panel { padding: 0; }
+.modo-solo .tab-solta { display: none; }
+.tab-solta {
+  margin-left: 4px; opacity: .55; cursor: pointer; font-size: 12px;
+}
+.tab-solta:hover { opacity: 1; }

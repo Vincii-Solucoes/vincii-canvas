@@ -3220,7 +3220,7 @@ function createDeskSession({ hostId, hostName, protocol }) {
   return session;
 }
 
-function createSession({ hostId, hostName, isLocal }) {
+function createSession({ hostId, hostName, isLocal, reatarId }) {
   const id = ++sessionSeq;
   const container = el($('#termContainers'), 'div', 'term-instance');
   const term = new Terminal({
@@ -3233,7 +3233,7 @@ function createSession({ hostId, hostName, isLocal }) {
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(container);
-  const session = { id, hostId, hostName, isLocal: !!isLocal, kind: 'term', term, fitAddon, ws: null, container, status: 'conectando' };
+  const session = { id, hostId, hostName, isLocal: !!isLocal, kind: 'term', reatarId: reatarId || null, term, fitAddon, ws: null, container, status: 'conectando' };
   // estado de IA POR SESSÃO: cada aba tem seu assistente e agente independentes
   session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
   term.onData((d) => {
@@ -3254,6 +3254,9 @@ function terminalTabActive() {
 function hasRemoteSession() { return sessions.some((s) => !s.isLocal); }
 // Sem nenhuma sessão remota, garante um terminal local da própria máquina.
 function ensureLocalTerminal() {
+  // Numa janela solta isto abriria um shell local que ninguém pediu — e ele
+  // ainda chegaria ANTES da sessão que a janela veio mostrar, virando a aba 1.
+  if (MODO_SOLO) return;
   if (!xtermReady() || !terminalTabActive() || localDismissed) return;
   if (sessions.length === 0) openLocalSession();
 }
@@ -3279,9 +3282,12 @@ function connectSession(session) {
   // token do processo: o servidor exige no upgrade (ver server.js) para que uma
   // página de outra origem não consiga abrir um terminal nesta máquina
   const tk = encodeURIComponent((typeof window !== 'undefined' && window.VC_TOKEN) || '');
+  // `reatarId` chega quando esta janela foi ABERTA para assumir uma sessão que
+  // já existe no servidor — o shell continua exatamente onde estava.
+  const reatar = session.reatarId ? `&sessao=${encodeURIComponent(session.reatarId)}` : '';
   const url = session.isLocal
-    ? `${proto}://${location.host}/api/localterminal?cols=${cols}&rows=${rows}&token=${tk}`
-    : `${proto}://${location.host}/api/terminal?hostId=${encodeURIComponent(session.hostId)}&cols=${cols}&rows=${rows}&token=${tk}`;
+    ? `${proto}://${location.host}/api/localterminal?cols=${cols}&rows=${rows}&token=${tk}${reatar}`
+    : `${proto}://${location.host}/api/terminal?hostId=${encodeURIComponent(session.hostId || '')}&cols=${cols}&rows=${rows}&token=${tk}${reatar}`;
   session.status = 'conectando';
   const ws = new WebSocket(url);
   session.ws = ws;
@@ -3295,6 +3301,9 @@ function connectSession(session) {
       renderHostSidebar();
       if (activeSessionId === session.id) { setTimeout(() => { sendResize(session); focusActive(); }, 30); }
     } else if (m.t === 'e') session.term.write(`\r\n\x1b[33m${m.d}\x1b[0m`);
+    // O servidor manda o id assim que a sessão existe. É por ele que outra
+    // janela reata ao MESMO shell, sem perder diretório nem o que está rodando.
+    else if (m.t === 'sessao') { session.sessaoId = m.id; renderTermTabs(); }
     else if (m.t === 'x') { session.status = 'encerrado'; renderTermTabs(); }
   };
   ws.onclose = () => {
@@ -3329,7 +3338,7 @@ function setActiveSession(id) {
   updateTermLayout(); // favoritos e IA só valem para terminal: some ao entrar numa aba de área de trabalho
 }
 
-function closeSession(id) {
+function closeSession(id, opts = {}) {
   const idx = sessions.findIndex((s) => s.id === id);
   if (idx < 0) return;
   const s = sessions[idx];
@@ -3342,6 +3351,14 @@ function closeSession(id) {
     s.ai.agent = null;
   }
   if (s.isLocal) localDismissed = true; // fechou o local de propósito: não reabrir sozinho
+  // A sessão agora sobrevive ao socket, então fechar a aba precisa DIZER que é
+  // para encerrar — senão o shell ficaria órfão até o TTL vencer. Soltar numa
+  // janela nova usa o outro caminho e não manda isto.
+  try {
+    if (s.ws && s.ws.readyState === WebSocket.OPEN && !opts.manterSessao) {
+      s.ws.send(JSON.stringify({ t: 'fim' }));
+    }
+  } catch {}
   try { if (s.ws) s.ws.close(); } catch {}
   try { s.term.dispose(); } catch {}
   try { s.container.remove(); } catch {}
@@ -3384,6 +3401,55 @@ function tabTitle(s) {
 let renamingId = null;              // sessão com o nome em edição
 let lastTabClick = { id: null, t: 0 }; // detecção própria de duplo clique
 
+// ---------- soltar uma aba em janela própria ----------
+//
+// No terminal a sessão é TRANSFERIDA: o shell vive no servidor (ver
+// lib/termsessions.js), então a janela nova reata pelo id e continua no mesmo
+// diretório, com as mesmas variáveis e o que estiver rodando. A aba original
+// some sem encerrar nada.
+//
+// Em RDP, VNC e página web não há o que transferir: a sessão vive no navegador
+// (canvas, WebAssembly, webview). Ali a janela nova RECONECTA — o que é
+// imperceptível, porque não existe estado de shell a perder.
+const MODO_SOLO = new URLSearchParams(location.search).get('solo') === '1';
+
+function soltarEmJanela(id) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s) return;
+  // Montar e ler os parâmetros mora em public/soltar.js: as duas pontas
+  // precisam concordar, e antes elas eram duas listas soltas em app.js.
+  const janela = window.open(montarUrlSolta(s), '_blank');
+  if (!janela) { toast('O app não conseguiu abrir a janela.', 'erro'); return; }
+
+  // A aba daqui sai de cena SEM encerrar a sessão — quem manda nela agora é a
+  // janela nova. Sem `manterSessao`, closeSession avisaria o servidor para
+  // matar o shell que acabamos de entregar.
+  closeSession(id, { manterSessao: true });
+  toast(s.kind === 'term' && s.sessaoId
+    ? 'Aba solta numa janela própria — a sessão continua de onde parou.'
+    : 'Aba solta numa janela própria (reconectada).');
+}
+
+// Numa janela solta, abre exatamente a sessão pedida e nada mais.
+function abrirSolo() {
+  const p = lerParamsSoltos(location.search);
+  document.body.classList.add('modo-solo');
+  document.title = p.nome + ' — Vincii Canvas';
+  const rotulo = $('#soloTitulo');
+  if (rotulo) rotulo.textContent = p.nome;
+  if (p.tipo === 'web') {
+    createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
+  } else if (p.tipo === 'desk') {
+    createDeskSession({ hostId: p.hostId, hostName: p.nome, protocol: p.protocolo });
+  } else {
+    createSession({
+      hostId: p.hostId, hostName: p.nome,
+      isLocal: p.isLocal,
+      reatarId: p.sessaoId,
+    });
+  }
+}
+
 function renderTermTabs() {
   const bar = $('#termTabs');
   if (!bar) return;
@@ -3402,6 +3468,12 @@ function renderTermTabs() {
       if (s.ai && s.ai.agent && s.ai.agent.status === 'running') {
         const ind = el(tab, 'span', 'tab-agent' + (s.ai.agent.needsApproval ? ' warn' : ''));
         ind.title = s.ai.agent.needsApproval ? 'Agente aguardando sua aprovação' : 'Agente de IA em execução';
+      }
+      // Soltar em janela própria. Não aparece numa janela que já é solta.
+      if (!MODO_SOLO) {
+        const solta = el(tab, 'span', 'tab-solta', '↗');
+        solta.title = 'Abrir esta aba numa janela própria';
+        solta.addEventListener('click', (e) => { e.stopPropagation(); soltarEmJanela(s.id); });
       }
       const pen = el(tab, 'span', 'tab-edit', '✎');
       pen.title = 'Renomear esta aba';
@@ -4417,9 +4489,27 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
   });
+  // Fechar a janela encerra as conexões DELA. Sem isto, fechar uma janela
+  // solta deixaria o shell vivo no servidor até o TTL de órfã vencer — o
+  // usuário fecha a janela e a conexão continua aberta no host por minutos.
+  window.addEventListener('pagehide', () => {
+    for (const s of sessions) {
+      try {
+        if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ t: 'fim' }));
+      } catch {}
+    }
+  });
   loadState()
     .catch((e) => toast(e.message, 'erro'))
-    .finally(hideSplash); // some a tela de carregamento quando os dados chegam
+    .finally(() => {
+      hideSplash(); // some a tela de carregamento quando os dados chegam
+      // Janela solta: vai direto para a sessão pedida, sem mais nada na tela.
+      if (MODO_SOLO) {
+        try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
+        onTerminalTabShown();
+        setTimeout(abrirSolo, 60);
+      }
+    });
   refreshAiVisibility(); // esconde recursos de IA se não houver chave configurada
   checkForUpdate(); // avisa (sem instalar) se houver versão nova no GitHub
   loadLocalInfo(); // login/SO da máquina para o botão "Meu computador"

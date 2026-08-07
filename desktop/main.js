@@ -95,6 +95,28 @@ if (!electronApp.requestSingleInstanceLock()) {
     // página podia abrir janela nativa do app, sem barra de endereço e com o
     // título que quisesse. Aqui pega de verdade, para todo guest.
     electronApp.on('web-contents-created', (_e, contents) => {
+      // Trava do <webview>, registrada em TODA janela do app — não só na
+      // principal. Com o botão de soltar aba passaram a existir outras janelas,
+      // e uma página web aberta numa delas criaria webview sem estas garantias.
+      // Quem decide aqui é o processo principal, não o atributo escrito na tag.
+      contents.on('will-attach-webview', (event, webPreferences, params) => {
+        delete webPreferences.preload;
+        webPreferences.nodeIntegration = false;
+        webPreferences.nodeIntegrationInSubFrames = false;
+        webPreferences.contextIsolation = true;
+        webPreferences.sandbox = true;
+        webPreferences.webSecurity = true;
+        webPreferences.allowRunningInsecureContent = false;
+        webPreferences.experimentalFeatures = false;
+        // Só http/https entram. `file:` daria leitura do disco do usuário de
+        // dentro da página remota; os demais esquemas não têm o que fazer aqui.
+        const src = String(params.src || '');
+        if (!/^https?:\/\//i.test(src)) {
+          console.error(`[desktop] webview recusado (esquema não permitido): ${src.slice(0, 80)}`);
+          event.preventDefault();
+        }
+      });
+
       if (contents.getType() !== 'webview') return;
       contents.setWindowOpenHandler(({ url }) => {
         if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -112,28 +134,34 @@ if (!electronApp.requestSingleInstanceLock()) {
       }
     });
 
-    // Trava do <webview>: vale mesmo que alguém consiga injetar HTML na
-    // interface, porque quem decide aqui é o processo principal, não o atributo
-    // escrito na tag.
-    win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-      delete webPreferences.preload;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = true;
-      webPreferences.sandbox = true;
-      webPreferences.webSecurity = true;
-      webPreferences.allowRunningInsecureContent = false;
-      webPreferences.experimentalFeatures = false;
-      // Só http/https entram. `file:` daria leitura do disco do usuário de
-      // dentro da página remota; os demais esquemas não têm o que fazer aqui.
-      const src = String(params.src || '');
-      if (!/^https?:\/\//i.test(src)) {
-        console.error(`[desktop] webview recusado (esquema não permitido): ${src.slice(0, 80)}`);
-        event.preventDefault();
-      }
-    });
-    // links externos abrem no navegador do sistema, não dentro do app
+    // Janela nova pedida pela INTERFACE do app. Duas situações diferentes:
+    //
+    //   mesma origem  → é o botão "soltar aba": abre uma janela nativa própria,
+    //                   com as mesmas garantias da principal
+    //   outra origem  → link externo, vai para o navegador do sistema, como
+    //                   sempre foi
+    const origemDoApp = `http://127.0.0.1:${port}`;
     win.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith(origemDoApp)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 1100,
+            height: 720,
+            minWidth: 600,
+            minHeight: 400,
+            title: APP_NAME,
+            icon: iconPath,
+            backgroundColor: '#080b0e',
+            webPreferences: {
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+              webviewTag: true,
+            },
+          },
+        };
+      }
       shell.openExternal(url);
       return { action: 'deny' };
     });
