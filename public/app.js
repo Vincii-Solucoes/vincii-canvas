@@ -306,7 +306,11 @@ function openHostModal(existing) {
           <option value="vnc">VNC (área de trabalho remota)</option>
           <option value="rdp">RDP (área de trabalho do Windows)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
+          <option value="web">Página web (gerência de roteador, painel)</option>
         </select>
+      </label>
+      <label id="f_urlWrap" hidden>URL
+        <input id="f_url" placeholder="ex.: 192.168.1.1 ou https://roteador:8443/admin">
       </label>
       <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
         <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
@@ -376,6 +380,7 @@ function openHostModal(existing) {
   $('#f_protocol').value = (existing && existing.protocol) || 'ssh';
   $('#f_ftps').value = (existing && existing.ftps) || 'auto';
   $('#f_rdpDomain').value = (existing && existing.rdpDomain) || '';
+  $('#f_url').value = (existing && existing.url) || '';
   // Telnet: porta padrão 23, autenticação some (login é no equipamento)
   const syncProtocol = () => {
     const proto = $('#f_protocol').value;
@@ -386,6 +391,14 @@ function openHostModal(existing) {
     $('#f_telnetNote').hidden = !isTelnet;
     $('#f_ftpsWrap').hidden = !isFtp;
     $('#f_rdpDomainWrap').hidden = !isRdp;
+    // Numa página web quem define endereço e porta é a URL — os campos de host
+    // e porta saem de cena para não haver dois lugares dizendo a mesma coisa.
+    const isWeb = proto === 'web';
+    $('#f_urlWrap').hidden = !isWeb;
+    const hostWrap = $('#f_host').closest('label');
+    const portWrap = $('#f_port').closest('label');
+    if (hostWrap) hostWrap.hidden = isWeb;
+    if (portWrap) portWrap.hidden = isWeb;
     $('#f_rdpLegadoNota').hidden = !isRdp;
     $('#f_telaCredNota').hidden = !(isRdp || isVnc);
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
@@ -499,6 +512,7 @@ function openHostModal(existing) {
       protocol: $('#f_protocol').value,
       ftps: $('#f_ftps').value,
       rdpDomain: $('#f_rdpDomain').value,
+      url: $('#f_url').value,
       vars,
       auth: { type: authType },
     };
@@ -1691,6 +1705,9 @@ function xmlToConfig(text) {
           protocol: normalizarProtocolo(h.getAttribute('protocol')),
           ftps: h.getAttribute('ftps') || 'auto',
           rdpDomain: h.getAttribute('rdpDomain') ?? undefined,
+          // O webCert (certificado fixado) NÃO vem do arquivo, pela mesma razão
+          // do fingerprint: é prova de identidade aprendida nesta máquina.
+          url: h.getAttribute('url') ?? undefined,
           // fingerprint NÃO vem do arquivo: é a prova de identidade do servidor,
           // aprendida na primeira conexão. Aceitá-la daqui permitiria desviar
           // uma conexão para outro servidor sem alarme.
@@ -1970,7 +1987,7 @@ function renderExecControls() {
     el(wrap, 'div', 'check-group-label', groupName);
     for (const h of hosts) {
       const label = el(wrap, 'label', 'check-host');
-      label.dataset.search = `${groupName} ${h.name} ${h.username}@${h.host}:${h.port}`.toLowerCase();
+      label.dataset.search = `${groupName} ${h.name} ${hostAddrLabel(h)}`.toLowerCase();
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = h.id;
@@ -1979,7 +1996,7 @@ function renderExecControls() {
       makeAvatar(label, h, 'avatar-sm');
       const info = el(label, 'div', 'info');
       el(info, 'div', 'hname', h.name);
-      el(info, 'div', 'haddr', `${h.username}@${h.host}:${h.port}`);
+      el(info, 'div', 'haddr', hostAddrLabel(h));
     }
   }
   filterExecHosts(); // reaplica a busca atual após re-renderizar
@@ -2260,6 +2277,8 @@ function hostAddrLabel(h) {
   if (h.protocol === 'ftp') return `ftp://${h.username || 'anonymous'}@${h.host}:${h.port}`;
   if (h.protocol === 'vnc') return `vnc://${h.host}:${h.port}`;
   if (h.protocol === 'rdp') return `rdp://${h.username ? h.username + '@' : ''}${h.host}:${h.port}`;
+  // Página web não tem usuário: mostra a própria URL, sem "@" pendurado.
+  if (h.protocol === 'web') return h.url || `https://${h.host}:${h.port}`;
   return `${h.username}@${h.host}:${h.port}`;
 }
 
@@ -2355,7 +2374,7 @@ function fitActive() {
 
 function focusActive() {
   const sa = activeSession();
-  if (sa && sa.kind === 'desk') return;
+  if (sa && semTerminal(sa)) return;
   // enquanto o usuário renomeia uma aba, o terminal não pode roubar o foco
   // (o campo de edição perderia o foco e a renomeação seria cancelada)
   if (renamingId !== null) return;
@@ -2366,7 +2385,7 @@ function focusActive() {
 // Re-mede a sessão e envia o tamanho atual ao servidor (corrige uma conexão que
 // nasceu estreita por o xterm ainda não ter sido pintado quando conectou).
 function sendResize(session) {
-  if (!session || session.kind === 'desk') return;
+  if (!session || semTerminal(session)) return;
   try { session.fitAddon.fit(); } catch {}
   if (session.ws && session.ws.readyState === WebSocket.OPEN) {
     session.ws.send(JSON.stringify({ t: 'r', cols: session.term.cols || 80, rows: session.term.rows || 24 }));
@@ -2385,6 +2404,10 @@ function openSession(hostId) {
   const host = state.hosts.find((h) => h.id === hostId);
   if (!host) { toast('Host não encontrado.', 'erro'); return; }
   addRecent(hostId); // passa a aparecer na lista de recentes da sidebar
+  if (host.protocol === 'web') {
+    createWebSession({ hostId, hostName: host.name, url: host.url });
+    return;
+  }
   if (host.protocol === 'vnc' || host.protocol === 'rdp') {
     // RDP não depende mais do guacd: o IronRDP roda em WebAssembly no próprio
     // navegador, então abre igual ao VNC, sem nada instalado.
@@ -2403,9 +2426,13 @@ function openLocalSession() {
 
 // Abre uma sessão para um host AVULSO (conexão rápida, não salvo). Não entra em
 // "recentes" (o id é temporário); some quando o app fecha.
-function openAdHocSession(hostId, name, protocol) {
+function openAdHocSession(hostId, name, protocol, url) {
   if (!xtermReady()) return;
   const rotulo = name || 'Conexão rápida';
+  if (protocol === 'web') {
+    createWebSession({ hostId, hostName: rotulo, url });
+    return;
+  }
   if (protocol === 'vnc' || protocol === 'rdp') {
     createDeskSession({ hostId, hostName: rotulo, protocol });
     return;
@@ -2424,9 +2451,10 @@ function openQuickConnectModal() {
           <option value="rdp">RDP (área de trabalho do Windows)</option>
           <option value="vnc">VNC (área de trabalho remota)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
+          <option value="web">Página web (gerência de roteador, painel)</option>
         </select>
       </label>
-      <label>Host / IP <input id="qc_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
+      <label>Host / IP <input id="qc_host" required placeholder="10.0.0.5, srv.exemplo.com ou https://192.168.1.1"></label>
       <label>Porta <input id="qc_port" type="number" min="1" max="65535" value="22"></label>
       <label>Usuário <input id="qc_user" placeholder="root"></label>
       <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
@@ -2474,7 +2502,10 @@ function openQuickConnectModal() {
     $('#qc_telaSenhaWrap').hidden = !ehTela;
     $('#qc_telaNota').hidden = !ehTela;
     const usuario = $('#qc_user').closest('label');
-    if (usuario) usuario.hidden = proto === 'vnc';
+    if (usuario) usuario.hidden = proto === 'vnc' || proto === 'web';
+    // Numa página web a porta vem da URL digitada no campo de host.
+    const porta = $('#qc_port').closest('label');
+    if (porta) porta.hidden = proto === 'web';
     const p = $('#qc_port');
     // só troca a porta se ela ainda for a padrão de outro protocolo
     if (!p.value || PORTAS_PADRAO.includes(Number(p.value))) p.value = portaPadrao(proto);
@@ -2522,7 +2553,7 @@ function openQuickConnectModal() {
       } else {
         const r = await api('/api/quick-connect', { method: 'POST', body: { host, port, username, protocol, auth, name } });
         closeModal();
-        openAdHocSession(r.hostId, r.name, protocol);
+        openAdHocSession(r.hostId, r.name, protocol, r.url);
       }
     } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
   };
@@ -2603,6 +2634,111 @@ async function avisarSeLegado(session) {
       renderTermTabs();
     }
   } catch {}
+}
+
+// Abre uma PÁGINA WEB (gerência de roteador, painel de serviço) como mais uma
+// aba do Terminal. O conteúdo é um <webview>: um <iframe> não serviria, porque
+// praticamente toda gerência manda X-Frame-Options e a página não carregaria.
+//
+// O processo principal reescreve as preferências de todo webview antes de ele
+// existir (ver desktop/main.js, will-attach-webview), então nada aqui concede
+// privilégio à página remota — o que se define abaixo é só a aparência e a
+// separação de sessão entre hosts.
+function createWebSession({ hostId, hostName, url }) {
+  const endereco = window.normalizarUrl ? window.normalizarUrl(url) : url;
+  if (!endereco) { toast('URL inválida neste host. Edite o cadastro.', 'erro'); return; }
+  const id = ++sessionSeq;
+  const container = el($('#termContainers'), 'div', 'term-instance web-instance');
+  const session = { id, hostId, hostName, isLocal: false, kind: 'web', protocol: 'web',
+    container, status: 'conectando', url: endereco };
+  // Mesma IA das abas de área de trabalho: tira dúvida, não executa nada.
+  session.ai = {
+    history: [], aiBusy: false, mode: 'assist', goal: '', agent: null,
+    messagesEl: buildAiMessages(), feedEl: buildAgentFeed(),
+  };
+  sessions.push(session);
+  setActiveSession(id);
+
+  const barra = el(container, 'div', 'web-bar');
+  const voltar = el(barra, 'button', 'btn small', '←');
+  voltar.title = 'Voltar';
+  const avancar = el(barra, 'button', 'btn small', '→');
+  avancar.title = 'Avançar';
+  const recarregar = el(barra, 'button', 'btn small', '⟳');
+  recarregar.title = 'Recarregar';
+  const campo = el(barra, 'input', 'web-url');
+  campo.value = endereco;
+  campo.spellcheck = false;
+  const externo = el(barra, 'button', 'btn small', '⧉ Navegador');
+  externo.title = 'Abrir no navegador do sistema';
+
+  const aviso = el(container, 'div', 'web-aviso');
+  aviso.hidden = true;
+
+  const view = document.createElement('webview');
+  view.setAttribute('src', endereco);
+  // Sessão separada por host: o cookie do roteador da filial A não vale na B,
+  // e nada disso encosta na sessão da própria interface do app.
+  view.setAttribute('partition', `persist:web-${hostId}`);
+  view.setAttribute('allowpopups', 'false');
+  view.className = 'web-view';
+  container.appendChild(view);
+
+  const mostrarAviso = (texto, tipo) => {
+    aviso.textContent = texto;
+    aviso.className = 'web-aviso ' + (tipo || '');
+    aviso.hidden = false;
+  };
+
+  view.addEventListener('did-start-loading', () => { session.status = 'conectando'; renderTermTabs(); });
+  view.addEventListener('did-stop-loading', () => {
+    session.status = 'conectado';
+    try { campo.value = view.getURL() || endereco; } catch {}
+    try { voltar.disabled = !view.canGoBack(); avancar.disabled = !view.canGoForward(); } catch {}
+    renderTermTabs();
+    renderHostSidebar();
+  });
+  view.addEventListener('did-fail-load', (e) => {
+    // -3 é ABORTED: acontece em toda navegação cancelada, não é erro de verdade.
+    if (e.errorCode === -3) return;
+    session.status = 'encerrado';
+    renderTermTabs();
+    mostrarAviso(`Não foi possível abrir: ${e.errorDescription || e.errorCode}. `
+      + 'Se o certificado do equipamento mudou, o app recusa a conexão de propósito — '
+      + 'apague o certificado fixado no cadastro do host para aprender o novo.', 'erro');
+  });
+  // Link que abriria janela nova vai para o navegador do sistema, como o resto
+  // do app já faz.
+  view.addEventListener('new-window', (e) => {
+    e.preventDefault();
+    if (/^https?:\/\//i.test(e.url || '')) window.open(e.url, '_blank');
+  });
+
+  voltar.addEventListener('click', () => { try { view.goBack(); } catch {} });
+  avancar.addEventListener('click', () => { try { view.goForward(); } catch {} });
+  recarregar.addEventListener('click', () => { try { view.reload(); } catch {} });
+  externo.addEventListener('click', () => {
+    const atual = (() => { try { return view.getURL(); } catch { return endereco; } })();
+    window.open(atual || endereco, '_blank');
+  });
+  campo.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    const novo = window.normalizarUrl ? window.normalizarUrl(campo.value) : campo.value;
+    if (!novo) { toast('URL inválida.', 'erro'); return; }
+    try { view.loadURL(novo); } catch {}
+  });
+
+  if (!ehRedePrivadaUrl(endereco)) {
+    mostrarAviso('Esta página não é da sua rede interna — ela roda dentro do app. '
+      + 'Se for só um site, prefira abrir no navegador.', 'aviso');
+  }
+  renderTermTabs();
+  renderHostSidebar();
+  return session;
+}
+
+function ehRedePrivadaUrl(u) {
+  try { return window.ehRedePrivada ? window.ehRedePrivada(u) : false; } catch { return false; }
 }
 
 // Abre uma sessão de ÁREA DE TRABALHO (VNC/RDP) como mais uma aba do Terminal:
@@ -2963,7 +3099,7 @@ function initTermTabsScroll() {
 
 function termSnapshot() {
   const s = activeSession();
-  if (!s || s.kind === 'desk') return '';
+  if (!s || semTerminal(s)) return '';
   const buf = s.term.buffer.active;
   const lines = [];
   const start = Math.max(0, buf.length - 45);
@@ -3095,13 +3231,18 @@ function setPanelMode(mode) {
 // (o agente roda em host remoto via SSH ou na própria máquina, na aba local)
 // numa aba de área de trabalho não há terminal para a IA assistir
 function ehDesk(s) { return !!(s && s.kind === 'desk'); }
+function ehWeb(s) { return !!(s && s.kind === 'web'); }
+// Abas que NÃO têm terminal: área de trabalho remota e página web. Tudo que é
+// específico de terminal (ajuste de tamanho, favoritos, captura de histórico,
+// agente autônomo) precisa pular estas.
+function semTerminal(s) { return ehDesk(s) || ehWeb(s); }
 
 function updateAgentControls(s) {
   const start = $('#agentStart'), auto = $('#agentAuto'), stop = $('#agentStop'), note = $('#agentLocalNote');
   const agent = s && s.ai && s.ai.agent;
   const running = !!(agent && agent.status === 'running');
   const isLocal = !!(s && s.isLocal);
-  const canAgent = !!(s && !ehDesk(s) && (isLocal || s.hostId));
+  const canAgent = !!(s && !semTerminal(s) && (isLocal || s.hostId));
   if (start) { start.hidden = running; start.disabled = !canAgent; }
   if (auto) { auto.hidden = running; auto.disabled = !canAgent; }
   if (stop) stop.hidden = !running;
@@ -3148,7 +3289,7 @@ function renderAssistantBody(container, text) {
       el(wrap, 'pre').textContent = code;
       // Numa aba de área de trabalho não existe terminal onde inserir: mostrar
       // os botões seria oferecer algo que não funciona.
-      if (!ehDesk(activeSession())) {
+      if (!semTerminal(activeSession())) {
         const actions = el(wrap, 'div', 'code-actions');
         const bInsert = el(actions, 'button', 'btn small', 'Inserir');
         bInsert.addEventListener('click', () => insertCommand(code, false));
@@ -3186,9 +3327,9 @@ async function aiSend(question) {
       body: JSON.stringify({
         messages: ai.history,
         hostId: s.hostId,
-        modo: ehDesk(s) ? 'desktop' : 'terminal',
-        protocolo: ehDesk(s) ? s.protocol : undefined,
-        terminalContext: ehDesk(s) ? '' : termSnapshot(),
+        modo: ehDesk(s) ? 'desktop' : (ehWeb(s) ? 'web' : 'terminal'),
+        protocolo: semTerminal(s) ? s.protocol : undefined,
+        terminalContext: semTerminal(s) ? '' : termSnapshot(),
       }),
     });
     if (!res.ok || !res.body) throw new Error(`Erro ${res.status}`);
@@ -3287,7 +3428,7 @@ function ajustaModoEstreito() {
 }
 
 function updateTermLayout() {
-  const desk = ehDesk(activeSession());
+  const desk = semTerminal(activeSession());
   // o botão de favoritos insere comando no terminal: some na área de trabalho
   const fav = document.querySelector('.fav-wrap');
   if (fav) fav.hidden = desk;

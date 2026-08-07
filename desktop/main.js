@@ -52,6 +52,7 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   // Importar só depois de definir SSHC_DATA_DIR — o store lê a env ao carregar
   const { start } = require('../server');
+  const store = require('../lib/store');
 
   let win = null;
 
@@ -74,13 +75,76 @@ if (!electronApp.requestSingleInstanceLock()) {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        // Hosts do tipo "web" (gerência de roteador, painel de serviço) abrem
+        // numa aba dentro do app, e para isso a página remota precisa rodar num
+        // <webview>. Um <iframe> não serve: praticamente toda gerência manda
+        // X-Frame-Options e a página simplesmente não carregaria.
+        //
+        // O que a página remota ganha com isso é uma aba — e nada mais: o
+        // will-attach-webview abaixo reescreve as preferências de CADA webview
+        // antes de ele existir, então não adianta a interface pedir privilégio.
+        webviewTag: true,
       },
+    });
+
+    // Trava do <webview>: vale mesmo que alguém consiga injetar HTML na
+    // interface, porque quem decide aqui é o processo principal, não o atributo
+    // escrito na tag.
+    win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+      delete webPreferences.preload;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = false;
+      webPreferences.experimentalFeatures = false;
+      // Só http/https entram. `file:` daria leitura do disco do usuário de
+      // dentro da página remota; os demais esquemas não têm o que fazer aqui.
+      const src = String(params.src || '');
+      if (!/^https?:\/\//i.test(src)) {
+        console.error(`[desktop] webview recusado (esquema não permitido): ${src.slice(0, 80)}`);
+        event.preventDefault();
+      }
     });
     // links externos abrem no navegador do sistema, não dentro do app
     win.webContents.setWindowOpenHandler(({ url }) => {
       shell.openExternal(url);
       return { action: 'deny' };
     });
+    // Certificado de gerência de equipamento é quase sempre autoassinado. Em vez
+    // de recusar (inútil) ou aceitar qualquer um (perigoso), faz o mesmo que o
+    // SSH já faz com o fingerprint: aceita na PRIMEIRA visita, guarda, e a
+    // partir daí recusa se mudar — porque aí ou trocaram o equipamento, ou
+    // alguém está no meio do caminho.
+    electronApp.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+      let alvo;
+      try { alvo = new URL(url); } catch { return callback(false); }
+      const impressao = String((certificate && certificate.fingerprint) || '');
+      if (!impressao) return callback(false);
+
+      const dados = store.get();
+      const hosts = Array.isArray(dados.hosts) ? dados.hosts : [];
+      // Casa pelo host+porta da URL: o pino pertence ao endereço, não ao rótulo.
+      const porta = Number(alvo.port) || (alvo.protocol === 'https:' ? 443 : 80);
+      const host = hosts.find((h) => h.protocol === 'web'
+        && String(h.host) === alvo.hostname && Number(h.port || 443) === porta);
+      if (!host) {
+        console.error(`[desktop] certificado recusado (host não cadastrado): ${alvo.host}`);
+        return callback(false);
+      }
+      if (!host.webCert) {
+        host.webCert = impressao;
+        store.save();
+        console.error(`[desktop] certificado de ${alvo.host} fixado na primeira visita: ${impressao}`);
+        return callback(true);
+      }
+      if (host.webCert === impressao) return callback(true);
+      console.error(`[desktop] CERTIFICADO MUDOU em ${alvo.host} — recusado.`
+        + ` Fixado: ${host.webCert} / apresentado: ${impressao}`);
+      callback(false);
+    });
+
     win.on('closed', () => { win = null; });
     await win.loadURL(`http://127.0.0.1:${port}`);
     console.log(`[desktop] Vincii Canvas pronto em http://127.0.0.1:${port} — dados em ${dataDir}`);

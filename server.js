@@ -20,6 +20,7 @@ const rdp = require('./lib/rdp');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const proto = require('./public/protocolos');
+const weburl = require('./public/weburl');
 const pkg = require('./package.json');
 
 const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e executa comandos
@@ -470,7 +471,17 @@ app.post('/api/quick-connect', (req, res) => {
   // remota mostra a tela de login dela, que é o comportamento normal do xrdp e
   // do Windows quando o cliente não manda credencial.
   if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário.');
-  const port = Math.min(65535, Math.max(1, Number(b.port) || proto.portaPadrao(protocol)));
+  // Numa página web o campo "host" carrega a URL inteira: quem define endereço e
+  // porta é ela, e a validação é a mesma do cadastro salvo (só http e https).
+  let url = '';
+  let porta = Number(b.port) || proto.portaPadrao(protocol);
+  let endereco = host;
+  if (protocol === 'web') {
+    const partes = weburl.partesDaUrl(host);
+    if (!partes) return fail(res, 400, 'URL inválida. Use um endereço http:// ou https://.');
+    url = partes.url; endereco = partes.host; porta = partes.port;
+  }
+  const port = Math.min(65535, Math.max(1, porta));
   const a = b.auth || {};
   const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
   const auth = { type };
@@ -480,9 +491,9 @@ app.post('/api/quick-connect', (req, res) => {
   } else if (type === 'password') {
     auth.password = String(a.password || '');
   }
-  const name = String(b.name || '').trim() || (username ? `${username}@${host}` : host);
-  const id = quickhosts.add({ name, host, port, username, protocol, auth });
-  res.json({ hostId: id, name });
+  const name = String(b.name || '').trim() || (username ? `${username}@${endereco}` : endereco);
+  const id = quickhosts.add({ name, host: endereco, port, username, protocol, url, auth });
+  res.json({ hostId: id, name, protocol, url });
 });
 
 app.get('/api/history', (req, res) => {
@@ -532,6 +543,7 @@ function publicHost(h) {
     protocol: proto.normalizarProtocolo(h.protocol),
     ftps: h.ftps || 'auto',
     rdpDomain: h.rdpDomain || '',
+    url: h.url || '',
     rdpLegadoOk: !!h.rdpLegadoOk,
     group: h.group || '',
     icon: h.icon || '',
@@ -551,11 +563,21 @@ function parseHostBody(body, res) {
   if (!body || typeof body !== 'object') return fail(res, 400, 'Corpo da requisição inválido.');
   const name = String(body.name || '').trim();
   if (!name) return fail(res, 400, 'Informe um nome para o host.');
-  const hostAddr = String(body.host || '').trim();
-  if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
+  let hostAddr = String(body.host || '').trim();
   const protocol = proto.normalizarProtocolo(body.protocol);
-  const port = Number(body.port || proto.portaPadrao(protocol));
+  // Host de página web é definido pela URL: o endereço e a porta saem dela, para
+  // o resto do app (grupo, busca, ícone) continuar tratando como host qualquer.
+  let url = '';
+  let port = Number(body.port || proto.portaPadrao(protocol));
+  if (protocol === 'web') {
+    const partes = weburl.partesDaUrl(body.url || body.host);
+    if (!partes) return fail(res, 400, 'URL inválida. Use um endereço http:// ou https://.');
+    url = partes.url;
+    port = partes.port;
+  }
   if (!Number.isInteger(port) || port < 1 || port > 65535) return fail(res, 400, 'Porta inválida.');
+  if (protocol === 'web') hostAddr = new URL(url).hostname;
+  if (!hostAddr) return fail(res, 400, 'Informe o endereço do host.');
   const username = String(body.username || '').trim();
   // no Telnet o login é feito no próprio terminal do equipamento
   if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário SSH.');
@@ -577,7 +599,7 @@ function parseHostBody(body, res) {
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth, vars };
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -684,6 +706,7 @@ app.post('/api/import', (req, res) => {
       // Telnet e FTP podem legitimamente não ter usuário (login no equipamento):
       // exigir usuário aqui fazia esses hosts sumirem na restauração.
       if (!name || !hostAddr || (!username && protocolo === 'ssh')) { summary.skipped.push('host incompleto: ' + (name || '?')); continue; }
+    if (protocolo === 'web' && !weburl.normalizarUrl(h.url)) { summary.skipped.push(`"${name}": URL inválida ou ausente`); continue; }
       let port = Number(h.port) || proto.portaPadrao(protocolo);
       if (!Number.isInteger(port) || port < 1 || port > 65535) port = proto.portaPadrao(protocolo);
       const a = h.auth || {};
@@ -699,6 +722,9 @@ app.post('/api/import', (req, res) => {
       const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
       const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
       const rdpDomain = opcional(h.rdpDomain, (v) => String(v).trim().slice(0, 80));
+    // A URL passa pela MESMA validação do cadastro manual: o arquivo importado
+    // é entrada não confiável e a URL vira `src` de um <webview> dentro do app.
+    const url = opcional(h.url, (v) => weburl.normalizarUrl(v) || '');
       const icon = opcional(h.icon, slug);
       const color = opcional(h.color, slug);
       // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
@@ -727,7 +753,7 @@ app.post('/api/import', (req, res) => {
         if (type === 'key' && !auth.passphrase && ex.auth && ex.auth.passphrase) auth.passphrase = ex.auth.passphrase;
         // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
         // um arquivo sem a variável X não é motivo para apagar o X daqui.
-        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, group, icon, color, auth }),
+        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, auth }),
           { vars: { ...(ex.vars || {}), ...vars } });
         summary.hosts.updated++;
       } else {
@@ -1188,7 +1214,7 @@ app.post('/api/ai/chat', async (req, res) => {
       messages: body.messages,
       host,
       terminalContext: body.terminalContext,
-      modo: body.modo === 'desktop' ? 'desktop' : 'terminal',
+      modo: ['desktop', 'web'].includes(body.modo) ? body.modo : 'terminal',
       protocolo: body.protocolo,
       onDelta: (t) => { if (!aborted) send({ type: 'delta', text: t }); },
     });
@@ -1236,7 +1262,7 @@ app.post('/api/agent/start', (req, res) => {
   } else {
     host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
-    if (host.protocol && host.protocol !== 'ssh') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet, FTP, VNC ou RDP.');
+    if (host.protocol && host.protocol !== 'ssh') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet, FTP, VNC, RDP ou de página web.');
   }
   const goal = String(body.goal || '').trim();
   if (!goal) return fail(res, 400, 'Descreva a tarefa para o agente.');

@@ -19,6 +19,9 @@ const PROTOCOLOS = {
   ftp:    { porta: 21,   rotulo: 'FTP' },
   vnc:    { porta: 5900, rotulo: 'VNC' },
   rdp:    { porta: 3389, rotulo: 'RDP' },
+  // Página web (gerência de roteador, painel de serviço). A porta padrão é a do
+  // https, mas quem manda é a URL guardada no host — ver public/weburl.js.
+  web:    { porta: 443,  rotulo: 'Web' },
 };
 
 const PROTOCOLO_PADRAO = 'ssh';
@@ -42,6 +45,10 @@ function portaPadrao(p) {
 // não o oferece.
 const PROTOCOLOS_SESSAO = Object.keys(PROTOCOLOS).filter((p) => p !== 'ftp');
 
+// Protocolos que NÃO abrem terminal nem executam comando: só desenham algo numa
+// aba. O agente autônomo e a execução em lote precisam recusá-los.
+const SEM_TERMINAL = ['vnc', 'rdp', 'web'];
+
 // Área de trabalho remota: os dois protocolos que desenham tela em vez de texto.
 function ehTela(p) {
   return p === 'vnc' || p === 'rdp';
@@ -55,6 +62,6 @@ const PORTAS_PADRAO = Object.keys(PROTOCOLOS).map((p) => PROTOCOLOS[p].porta);
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     PROTOCOLOS, PROTOCOLO_PADRAO, PROTOCOLOS_SESSAO, PORTAS_PADRAO,
-    ehProtocolo, normalizarProtocolo, portaPadrao, ehTela,
+    SEM_TERMINAL, ehProtocolo, normalizarProtocolo, portaPadrao, ehTela,
   };
 }

@@ -1298,4 +1298,27 @@ body.term-full .term-grid.no-ai.no-sidebar {
 /* o canvas do noVNC/Guacamole nunca estoura o painel da aba */
 .desk-instance canvas, .desk-instance > div { max-width: 100%; max-height: 100%; }
 .term-tab .tab-dot.conectando { background: var(--yellow); }
+
+
+/* ---------- página web dentro das abas do Terminal ---------- */
+/* .term-instance é `position:absolute; inset:0`, então a altura já vem do pai —
+   mas sem `display:flex` aqui o webview não recebe altura nenhuma e a aba abre
+   com a página espremida no topo e o resto preto. */
+.web-instance { display: flex; flex-direction: column; min-height: 0; }
+.web-instance[hidden] { display: none; }
+.web-bar {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border); background: var(--panel2);
 }
+.web-bar .btn.small { padding: 2px 8px; line-height: 1.6; }
+.web-url {
+  flex: 1 1 auto; min-width: 0; font: inherit; font-size: 12px;
+  padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.web-aviso { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; line-height: 1.5; }
+.web-aviso.aviso { background: rgba(154, 103, 0, .12); color: var(--yellow); }
+.web-aviso.erro  { background: rgba(207, 34, 46, .12); color: var(--red); }
+/* o <webview> precisa de altura explícita: sem isto ele colapsa para zero e a
+   aba abre em branco, sem erro nenhum na tela */
+.web-view { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: #fff; }

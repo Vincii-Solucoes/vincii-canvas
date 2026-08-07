@@ -16,13 +16,13 @@
 
 // Atributos do <host>. A ordem é a mesma da saída, para facilitar a leitura.
 const HOST_ATRIBUTOS = [
-  'name', 'host', 'port', 'username', 'protocol', 'ftps', 'rdpDomain',
+  'name', 'host', 'port', 'username', 'protocol', 'ftps', 'rdpDomain', 'url',
   'group', 'icon', 'color',
 ];
 
 // Atributos que só fazem sentido num protocolo — o export os omite nos demais,
 // para o arquivo não carregar campo morto.
-const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp' };
+const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp', url: 'web' };
 
 // Vão como elementos filhos (<auth/> e <vars>), não como atributos.
 const HOST_FILHOS = ['auth', 'vars'];
@@ -37,6 +37,9 @@ const HOST_EXCLUIDOS = {
   rdpLegadoOk: 'consentimento de segurança dado pelo usuário NESTA máquina, não '
     + 'configuração. Restaurando, o app pergunta de novo — um clique.',
   rdpLegado: 'resíduo inerte: nenhuma linha do projeto lê ou escreve este campo.',
+  webCert: 'impressão digital do certificado da página web, fixada na primeira '
+    + 'visita nesta máquina (TOFU). Mesma família do fingerprint do SSH: aceitá-la '
+    + 'de um arquivo deixaria um XML de terceiro pré-aprovar um certificado.',
 };
 
 if (typeof module !== 'undefined' && module.exports) {

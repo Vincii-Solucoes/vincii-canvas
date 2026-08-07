@@ -44,6 +44,8 @@ const HOST_REF = {
   fingerprint: 'SHA256:abc',
   ftps: 'auto',
   rdpDomain: 'CORP',
+  url: 'https://192.168.1.1/admin',
+  webCert: 'sha256/AAAA',
   group: 'Producao',
   icon: 'windows',
   color: 'azul',
