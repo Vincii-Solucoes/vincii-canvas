@@ -245,6 +245,7 @@ function hostCard(h) {
   const nv = Object.keys(h.vars || {}).length;
   if (nv) el(meta, 'span', 'tag', `${nv} var(s)`);
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
+  if (h.webCert) el(meta, 'span', 'tag', 'certificado fixado');
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
   btnConn.addEventListener('click', () => connectFromHosts(h.id));
@@ -369,6 +370,7 @@ function openHostModal(existing) {
       <textarea id="f_vars" rows="4" class="mono" placeholder="CHAVE=valor&#10;DATA_DIR=/srv/app"></textarea>
     </label>
     <div id="fpRow" class="hint" hidden></div>
+    <div id="certRow" class="hint" hidden></div>
   `);
 
   $('#f_name').value = existing ? existing.name : '';
@@ -444,6 +446,25 @@ function openHostModal(existing) {
         await api(`/api/hosts/${existing.id}/forget-fingerprint`, { method: 'POST' });
         toast('Fingerprint removido — será fixado de novo na próxima conexão.');
         row.hidden = true;
+        await loadState();
+      } catch (e) { toast(e.message, 'erro'); }
+    });
+  }
+  // Mesma coisa para o certificado das páginas web. Sem este botão, a mensagem
+  // de "o certificado mudou" seria um beco sem saída para quem só trocou o
+  // equipamento.
+  const certRow = $('#certRow');
+  certRow.replaceChildren();
+  certRow.hidden = !(existing && existing.webCert);
+  if (existing && existing.webCert) {
+    el(certRow, 'span', 'mono', `Certificado fixado: ${String(existing.webCert).slice(0, 26)}… `);
+    const esquecer = el(certRow, 'button', 'btn small', 'Esquecer certificado');
+    esquecer.type = 'button';
+    esquecer.addEventListener('click', async () => {
+      try {
+        await api(`/api/hosts/${existing.id}/forget-cert`, { method: 'POST' });
+        toast('Certificado removido — será fixado de novo no próximo acesso.');
+        certRow.hidden = true;
         await loadState();
       } catch (e) { toast(e.message, 'erro'); }
     });
@@ -2690,22 +2711,45 @@ function createWebSession({ hostId, hostName, url }) {
     aviso.hidden = false;
   };
 
-  view.addEventListener('did-start-loading', () => { session.status = 'conectando'; renderTermTabs(); });
+  // `did-fail-load` chega ANTES de `did-stop-loading`. Sem esta marca, a falha
+  // era sobrescrita e a aba mostrava "conectado" com a página em branco — que é
+  // o pior dos dois mundos: nada funciona e nada avisa.
+  let falhou = null;
+  view.addEventListener('did-start-loading', () => {
+    falhou = null;
+    aviso.hidden = true;
+    session.status = 'conectando';
+    renderTermTabs();
+  });
   view.addEventListener('did-stop-loading', () => {
-    session.status = 'conectado';
+    session.status = falhou ? 'encerrado' : 'conectado';
     try { campo.value = view.getURL() || endereco; } catch {}
     try { voltar.disabled = !view.canGoBack(); avancar.disabled = !view.canGoForward(); } catch {}
+    if (falhou) mostrarAviso(falhou, 'erro');
+    else if (!ehRedePrivadaUrl(endereco)) {
+      mostrarAviso('Esta página não é da sua rede interna — ela roda dentro do app. '
+        + 'Se for só um site, prefira abrir no navegador.', 'aviso');
+    }
     renderTermTabs();
     renderHostSidebar();
   });
   view.addEventListener('did-fail-load', (e) => {
     // -3 é ABORTED: acontece em toda navegação cancelada, não é erro de verdade.
     if (e.errorCode === -3) return;
-    session.status = 'encerrado';
-    renderTermTabs();
-    mostrarAviso(`Não foi possível abrir: ${e.errorDescription || e.errorCode}. `
-      + 'Se o certificado do equipamento mudou, o app recusa a conexão de propósito — '
-      + 'apague o certificado fixado no cadastro do host para aprender o novo.', 'erro');
+    const desc = String(e.errorDescription || e.errorCode || '');
+    let dica = '';
+    // A ordem importa: ERR_CERT_* também casa com /SSL/, e a dica de "use http"
+    // aparecia para certificado trocado — dizendo a coisa errada justamente no
+    // caso em que o app está protegendo o usuário.
+    if (/CERT/i.test(desc)) {
+      dica = ' O app fixa o certificado do equipamento na primeira visita e recusa'
+        + ' se ele mudar — ou trocaram o equipamento, ou alguém está no meio do caminho.'
+        + ' Se a troca foi você, use "esquecer certificado" no cadastro do host.';
+    } else if (/SSL|ERR_EMPTY_RESPONSE/i.test(desc) && /^https:/i.test(endereco)) {
+      const alternativa = endereco.replace(/^https:/i, 'http:');
+      dica = ` Este endereço foi aberto como https. Se o equipamento só fala http, use ${alternativa} no cadastro.`;
+    }
+    falhou = `Não foi possível abrir: ${desc}.${dica}`;
   });
   // Link que abriria janela nova vai para o navegador do sistema, como o resto
   // do app já faz.
@@ -2728,10 +2772,6 @@ function createWebSession({ hostId, hostName, url }) {
     try { view.loadURL(novo); } catch {}
   });
 
-  if (!ehRedePrivadaUrl(endereco)) {
-    mostrarAviso('Esta página não é da sua rede interna — ela roda dentro do app. '
-      + 'Se for só um site, prefira abrir no navegador.', 'aviso');
-  }
   renderTermTabs();
   renderHostSidebar();
   return session;

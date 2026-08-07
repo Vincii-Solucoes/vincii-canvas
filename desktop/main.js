@@ -53,6 +53,7 @@ if (!electronApp.requestSingleInstanceLock()) {
   // Importar só depois de definir SSHC_DATA_DIR — o store lê a env ao carregar
   const { start } = require('../server');
   const store = require('../lib/store');
+  const quickhosts = require('../lib/quickhosts');
 
   let win = null;
 
@@ -127,16 +128,23 @@ if (!electronApp.requestSingleInstanceLock()) {
       const hosts = Array.isArray(dados.hosts) ? dados.hosts : [];
       // Casa pelo host+porta da URL: o pino pertence ao endereço, não ao rótulo.
       const porta = Number(alvo.port) || (alvo.protocol === 'https:' ? 443 : 80);
+      // Host salvo primeiro; se não houver, um avulso da conexão rápida. Um
+      // avulso recebe a MESMA regra: a exposição na primeira visita é idêntica
+      // à de um host salvo, e recusar só ele deixaria a conexão rápida sem saída
+      // diante de qualquer equipamento com certificado autoassinado.
       const host = hosts.find((h) => h.protocol === 'web'
-        && String(h.host) === alvo.hostname && Number(h.port || 443) === porta);
+          && String(h.host) === alvo.hostname && Number(h.port || 443) === porta)
+        || quickhosts.acharPorEndereco('web', alvo.hostname, porta);
       if (!host) {
         console.error(`[desktop] certificado recusado (host não cadastrado): ${alvo.host}`);
         return callback(false);
       }
       if (!host.webCert) {
         host.webCert = impressao;
-        store.save();
-        console.error(`[desktop] certificado de ${alvo.host} fixado na primeira visita: ${impressao}`);
+        // Host avulso vive só em memória — nada a gravar em disco.
+        if (!host.ephemeral) store.save();
+        console.error(`[desktop] certificado de ${alvo.host} fixado na primeira visita`
+          + `${host.ephemeral ? ' (conexão rápida, só nesta sessão)' : ''}: ${impressao}`);
         return callback(true);
       }
       if (host.webCert === impressao) return callback(true);

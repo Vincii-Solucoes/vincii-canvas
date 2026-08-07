@@ -115,6 +115,35 @@ const HOST_REF = {
   }
 }
 
+// ---------- 3b. o import PERSISTE cada atributo que chega ----------
+
+// O teste anterior cobria export e leitura. Faltava a terceira ponta, e foi
+// exatamente ali que o campo `url` se perdeu: o export gravava, o parser lia, e
+// a rota de importação criava o host sem ele. Um campo pode morrer em qualquer
+// uma das três pernas — agora as três são conferidas.
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const i = src.indexOf("app.post('/api/import'");
+  ok(i > 0, 'achei a rota de importação em server.js');
+  const rota = src.slice(i, src.indexOf('app.get(', i) > 0 ? src.indexOf('app.get(', i) : i + 8000);
+  // O bloco de hosts tem dois caminhos: atualizar um existente e criar um novo.
+  const atualiza = rota.slice(rota.indexOf('Object.assign(ex'), rota.indexOf('Object.assign(ex') + 400);
+  const cria = rota.slice(rota.indexOf('d.hosts.push('), rota.indexOf('d.hosts.push(') + 400);
+  ok(atualiza.length > 50 && cria.length > 50, 'achei os dois caminhos do upsert de host');
+  for (const a of campos.HOST_ATRIBUTOS) {
+    ok(new RegExp(`\\b${a}\\b`).test(atualiza), `o import não aplica "${a}" ao atualizar um host`);
+    ok(new RegExp(`\\b${a}\\b`).test(cria), `o import não grava "${a}" ao criar um host`);
+  }
+  // O invariante é sobre a LEITURA, não sobre a escrita: `fingerprint: null` no
+  // caminho de criação é o app zerando o campo de propósito. O que não pode
+  // acontecer é o import tirar esses valores do objeto vindo do arquivo (`h`).
+  for (const e of Object.keys(campos.HOST_EXCLUIDOS)) {
+    if (e === 'id') continue; // o id é gerado aqui, nunca vem do arquivo
+    ok(!new RegExp(`\\bh\\.${e}\\b`).test(rota),
+      `o import lê "h.${e}" do arquivo — este campo é prova de identidade aprendida nesta máquina`);
+  }
+}
+
 // ---------- 4. protocolos: uma lista só, e completa ----------
 
 {

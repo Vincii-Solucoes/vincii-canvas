@@ -550,6 +550,7 @@ function publicHost(h) {
     color: h.color || '',
     vars: h.vars || {},
     fingerprint: h.fingerprint || null,
+    webCert: h.webCert || null,
     auth: {
       type: auth.type || 'agent',
       keyPath: auth.keyPath || null,
@@ -760,8 +761,10 @@ app.post('/api/import', (req, res) => {
         // rdpLegadoOk fica de fora de propósito, pela mesma razão do fingerprint:
         // é consentimento de segurança dado pelo usuário nesta máquina, não
         // configuração. Restaurando, o app pergunta de novo — um clique.
+        // webCert fica de fora pela mesma razão do fingerprint: é prova de
+        // identidade aprendida NESTA máquina, não configuração.
         d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps,
-          rdpDomain: rdpDomain || '', group: group || '', icon: icon || '', color: color || '', auth, vars });
+          rdpDomain: rdpDomain || '', url: url || '', group: group || '', icon: icon || '', color: color || '', auth, vars });
         summary.hosts.added++;
       }
     }
@@ -884,6 +887,17 @@ app.delete('/api/hosts/:id', (req, res) => {
   const idx = d.hosts.findIndex((h) => h.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Host não encontrado.');
   d.hosts.splice(idx, 1);
+  store.save();
+  res.json({ ok: true });
+});
+
+// Página web: esquece o certificado fixado, para o próximo acesso aprender o
+// novo. É a saída legítima de quem TROCOU o equipamento — sem ela, a mensagem
+// de "certificado mudou" seria um beco sem saída.
+app.post('/api/hosts/:id/forget-cert', (req, res) => {
+  const host = store.get().hosts.find((h) => h.id === req.params.id);
+  if (!host) return fail(res, 404, 'Host não encontrado.');
+  delete host.webCert;
   store.save();
   res.json({ ok: true });
 });
