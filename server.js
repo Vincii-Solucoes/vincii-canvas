@@ -914,12 +914,29 @@ app.put('/api/hosts/:id', (req, res) => {
   res.json(publicHost(host));
 });
 
+// Apagar um host de página web deixava para trás a partição do <webview> —
+// <userData>/Partitions/web-<id>/ — com o cookie de sessão e o localStorage do
+// equipamento em texto claro, para sempre. O gesto que o usuário entende como
+// "remover este equipamento" não revogava a sessão dele.
+function limparParticaoWeb(hostId) {
+  try {
+    // Só existe rodando dentro do Electron; em `npm start` não há sessão de
+    // webview nenhuma para limpar.
+    const { session } = require('electron');
+    if (!session) return;
+    const ses = session.fromPartition('persist:web-' + hostId);
+    ses.clearStorageData().catch(() => {});
+    if (ses.clearCache) ses.clearCache().catch(() => {});
+  } catch {}
+}
+
 app.delete('/api/hosts/:id', (req, res) => {
   const d = store.get();
   const idx = d.hosts.findIndex((h) => h.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Host não encontrado.');
-  d.hosts.splice(idx, 1);
+  const [removido] = d.hosts.splice(idx, 1);
   store.save();
+  if (removido && removido.protocol === 'web') limparParticaoWeb(removido.id);
   res.json({ ok: true });
 });
 
