@@ -672,9 +672,92 @@ function openPlaybookAiModal() {
 }
 
 // ---------- histórico de comandos ----------
-const histState = { source: '', hostId: '', q: '', selected: new Set() };
+const histState = { source: '', hostId: '', q: '', de: '', ate: '', selected: new Set() };
 let histEntries = [];
 let histSearchTimer = null;
+
+// Relatório do que foi feito na janela: o que está SELECIONADO; sem seleção,
+// tudo que o filtro atual mostra. Texto simples de propósito — o destino é um
+// chamado, um e-mail ou um anexo de mudança, não uma planilha.
+function relatorioHistorico() {
+  const alvo = histState.selected.size
+    ? histEntries.filter((e) => histState.selected.has(e.id))
+    : histEntries;
+  if (!alvo.length) { toast('Nada para exportar com os filtros atuais.', 'erro'); return; }
+  const emOrdem = alvo.slice().sort((x, y) => x.ts - y.ts);   // cronológico, como aconteceu
+  const periodo = (histState.de || histState.ate)
+    ? `${histState.de ? fmtHistDate(Date.parse(histState.de)) : 'início'} até `
+      + `${histState.ate ? fmtHistDate(Date.parse(histState.ate)) : 'agora'}`
+    : `${fmtHistDate(emOrdem[0].ts)} até ${fmtHistDate(emOrdem[emOrdem.length - 1].ts)}`;
+
+  const filtros = [];
+  if (histState.source) filtros.push(histState.source === 'ai' ? 'somente IA' : 'somente humano');
+  if (histState.hostId) filtros.push('máquina: ' + ($('#histHostFilter').selectedOptions[0] || {}).textContent);
+  if (histState.q) filtros.push(`busca: "${histState.q}"`);
+  if (histState.selected.size) filtros.push(`${histState.selected.size} comando(s) selecionado(s)`);
+
+  const linhas = [
+    'RELATÓRIO DE COMANDOS — Vincii Canvas',
+    '='.repeat(60),
+    `Período : ${periodo}`,
+    `Gerado  : ${fmtHistDate(Date.now())}`,
+    `Comandos: ${emOrdem.length}`,
+  ];
+  if (filtros.length) linhas.push(`Filtros : ${filtros.join(' · ')}`);
+  linhas.push('');
+
+  // Agrupa por máquina: é assim que se lê um relatório de manutenção.
+  const porMaquina = new Map();
+  for (const e of emOrdem) {
+    const chave = e.local ? 'Meu computador' : (e.machine || e.ip || 'sem máquina');
+    if (!porMaquina.has(chave)) porMaquina.set(chave, []);
+    porMaquina.get(chave).push(e);
+  }
+  for (const [maquina, itens] of porMaquina) {
+    const um = itens[0];
+    const destino = um.local ? '' : ` (${um.username ? um.username + '@' : ''}${um.ip || ''}${um.port ? ':' + um.port : ''})`;
+    linhas.push(`## ${maquina}${destino} — ${itens.length} comando(s)`);
+    linhas.push('-'.repeat(60));
+    for (const e of itens) {
+      const quem = e.source === 'ai' ? 'IA' : 'humano';
+      const onde = ORIGIN_LABEL[e.origin] || e.origin || '';
+      linhas.push(`[${fmtHistDate(e.ts)}] (${quem}${onde ? '/' + onde : ''})`);
+      linhas.push(`  ${e.command}`);
+    }
+    linhas.push('');
+  }
+  linhas.push('Senhas não são registradas pelo app e não aparecem neste relatório.');
+
+  const nome = `relatorio-comandos-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`;
+  const blob = new Blob([linhas.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nome;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast(`Relatório com ${emOrdem.length} comando(s) baixado.`);
+}
+
+// Preenche os campos de período a partir de um atalho ("últimas 24 h", "hoje").
+function aplicarAtalhoPeriodo(valor) {
+  const paraCampo = (d) => {
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+      + `T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  if (!valor) { histState.de = ''; histState.ate = ''; }
+  else if (valor === 'hoje') {
+    const i = new Date(); i.setHours(0, 0, 0, 0);
+    histState.de = paraCampo(i); histState.ate = '';
+  } else {
+    const h = Number(valor);
+    histState.de = paraCampo(new Date(Date.now() - h * 3600 * 1000));
+    histState.ate = '';
+  }
+  $('#histDe').value = histState.de;
+  $('#histAte').value = histState.ate;
+  loadHistory();
+}
 
 function fmtHistDate(ts) {
   try {
@@ -707,6 +790,11 @@ async function loadHistory() {
   if (histState.source) params.set('source', histState.source);
   if (histState.hostId) params.set('hostId', histState.hostId);
   if (histState.q) params.set('q', histState.q);
+  // datetime-local devolve hora LOCAL sem fuso; Date interpreta como local, que
+  // é o que o usuário quer dizer ao escolher "das 14:00 às 15:00".
+  const emMs = (v) => { const t = Date.parse(v); return Number.isFinite(t) ? t : null; };
+  const de = emMs(histState.de); if (de) params.set('de', String(de));
+  const ate = emMs(histState.ate); if (ate) params.set('ate', String(ate));
   try {
     const r = await api('/api/history?' + params.toString());
     histEntries = r.entries || [];
@@ -769,6 +857,18 @@ function renderHistory() {
 function updateHistSelUI() {
   const n = histState.selected.size;
   const cnt = $('#histSelCount'); if (cnt) cnt.textContent = String(n);
+  // Sem seleção o relatório sai com tudo que o filtro mostra — o contador diz
+  // qual dos dois vai acontecer, para o clique não surpreender.
+  const rel = $('#btnHistRelatorio');
+  const relCnt = $('#histRelCount');
+  const quantos = n || histEntries.length;
+  if (relCnt) relCnt.textContent = String(quantos);
+  if (rel) {
+    rel.disabled = quantos === 0;
+    rel.title = n
+      ? `Baixar relatório dos ${n} comando(s) selecionado(s)`
+      : `Baixar relatório dos ${histEntries.length} comando(s) que o filtro mostra`;
+  }
   const btn = $('#btnHistPlaybook'); if (btn) btn.disabled = n === 0;
   const all = $('#histSelectAll');
   if (all) all.checked = histEntries.length > 0 && histEntries.every((e) => histState.selected.has(e.id));
@@ -792,6 +892,13 @@ function initHistoryControls() {
     loadHistory();
   }));
   $('#histHostFilter').addEventListener('change', (e) => { histState.hostId = e.target.value; loadHistory(); });
+  $('#histDe').addEventListener('change', (e) => { histState.de = e.target.value; loadHistory(); });
+  $('#histAte').addEventListener('change', (e) => { histState.ate = e.target.value; loadHistory(); });
+  $$('#histAtalhos button').forEach((b) => b.addEventListener('click', () => {
+    $$('#histAtalhos button').forEach((x) => x.classList.toggle('active', x === b));
+    aplicarAtalhoPeriodo(b.dataset.h);
+  }));
+  $('#btnHistRelatorio').addEventListener('click', relatorioHistorico);
   $('#histSearch').addEventListener('input', (e) => {
     histState.q = e.target.value.trim();
     clearTimeout(histSearchTimer);

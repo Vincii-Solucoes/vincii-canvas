@@ -1322,3 +1322,12 @@ body.term-full .term-grid.no-ai.no-sidebar {
 /* o <webview> precisa de altura explícita: sem isto ele colapsa para zero e a
    aba abre em branco, sem erro nenhum na tela */
 .web-view { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: #fff; }
+
+
+/* ---------- filtro de período do histórico ---------- */
+.hist-periodo { margin-top: 6px; flex-wrap: wrap; }
+.hist-dt {
+  font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.hist-periodo .small { color: var(--muted); }

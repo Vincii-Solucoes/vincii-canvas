@@ -500,8 +500,8 @@ app.post('/api/quick-connect', (req, res) => {
 });
 
 app.get('/api/history', (req, res) => {
-  const { source, hostId, q, limit } = req.query || {};
-  res.json({ entries: history.list({ source, hostId, q, limit }) });
+  const { source, hostId, q, limit, de, ate } = req.query || {};
+  res.json({ entries: history.list({ source, hostId, q, limit, de, ate }) });
 });
 
 app.post('/api/history', (req, res) => {

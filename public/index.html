@@ -297,7 +297,7 @@ try {
           <button id="btnHistClear" class="btn danger">Apagar histórico</button>
         </div>
       </div>
-      <p class="hint">Comandos executados no terminal (você e a IA) e em lote, com data, máquina e IP. Marque comandos e clique em <strong>Criar playbook</strong> para reaproveitá-los. Senhas não são registradas (não aparecem na tela).</p>
+      <p class="hint">Comandos executados no terminal (você e a IA) e em lote, com data, máquina e IP. Filtre por <strong>período</strong>, marque comandos e clique em <strong>Criar playbook</strong> para reaproveitá-los ou em <strong>⤓ Relatório</strong> para baixar o que foi feito na janela — útil para anexar a um chamado. Senhas não são registradas (não aparecem na tela).</p>
       <div class="hist-toolbar">
         <div class="hist-seges" id="histSourceSeg" role="group" aria-label="Filtrar por fonte">
           <button data-src="" class="active">Todos</button>
@@ -307,6 +307,20 @@ try {
         <select id="histHostFilter" class="hist-hostfilter"><option value="">Todas as máquinas</option></select>
         <input id="histSearch" type="text" class="hist-search" placeholder="Buscar comando…" autocomplete="off">
         <label class="small hist-selall"><input type="checkbox" id="histSelectAll"> selecionar tudo</label>
+      </div>
+      <div class="hist-toolbar hist-periodo">
+        <span class="small">Período:</span>
+        <input id="histDe" type="datetime-local" class="hist-dt" title="A partir de">
+        <span class="small">até</span>
+        <input id="histAte" type="datetime-local" class="hist-dt" title="Até">
+        <div class="hist-seges" id="histAtalhos" role="group" aria-label="Períodos rápidos">
+          <button data-h="1">1 h</button>
+          <button data-h="24">24 h</button>
+          <button data-h="168">7 dias</button>
+          <button data-h="hoje">Hoje</button>
+          <button data-h="">Tudo</button>
+        </div>
+        <button id="btnHistRelatorio" class="btn" disabled>⤓ Relatório (<span id="histRelCount">0</span>)</button>
       </div>
       <div id="historyList" class="hist-list"></div>
     </div>
