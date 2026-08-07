@@ -30,9 +30,12 @@ let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n += 1; };
 const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
 
-// Host de referência: TODAS as chaves que o app grava num host hoje. Se o app
-// ganhar um campo novo, acrescente-o aqui — o teste seguinte obriga a decidir
-// se ele vai no backup.
+// Host de referência. ATENÇÃO ao que este bloco NÃO fazia: mantido só à mão,
+// ele não pegava campo novo nenhum — bastava alguém acrescentar `host.etiquetas`
+// em parseHostBody, no import e na tela para a suíte passar verde com o campo
+// ausente do XML. O comentário de backup-campos.js chegava a AFIRMAR que
+// quebrava. Não quebrava. Por isso o bloco 1b abaixo derruba a lista DO CÓDIGO
+// e confronta com esta — a lista à mão virou só a fonte dos valores de teste.
 const HOST_REF = {
   id: 'h1',
   name: 'WIN-DC',
@@ -53,6 +56,28 @@ const HOST_REF = {
   rdpLegado: true,
   rdpLegadoOk: true,
 };
+
+// ---------- 1b. a lista de referência acompanha o código ----------
+
+// Lê os campos que parseHostBody devolve de fato. É a única fonte que cresce
+// quando alguém acrescenta um campo de host — e a classe de bug que isto pega
+// já mordeu o projeto três vezes (protocol, rdpDomain, url).
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const i = src.indexOf('function parseHostBody');
+  ok(i > 0, 'achei parseHostBody em server.js');
+  const corpo = src.slice(i, src.indexOf('\n}', i));
+  const ret = corpo.slice(corpo.lastIndexOf('return {'));
+  const doCodigo = [...ret.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:[,:}]|$)/g)]
+    .map((m) => m[1])
+    .filter((n) => !['return', 'hostAddr', 'true', 'false', 'null'].includes(n));
+  // `host` aparece como `host: hostAddr`; o resto é abreviado.
+  const esperados = new Set(doCodigo);
+  const faltando = [...esperados].filter((k) => !(k in HOST_REF));
+  igual(faltando, [],
+    'parseHostBody devolve campo que o HOST_REF do teste não conhece — '
+    + 'acrescente-o ao HOST_REF e classifique em backup-campos.js');
+}
 
 // ---------- 1. nenhum campo fica órfão ----------
 

@@ -842,7 +842,10 @@ async function loadHistory() {
   // é o que o usuário quer dizer ao escolher "das 14:00 às 15:00".
   const emMs = (v) => { const t = Date.parse(v); return Number.isFinite(t) ? t : null; };
   const de = emMs(histState.de); if (de) params.set('de', String(de));
-  const ate = emMs(histState.ate); if (ate) params.set('ate', String(ate));
+  // O campo tem precisão de MINUTO, e a lista rotula com minuto: um comando das
+  // 15:00:20 aparece como "15:00" e sumia ao filtrar "até 15:00". Cobrir o
+  // minuto inteiro alinha o filtro com o que a tela mostra.
+  const ate = emMs(histState.ate); if (ate) params.set('ate', String(ate + 59999));
   try {
     const r = await api('/api/history?' + params.toString());
     histEntries = r.entries || [];
@@ -869,7 +872,17 @@ function renderHistory() {
       + 'pode haver mais fora da lista. Estreite o período para ver (e relatar) tudo.';
   }
   if (!histEntries.length) {
-    el(wrap, 'p', 'empty', 'Nenhum comando no histórico ainda. Use o terminal ou a IA e eles aparecem aqui.');
+    // Com filtro ativo, dizer "nenhum comando ainda" é falso: pode haver 4000
+    // gravados. E datas invertidas esvaziam a lista sem explicar por quê.
+    const temFiltro = !!(histState.source || histState.hostId || histState.q
+      || histState.de || histState.ate);
+    const invertido = histState.de && histState.ate
+      && Date.parse(histState.de) > Date.parse(histState.ate);
+    el(wrap, 'p', 'empty', invertido
+      ? 'A data inicial é POSTERIOR à final — inverta os campos de período.'
+      : (temFiltro
+        ? 'Nenhum comando corresponde aos filtros atuais. Use "Tudo" no período para limpar.'
+        : 'Nenhum comando no histórico ainda. Use o terminal ou a IA e eles aparecem aqui.'));
     updateHistSelUI();
     return;
   }
@@ -1817,18 +1830,34 @@ function colarNaSessao(valor) {
   if (s.kind === 'web') {
     const wv = s.container.querySelector('webview');
     if (!wv) { toast('Esta aba ainda não terminou de abrir.', 'erro'); return; }
-    try { wv.insertText(texto); toast('Colado no campo em foco da página.'); }
-    catch (e) { toast('Não deu para colar na página: ' + e.message, 'erro'); }
+    // insertText não rejeita quando não há campo em foco: ela resolve e nada
+    // acontece. Afirmar "colado" era mentir sempre que o usuário clicasse antes
+    // de dar foco em algum campo. Quem sabe onde está o cursor é a página.
+    try {
+      wv.insertText(texto);
+      toast('Valor enviado para o campo em foco da página. Se nada apareceu, '
+        + 'clique no campo primeiro e cole de novo.');
+    } catch (e) { toast('Não deu para colar na página: ' + e.message, 'erro'); }
     return;
   }
   if (s.kind === 'desk') {
-    if (!s.desk || typeof s.desk.colar !== 'function') {
-      toast('Esta área de trabalho ainda não terminou de conectar.', 'erro');
+    // Testar só a alça não bastava: quando a sessão cai, `status` vira
+    // 'encerrado' mas `session.desk` continua lá, e o noVNC descarta a colagem
+    // em silêncio — o app dizia "enviado" e o Ctrl+V do outro lado colava o
+    // conteúdo ANTERIOR. O caminho do terminal já checava o estado; aqui era
+    // esquecimento, não decisão.
+    if (s.status !== 'conectado' || !s.desk || typeof s.desk.colar !== 'function') {
+      toast('Esta área de trabalho não está conectada agora.', 'erro');
       return;
     }
     try {
       s.desk.colar(texto);
-      toast('Enviado para a área de transferência da máquina remota — cole com Ctrl+V lá dentro.');
+      // Sem a extensão Extended Clipboard, o noVNC manda o texto em latin-1 e
+      // caractere fora da faixa (travessão, aspas curvas, €) vira "?". Acento do
+      // português passa. Não dá para garantir fidelidade byte a byte, então o
+      // aviso não promete isso.
+      toast('Enviado para a área de transferência da máquina remota — cole com '
+        + 'Ctrl+V lá dentro. Confira o valor colado se ele tiver símbolos incomuns.');
     } catch (e) { toast('Não deu para enviar: ' + e.message, 'erro'); }
     return;
   }
@@ -1871,13 +1900,27 @@ function renderVarMenu() {
       ? 'Insere no campo em foco dentro da página.'
       : 'Escreve no terminal sem executar — você revisa e dá Enter.';
 
+  // Guarda A QUAL sessão este menu pertence. Fechar a aba no × dispara
+  // stopPropagation, então o clique não chega ao guarda de "clique fora" e o
+  // menu FICA na tela — com as variáveis do host anterior. Sem esta checagem, o
+  // clique escrevia a senha de produção no shell que estivesse ativo depois.
+  const idDaSessao = sessao.id;
   const linha = (nome, valor) => {
     const row = el(menu, 'div', 'fav-item');
     const body = el(row, 'div', 'fav-body');
     body.title = comoCola;
     el(body, 'div', 'fav-label', nome);
     el(body, 'code', 'fav-cmd', String(valor));
-    body.addEventListener('click', () => { colarNaSessao(valor); fecharVarMenu(); });
+    body.addEventListener('click', () => {
+      const atual = activeSession();
+      if (!atual || atual.id !== idDaSessao) {
+        fecharVarMenu();
+        toast('A aba mudou desde que este menu foi aberto — nada foi colado.', 'erro');
+        return;
+      }
+      colarNaSessao(valor);
+      fecharVarMenu();
+    });
   };
 
   if (proprias.length) {
@@ -1889,7 +1932,10 @@ function renderVarMenu() {
     embutidas.forEach(([n, v]) => linha(n, v));
   }
   if (!proprias.length && !embutidas.length) {
-    el(menu, 'p', 'fav-empty', sessao.hostId
+    // A condição olhava `sessao.hostId`, que EXISTE numa conexão rápida (é o
+    // `qc_…`) — então mandava cadastrar variáveis num host que não está na
+    // lista. Quem decide é `host`: sem ele, é aba avulsa ou terminal local.
+    el(menu, 'p', 'fav-empty', host
       ? 'Este host não tem variáveis. Cadastre em Hosts → editar → Variáveis.'
       : 'Esta aba não é de um host salvo, então não há variáveis de host.');
   }
@@ -1906,6 +1952,7 @@ function alternarVarMenu() {
 function closeFavMenu() { const m = $('#favMenu'); if (m) m.hidden = true; }
 
 function toggleFavMenu() {
+  fecharVarMenu();   // os dois abertos ficavam sobrepostos, um escondendo o outro
   const m = $('#favMenu');
   if (!m) return;
   if (m.hidden) { renderFavMenu(); m.hidden = false; }
@@ -2000,6 +2047,16 @@ async function exportXml() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast(secrets ? 'Configuração exportada (com segredos).' : 'Configuração exportada.');
+    // XML 1.0 não carrega caractere de controle nem como referência numérica, e
+    // um só inutilizaria o arquivo. Removê-los está certo; sumir com eles em
+    // silêncio é que não — o valor voltaria da restauração com aparência normal
+    // e conteúdo diferente.
+    const removidos = Number(res.headers.get('X-Vincii-Removidos') || 0);
+    if (removidos) {
+      toast(`${removidos} caractere(s) de controle foram removidos de valores no `
+        + 'arquivo — XML não os transporta. Confira variáveis coladas de saída de '
+        + 'equipamento antes de restaurar por cima.', 'aviso');
+    }
   } catch (e) {
     toast(e.message, 'erro');
   } finally {
@@ -3495,9 +3552,25 @@ function insertCommand(cmd, run, opts = {}) {
     toast('Abra uma conexão antes de inserir o comando.', 'erro');
     return;
   }
-  s.ws.send(JSON.stringify({ t: 'i', d: cmd + (run ? '\n' : '') }));
+  // MESMO saneador da colagem de variável. O favorito promete "escrito no
+  // terminal SEM executar", e o comando vem do cadastro — ou de um XML
+  // importado de terceiro. Sem isto, um favorito com quebra de linha executava
+  // sozinho, exatamente como a variável executava.
+  //
+  // Quando `run` é true quem manda o Enter é o app, de propósito: aí o texto
+  // continua saneado, só que seguido de um \n explícito.
+  const { texto: limpo, mudou, excedeu } = sanearParaTerminal(cmd);
+  if (excedeu) {
+    toast('Comando longo demais para inserir de uma vez no terminal.', 'erro');
+    return;
+  }
+  s.ws.send(JSON.stringify({ t: 'i', d: limpo + (run ? '\n' : '') }));
+  if (mudou && !run) {
+    toast('O comando tinha quebra de linha ou caractere de controle — foi inserido '
+      + 'sem eles, para não executar sozinho.', 'aviso');
+  }
   // rodou direto → registra; inserido sem rodar, a captura do Enter registra depois
-  if (run) logHistory(s, cmd, opts.source || 'ai', opts.origin || 'assistant');
+  if (run) logHistory(s, limpo, opts.source || 'ai', opts.origin || 'assistant');
   focusActive();
 }
 

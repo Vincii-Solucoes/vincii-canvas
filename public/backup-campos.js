@@ -9,10 +9,14 @@
 // levava, e o logon com Active Directory falhava depois de restaurar, com o
 // cadastro parecendo completo na tela.
 //
-// A lista abaixo é conferida por test/backup.test.js contra um host de
-// referência: acrescentar um campo novo ao host sem classificá-lo aqui QUEBRA
-// o teste. É de propósito — a decisão "isto vai no backup?" passa a ser
-// obrigatória, em vez de silenciosa.
+// A lista abaixo é conferida por test/backup.test.js, que DERIVA os campos do
+// `return` de parseHostBody (server.js) e confronta com o host de referência do
+// teste. Acrescentar um campo de host sem classificá-lo aqui quebra a suíte.
+//
+// Isto nem sempre foi verdade: por um tempo o comentário afirmava a garantia
+// enquanto o teste só comparava duas listas escritas à mão — um campo novo
+// passava verde e sumia do XML em silêncio. Comentário que promete guarda
+// inexistente é pior que nenhum.
 
 // Atributos do <host>. A ordem é a mesma da saída, para facilitar a leitura.
 const HOST_ATRIBUTOS = [

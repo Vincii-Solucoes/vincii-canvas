@@ -625,6 +625,10 @@ app.post('/api/export.xml', (req, res) => {
   const fname = includeSecrets ? 'ssh-commander-config-com-segredos.xml' : 'ssh-commander-config.xml';
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  // Caractere de controle não cabe em XML 1.0 e é removido na geração. Avisar é
+  // o único conserto possível — sem isto o valor volta da restauração com
+  // aparência normal e conteúdo diferente.
+  if (buildXml.ultimosRemovidos) res.setHeader('X-Vincii-Removidos', String(buildXml.ultimosRemovidos));
   res.send(xml);
 });
 
@@ -645,11 +649,16 @@ function soDefinidos(obj) {
   return out;
 }
 
-function cleanVarsLenient(obj) {
+// `descartadas` recebe os nomes recusados, para o chamador poder contar ao
+// usuário. Sem isso, a importação dizia "0 ignorados" e a variável simplesmente
+// não existia do outro lado — enquanto o ramo das variáveis GLOBAIS, poucas
+// linhas abaixo, já reportava. Era inconsistência, não decisão.
+function cleanVarsLenient(obj, descartadas) {
   const out = {};
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
     for (const [k, v] of Object.entries(obj)) {
       if (VAR_NAME_RE.test(k)) out[k] = String(v);
+      else if (Array.isArray(descartadas)) descartadas.push(k);
     }
   }
   return out;
@@ -697,7 +706,9 @@ app.post('/api/import', (req, res) => {
     for (const p of asArray(body.profiles)) {
       const name = String((p && p.name) || '').trim();
       if (!name) continue;
-      const vars = cleanVarsLenient(p.vars);
+      const varsRuins = [];
+    const vars = cleanVarsLenient(p.vars, varsRuins);
+    for (const nome of varsRuins) summary.skipped.push(`perfil "${name}": variável ignorada por nome inválido: ${nome}`);
       const ex = d.profiles.find((x) => x.name === name);
       if (ex) { ex.vars = { ...(ex.vars || {}), ...vars }; summary.profiles.updated++; }
       else { d.profiles.push({ id: crypto.randomUUID(), name, vars }); summary.profiles.added++; }
@@ -723,7 +734,9 @@ app.post('/api/import', (req, res) => {
         if (a.passphrase) auth.passphrase = String(a.passphrase);
       }
       if (type === 'password' && a.password) auth.password = String(a.password);
-      const vars = cleanVarsLenient(h.vars);
+      const varsRuins = [];
+    const vars = cleanVarsLenient(h.vars, varsRuins);
+    for (const nome of varsRuins) summary.skipped.push(`"${name}": variável ignorada por nome inválido: ${nome}`);
       const protocol = protocolo;
       const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
       const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
