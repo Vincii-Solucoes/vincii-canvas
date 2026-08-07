@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildXml } = require('../lib/exportxml');
 const campos = require('../public/backup-campos');
+const agenda = require('../public/agenda');
 const proto = require('../public/protocolos');
 
 let n = 0;
@@ -53,6 +54,7 @@ const HOST_REF = {
   icon: 'windows',
   color: 'azul',
   vars: { PAPEL: 'dc' },
+  agenda: { dias: [6], inicio: '22:00', fim: '02:00' },
   rdpLegado: true,
   rdpLegadoOk: true,
 };
@@ -119,8 +121,38 @@ const HOST_REF = {
   }
 
   const xml = buildXml({ hosts: [HOST_REF] }, { includeSecrets: true });
-  ok(xml.includes('<auth'), 'auth vai como elemento filho');
   ok(xml.includes('<var name="PAPEL">dc</var>'), 'vars vão como elementos filhos');
+  // Genérico, e não um `ok` escrito à mão por filho: era assim que `agenda`
+  // entrou classificada em backup-campos.js e atravessou a suíte inteira sem
+  // que UMA linha conferisse se ela chegava ao arquivo. As três pernas abaixo
+  // (export, leitura, gravação) já valiam para os atributos; os filhos passavam
+  // por fora das três.
+  for (const f of campos.HOST_FILHOS) {
+    ok(xml.includes(`<${f}`), `o export perdeu o elemento filho "${f}"`);
+  }
+}
+
+// ---------- 2b. a agenda sobrevive de ponta a ponta, com o valor certo ----------
+
+// Conferir só a presença da tag não basta: o export grava os dias como texto
+// separado por vírgula (`dias="1,2,3"`) e o validador recebe isso de volta. Se
+// um dos lados mudar de formato — lista JSON, dias por extenso — a tag continua
+// lá e a agenda volta VAZIA da restauração, com o cadastro parecendo completo e
+// o host não abrindo no horário.
+{
+  const xml = buildXml({ hosts: [HOST_REF] }, {});
+  const tag = xml.split('\n').find((l) => l.includes('<agenda'));
+  ok(tag, 'a agenda foi para o arquivo');
+  const attr = (a) => (new RegExp(`${a}="([^"]*)"`).exec(tag) || [])[1];
+  // Exatamente o que o parser do navegador entrega à rota de importação.
+  const doArquivo = { dias: attr('dias'), inicio: attr('inicio'), fim: attr('fim') };
+  igual(agenda.normalizarAgenda(doArquivo), HOST_REF.agenda,
+    'a agenda restaurada precisa ser IDÊNTICA à que foi exportada');
+
+  // E um host sem agenda não pode ganhar uma tag vazia, que voltaria como erro
+  // de validação na importação.
+  const semAgenda = buildXml({ hosts: [{ ...HOST_REF, agenda: null }] }, {});
+  ok(!semAgenda.includes('<agenda'), 'host sem agenda não escreve a tag');
 }
 
 // ---------- 3. o parser do navegador lê tudo que o export escreve ----------
@@ -129,10 +161,19 @@ const HOST_REF = {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   const i = src.indexOf("root.querySelectorAll(':scope > hosts > host')");
   ok(i > 0, 'achei o trecho do parser de hosts em public/app.js');
-  const trecho = src.slice(i, i + 2000);
+  // O recorte vai até onde os PLAYBOOKS começam, e não a um número fixo de
+  // caracteres: com corte fixo, acrescentar campo empurrava o `vars` para fora
+  // da janela e o teste passava a acusar ausência de um campo que estava lá.
+  const fim = src.indexOf('playbooks: [...root.querySelectorAll', i);
+  ok(fim > i, 'achei o fim do bloco de hosts do parser');
+  const trecho = src.slice(i, fim);
   for (const a of campos.HOST_ATRIBUTOS) {
     ok(trecho.includes(`getAttribute('${a}')`),
       `o parser de importação NÃO lê o atributo "${a}" — foi assim que RDP virou SSH`);
+  }
+  for (const f of campos.HOST_FILHOS) {
+    ok(trecho.includes(`':scope > ${f}'`),
+      `o parser de importação NÃO lê o elemento filho "${f}" — ele volta vazio da restauração`);
   }
   for (const e of Object.keys(campos.HOST_EXCLUIDOS)) {
     ok(!trecho.includes(`getAttribute('${e}')`),
@@ -158,6 +199,12 @@ const HOST_REF = {
   for (const a of campos.HOST_ATRIBUTOS) {
     ok(new RegExp(`\\b${a}\\b`).test(atualiza), `o import não aplica "${a}" ao atualizar um host`);
     ok(new RegExp(`\\b${a}\\b`).test(cria), `o import não grava "${a}" ao criar um host`);
+  }
+  // `auth` e `vars` são montados com nomes próprios no upsert; os demais filhos
+  // entram pelo nome, igual aos atributos.
+  for (const f of campos.HOST_FILHOS) {
+    ok(new RegExp(`\\b${f}\\b`).test(atualiza), `o import não aplica "${f}" ao atualizar um host`);
+    ok(new RegExp(`\\b${f}\\b`).test(cria), `o import não grava "${f}" ao criar um host`);
   }
   // O invariante é sobre a LEITURA, não sobre a escrita: `fingerprint: null` no
   // caminho de criação é o app zerando o campo de propósito. O que não pode

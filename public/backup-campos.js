@@ -28,8 +28,9 @@ const HOST_ATRIBUTOS = [
 // para o arquivo não carregar campo morto.
 const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp', url: 'web' };
 
-// Vão como elementos filhos (<auth/> e <vars>), não como atributos.
-const HOST_FILHOS = ['auth', 'vars'];
+// Vão como elementos filhos (<auth/>, <agenda/> e <vars>), não como atributos.
+// `agenda` é um objeto com uma lista de dias dentro — não cabe num atributo só.
+const HOST_FILHOS = ['auth', 'agenda', 'vars'];
 
 // Fora do arquivo de propósito. O motivo fica junto: sem ele, o próximo a ler
 // isto vai "consertar" a ausência e reabrir um buraco de segurança.

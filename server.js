@@ -21,6 +21,9 @@ const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./l
 const { buildXml } = require('./lib/exportxml');
 const proto = require('./public/protocolos');
 const weburl = require('./public/weburl');
+const agendaLib = require('./public/agenda');
+const presenca = require('./lib/presenca');
+const termsessions = require('./lib/termsessions');
 const pkg = require('./package.json');
 
 const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e executa comandos
@@ -215,6 +218,43 @@ app.get('/api/local-info', (req, res) => {
     ? path.basename(process.env.COMSPEC || 'powershell.exe')
     : path.basename(process.env.SHELL || 'shell');
   res.json({ user, host, shell, platform: process.platform });
+});
+
+// ---------- coordenação entre janelas (agenda de hosts) ----------
+//
+// Um host com agenda precisa estar aberto durante a faixa de horário dele. Quem
+// cuida disso é a janela principal — mas ela só enxerga as próprias abas, e uma
+// aba solta numa janela separada é invisível para ela. Sem estas três rotas, um
+// host agendado e solto numa janela própria abriria uma conexão DUPLICADA a cada
+// tique do relógio.
+//
+// Nada aqui é persistido: é estado de tela, morre com o processo.
+
+// Batida de ponto: "esta janela existe e está mostrando estes hosts".
+app.post('/api/presenca', (req, res) => {
+  const b = req.body || {};
+  presenca.anunciar(b.janela, b.itens);
+  res.status(204).end();
+});
+
+// Aviso de fechamento (via sendBeacon). Só antecipa o que o prazo já faria —
+// por isso responde 204 mesmo para janela desconhecida.
+app.post('/api/presenca/sair', (req, res) => {
+  presenca.sair((req.body || {}).janela);
+  res.status(204).end();
+});
+
+// O que a janela principal precisa saber para decidir se abre algo:
+// quem está com o quê, e quais sessões de terminal estão vivas mas sem janela
+// (o caso de alguém ter fechado a janela solta — a sessão continua rodando e
+// precisa VOLTAR para a aba do Terminal, não morrer nem duplicar).
+app.get('/api/janelas', (req, res) => {
+  res.json({
+    presenca: presenca.listar(),
+    sessoes: termsessions.listar().map((s) => ({
+      id: s.id, hostId: s.hostId, rotulo: s.rotulo, ligada: s.ligada, orfa: !!s.orfaDesde,
+    })),
+  });
 });
 
 app.get('/api/prefs', (req, res) => res.json(uiPrefs()));
@@ -551,6 +591,7 @@ function publicHost(h) {
     group: h.group || '',
     icon: h.icon || '',
     color: h.color || '',
+    agenda: h.agenda || null,
     vars: h.vars || {},
     fingerprint: h.fingerprint || null,
     webCert: h.webCert || null,
@@ -605,7 +646,12 @@ function parseHostBody(body, res) {
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, auth, vars };
+  // A agenda é validada pelo MESMO módulo que o navegador usa (public/agenda.js).
+  // Duas validações separadas viravam duas regras: a tela aceitava 8:00 e o
+  // servidor recusava, ou pior, o contrário.
+  let agenda;
+  try { agenda = agendaLib.normalizarAgenda(body.agenda); } catch (e) { return fail(res, 400, e.message); }
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -746,6 +792,16 @@ app.post('/api/import', (req, res) => {
     const url = opcional(h.url, (v) => weburl.normalizarUrl(v) || '');
       const icon = opcional(h.icon, slug);
       const color = opcional(h.color, slug);
+      // Agenda mal formada no arquivo não pode derrubar a importação inteira: o
+      // XML é entrada de terceiro e as outras 800 entradas não têm culpa. Cai
+      // fora com aviso, igual ao que já se faz com variável de nome inválido.
+      let agenda;
+      try {
+        agenda = opcional(h.agenda, (v) => agendaLib.normalizarAgenda(v));
+      } catch (e) {
+        agenda = undefined;
+        summary.skipped.push(`"${name}": agenda ignorada — ${e.message}`);
+      }
       // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
       // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
       // deixaria um arquivo de terceiro apontar o host para outro servidor já
@@ -780,7 +836,7 @@ app.post('/api/import', (req, res) => {
         }
         // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
         // um arquivo sem a variável X não é motivo para apagar o X daqui.
-        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, auth }),
+        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, auth }),
           { vars: { ...(ex.vars || {}), ...vars } });
         summary.hosts.updated++;
       } else {
@@ -790,7 +846,8 @@ app.post('/api/import', (req, res) => {
         // webCert fica de fora pela mesma razão do fingerprint: é prova de
         // identidade aprendida NESTA máquina, não configuração.
         d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps,
-          rdpDomain: rdpDomain || '', url: url || '', group: group || '', icon: icon || '', color: color || '', auth, vars });
+          rdpDomain: rdpDomain || '', url: url || '', group: group || '', icon: icon || '', color: color || '',
+          agenda: agenda || null, auth, vars });
         summary.hosts.added++;
       }
     }

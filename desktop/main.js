@@ -158,6 +158,13 @@ if (!electronApp.requestSingleInstanceLock()) {
               nodeIntegration: false,
               sandbox: true,
               webviewTag: true,
+              // A janela solta bate ponto no servidor a cada 5 s para dizer
+              // "estou com este host". O Chromium estrangula temporizador de
+              // janela em segundo plano, e uma janela solta passa a vida em
+              // segundo plano — o prazo de 20 s do registro vencia com a janela
+              // VIVA, e a janela principal abria uma segunda conexão ao mesmo
+              // servidor, já travada pela agenda e impossível de fechar.
+              backgroundThrottling: false,
             },
           },
         };
@@ -281,7 +288,15 @@ if (!electronApp.requestSingleInstanceLock()) {
   });
 
   electronApp.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // Recria a PRINCIPAL, e não "qualquer janela".
+    //
+    // Com uma aba solta numa janela própria, fechar a principal deixava o app
+    // vivo e sem caminho de volta: a contagem nunca chegava a zero. E é a janela
+    // principal quem cuida da agenda dos hosts (a solta não abre nada por conta
+    // própria) — sem ela, a agenda simplesmente parava, e as sessões travadas
+    // ficavam órfãs sem ninguém para reatá-las.
+    if (!win || win.isDestroyed()) createWindow();
+    else win.show();
   });
 
   electronApp.on('window-all-closed', () => electronApp.quit());

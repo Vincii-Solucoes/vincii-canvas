@@ -246,6 +246,15 @@ function hostCard(h) {
   if (nv) el(meta, 'span', 'tag', `${nv} var(s)`);
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
   if (h.webCert) el(meta, 'span', 'tag', 'certificado autoassinado fixado');
+  // A agenda muda o comportamento do host sem aparecer em lugar nenhum fora do
+  // formulário de edição. Sem esta etiqueta, "por que este host abriu sozinho?"
+  // não teria resposta na tela.
+  if (h.agenda) {
+    const dentro = estaNaJanela(h.agenda, new Date());
+    const t = el(meta, 'span', 'tag' + (dentro ? ' tag-ativa' : ''),
+      `⏱ ${descreverAgenda(h.agenda)}${dentro ? ' — aberto agora' : ''}`);
+    t.title = 'Nestes horários o app mantém este host conectado e a aba não pode ser fechada.';
+  }
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
   btnConn.addEventListener('click', () => connectFromHosts(h.id));
@@ -384,6 +393,19 @@ function openHostModal(existing) {
         <label><span id="f_passwordLabel">Senha</span> <input id="f_password" type="password" autocomplete="new-password"></label>
         <p class="hint">A senha fica salva em data.json (permissão 600) nesta máquina. Prefira agente ou chave.</p>
       </div>
+    </fieldset>
+    <fieldset class="agenda-fs">
+      <legend>Manter conectado nestes horários (opcional)</legend>
+      <p class="hint">Nos dias e no horário marcados, o app <strong>abre este host sozinho</strong> e a aba
+        <strong>não pode ser fechada</strong> — o "×" some. Fora da faixa, nada muda: a aba continua aberta
+        e volta a ser fechável. Nada é derrubado no fim do período.</p>
+      <div id="f_agendaDias" class="agenda-dias"></div>
+      <div class="agenda-horas">
+        <label>Das <input id="f_agendaInicio" type="time"></label>
+        <label>até <input id="f_agendaFim" type="time"></label>
+        <button type="button" id="f_agendaLimpar" class="btn small">Não usar agenda</button>
+      </div>
+      <p id="f_agendaResumo" class="hint"></p>
     </fieldset>
     <label>Variáveis do host
       <textarea id="f_vars" rows="4" class="mono" placeholder="CHAVE=valor&#10;DATA_DIR=/srv/app"></textarea>
@@ -540,10 +562,68 @@ function openHostModal(existing) {
   $('#f_name').addEventListener('input', refreshAvatarPreview);
   refreshAvatarPreview();
 
+  // ----- agenda: dias da semana + faixa de horário -----
+  // A leitura do formulário devolve o formato CRU (dias como números, horas
+  // como texto). Quem decide se aquilo é uma agenda válida é normalizarAgenda,
+  // o mesmo módulo que o servidor usa — aqui só para dar o retorno na hora, sem
+  // esperar o submit voltar com erro.
+  const diasSel = new Set(((existing && existing.agenda) || {}).dias || []);
+  const gradeDias = $('#f_agendaDias');
+  const lerAgendaDoForm = () => ({
+    dias: [...diasSel],
+    inicio: $('#f_agendaInicio').value,
+    fim: $('#f_agendaFim').value,
+  });
+  const syncAgenda = () => {
+    const alvo = $('#f_agendaResumo');
+    try {
+      const a = normalizarAgenda(lerAgendaDoForm());
+      alvo.textContent = a
+        ? `${descreverAgenda(a)} — abre sozinho e não fecha nesse período.`
+        : 'Sem agenda: este host abre só quando você clicar nele.';
+      alvo.classList.remove('warn-hint');
+    } catch (e) {
+      alvo.textContent = e.message;
+      alvo.classList.add('warn-hint');
+    }
+  };
+  DIAS_CURTOS.forEach((curto, i) => {
+    const b = el(gradeDias, 'button', 'dia-btn' + (diasSel.has(i) ? ' on' : ''),
+      curto[0].toUpperCase() + curto.slice(1));
+    b.type = 'button'; // dentro de um <form>, o padrão é submit — clicaria "salvar"
+    b.title = DIAS_LONGOS[i];
+    b.setAttribute('aria-pressed', diasSel.has(i) ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if (diasSel.has(i)) diasSel.delete(i); else diasSel.add(i);
+      b.classList.toggle('on', diasSel.has(i));
+      b.setAttribute('aria-pressed', diasSel.has(i) ? 'true' : 'false');
+      syncAgenda();
+    });
+  });
+  $('#f_agendaInicio').value = ((existing && existing.agenda) || {}).inicio || '';
+  $('#f_agendaFim').value = ((existing && existing.agenda) || {}).fim || '';
+  $('#f_agendaInicio').addEventListener('input', syncAgenda);
+  $('#f_agendaFim').addEventListener('input', syncAgenda);
+  $('#f_agendaLimpar').addEventListener('click', () => {
+    diasSel.clear();
+    $$('#f_agendaDias .dia-btn').forEach((b) => {
+      b.classList.remove('on');
+      b.setAttribute('aria-pressed', 'false');
+    });
+    $('#f_agendaInicio').value = '';
+    $('#f_agendaFim').value = '';
+    syncAgenda();
+  });
+  syncAgenda();
+
   $('#modalForm').onsubmit = async (ev) => {
     ev.preventDefault();
     let vars;
     try { vars = textToVars($('#f_vars').value); } catch (e) { toast(e.message, 'erro'); return; }
+    // Agenda inválida é barrada aqui com a mesma mensagem que o servidor daria.
+    // Sem isto o formulário fechava e o erro só aparecia no toast — com o que
+    // foi digitado já perdido.
+    try { normalizarAgenda(lerAgendaDoForm()); } catch (e) { toast(e.message, 'erro'); return; }
     const checked = $$('input[name="authType"]').find((r) => r.checked);
     const authType = checked ? checked.value : 'agent';
     const body = {
@@ -558,6 +638,7 @@ function openHostModal(existing) {
       ftps: $('#f_ftps').value,
       rdpDomain: $('#f_rdpDomain').value,
       url: $('#f_url').value,
+      agenda: lerAgendaDoForm(),
       vars,
       auth: { type: authType },
     };
@@ -2087,6 +2168,7 @@ function xmlToConfig(text) {
       })),
       hosts: [...root.querySelectorAll(':scope > hosts > host')].map((h) => {
         const auth = h.querySelector(':scope > auth');
+        const ag = h.querySelector(':scope > agenda');
         return {
           name: h.getAttribute('name'),
           host: h.getAttribute('host'),
@@ -2116,6 +2198,13 @@ function xmlToConfig(text) {
             password: auth.getAttribute('password') || '',
             passphrase: auth.getAttribute('passphrase') || '',
           } : { type: 'agent' },
+          // Ausente no arquivo = "não sei", não "apague". Quem valida é o
+          // servidor, com o mesmo módulo que valida o cadastro manual.
+          agenda: ag ? {
+            dias: ag.getAttribute('dias') || '',
+            inicio: ag.getAttribute('inicio') || '',
+            fim: ag.getAttribute('fim') || '',
+          } : undefined,
           vars: varsOf(h.querySelector(':scope > vars')),
         };
       }),
@@ -2231,9 +2320,25 @@ async function importFromText(text) {
     ? `\n\nEstes playbooks JÁ EXISTEM e terão os comandos SUBSTITUÍDOS pelos do arquivo:\n• ${pbSubstituidos.join('\n• ')}`
     : '';
 
+  // A agenda é o ÚNICO campo do arquivo que faz o app agir por conta própria.
+  // Todo o resto que a importação planta (endereço, porta, senha, URL, domínio)
+  // fica inerte até você clicar; um host com agenda passa a conectar sozinho no
+  // horário — e a aba nasce sem o "×". É a mesma pergunta que tirou o
+  // fingerprint e o certificado do arquivo, e ela precisa ser feita na tela, não
+  // só no código.
+  const comAgenda = (c.hosts || []).filter((h) => h.agenda
+    && String((h.agenda.dias ?? '')).length && h.agenda.inicio && h.agenda.fim);
+  const notaAgenda = comAgenda.length
+    ? `\n\n⚠️ ${comAgenda.length} host(s) do arquivo trazem AGENDA: nos dias e horários`
+      + ' gravados neles, o app vai CONECTAR SOZINHO e a aba não poderá ser fechada'
+      + ` enquanto durar o período.\n• ${comAgenda.map((h) => `${h.name}: `
+      + `${h.agenda.dias} às ${h.agenda.inicio}–${h.agenda.fim}`).join('\n• ')}`
+      + '\nSe você não reconhece esses horários, cancele.'
+    : '';
+
   if (!confirm(`Importar deste arquivo:\n\n${linhas.join('\n')}\n\n`
     + 'Hosts e perfis com o mesmo nome e endereço são atualizados (variáveis são mescladas, nada é removido).'
-    + `${notaPb}${notaSegredo}\n\nContinuar?`)) return;
+    + `${notaPb}${notaAgenda}${notaSegredo}\n\nContinuar?`)) return;
 
   try {
     const r = await api('/api/import', { method: 'POST', body: c });
@@ -3022,7 +3127,11 @@ async function pedirConsentimentoLegado(session) {
   await loadState();
   toast(`${session.hostName}: reconectando em modo antigo…`, 'aviso');
   const { hostId, hostName, protocol } = session;
-  closeSession(session.id);
+  // `forcar`: esta sessão JÁ está encerrada (o consentimento é pedido depois de
+  // a conexão falhar) e vai ser substituída pela linha seguinte. Sem isto, num
+  // host com agenda a trava recusava o fechamento, a aba morta ficava na tela
+  // com cadeado e sem saída, e a reconexão logo abaixo criava uma segunda aba.
+  closeSession(session.id, { forcar: true });
   // Host de conexão rápida não está em state.hosts — openSession não o acha e
   // responde "Host não encontrado". Reabre pelo caminho de onde ele veio.
   if (state.hosts.some((x) => x.id === hostId)) openSession(hostId);
@@ -3342,6 +3451,14 @@ function closeSession(id, opts = {}) {
   const idx = sessions.findIndex((s) => s.id === id);
   if (idx < 0) return;
   const s = sessions[idx];
+  // A trava da agenda vale para QUALQUER caminho de fechamento, não só para o
+  // "×" que já sumiu da tela: atalho de teclado, código interno, o que for.
+  // `manterSessao` (soltar em janela própria) e `forcar` (substituir uma aba
+  // cuja conexão morreu) passam de propósito.
+  if (!opts.manterSessao && !opts.forcar && sessaoTravada(s)) {
+    toast(motivoDaTrava(s), 'aviso');
+    return;
+  }
   if (s.desk) { try { s.desk.desconectar(); } catch {} s.desk = null; }
   // fechar a aba precisa PARAR o agente daquela sessão: sem isto ele seguia
   // rodando no servidor e o EventSource ficava aberto para sempre
@@ -3371,6 +3488,7 @@ function closeSession(id, opts = {}) {
     renderHostSidebar();
   }
   ensureLocalTerminal(); // fechou a última remota? cai no terminal local
+  baterPonto(); // o registro de presença precisa saber que esta aba saiu
 }
 
 // Rótulo da aba: nome personalizado do usuário, senão o nome do host —
@@ -3420,6 +3538,10 @@ function soltarEmJanela(id) {
   // precisam concordar, e antes elas eram duas listas soltas em app.js.
   const janela = window.open(montarUrlSolta(s), '_blank');
   if (!janela) { toast('O app não conseguiu abrir a janela.', 'erro'); return; }
+  // Carência para a janela nova se anunciar antes de a agenda achar que o host
+  // ficou sem dono. Só importa para host com agenda, mas marcar sempre é mais
+  // barato que consultar o cadastro aqui.
+  if (s.hostId) entregandoParaOutraJanela.set(s.hostId, Date.now());
 
   // A aba daqui sai de cena SEM encerrar a sessão — quem manda nela agora é a
   // janela nova. Sem `manterSessao`, closeSession avisaria o servidor para
@@ -3428,6 +3550,230 @@ function soltarEmJanela(id) {
   toast(s.kind === 'term' && s.sessaoId
     ? 'Aba solta numa janela própria — a sessão continua de onde parou.'
     : 'Aba solta numa janela própria (reconectada).');
+}
+
+// ---------- agenda: manter o host aberto na faixa de horário dele ----------
+//
+// Um host pode ter dias da semana + horário em que a conexão precisa estar
+// aberta. Dentro da faixa o app abre a sessão sozinho e a aba não pode ser
+// fechada. Fora dela, nada muda.
+//
+// Quem cuida disso é SEMPRE a janela principal. Uma janela solta que também
+// cuidasse abriria o mesmo host de novo, dentro dela.
+
+// Identidade desta janela, para o registro de presença no servidor. Sem ela, a
+// janela principal não distingue "outra janela está com este host" de "eu mesma
+// estou com este host" — e, no segundo caso, nunca abriria nada.
+const JANELA_ID = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+  : 'j' + Date.now() + Math.random().toString(36).slice(2);
+
+const INTERVALO_AGENDA_MS = 10 * 1000;
+const INTERVALO_PONTO_MS = 5 * 1000;
+// As duas esperas (entrega para outra janela e retentativa) vivem em
+// public/agenda.js, junto com a decisão que as usa.
+
+const ultimaTentativaAgenda = new Map();
+let assinaturaAgenda = null;
+
+// Hosts que ACABARAM de sair daqui para uma janela nova.
+//
+// Entre o `window.open` e a primeira batida de ponto da janela nova existe um
+// intervalo em que ninguém declara o host: a aba já saiu daqui e a janela nova
+// ainda não carregou. Nesse instante a sessão de terminal está ÓRFÃ no servidor
+// — exatamente o sinal que a agenda usa para "trazer de volta". Sem esta
+// carência, soltar um host agendado numa janela própria fazia a janela
+// principal puxá-lo de volta antes de a janela nova terminar de abrir, e as
+// duas brigavam pela mesma sessão. A carência em si é ESPERA_ENTREGA_MS, em
+// public/agenda.js.
+const entregandoParaOutraJanela = new Map();
+
+function hostDaSessao(s) {
+  if (!s || !s.hostId || !state || !Array.isArray(state.hosts)) return null;
+  return state.hosts.find((h) => h.id === s.hostId) || null;
+}
+
+// A pergunta que decide se o "×" aparece. É recalculada a cada render e a cada
+// tique do relógio — a resposta muda sozinha com a passagem do tempo.
+//
+// Trava UMA aba por host, não todas.
+//
+// A promessa é "existe uma conexão aberta com este host durante a faixa", e uma
+// conexão basta para cumpri-la — a própria decisão da agenda se satisfaz com
+// qualquer sessão viva. Travar as demais só tirava do usuário o controle de abas
+// que ele mesmo abriu, e abrir várias abas do mesmo host é o caminho normal:
+// cada clique na barra lateral cria uma.
+//
+// A guardiã é a PRIMEIRA aba viva daquele host. Se ela morrer, a seguinte assume
+// no render seguinte, então nunca fica host agendado sem aba travada.
+function sessaoTravada(s) {
+  const h = hostDaSessao(s);
+  if (!h || !h.agenda || !estaNaJanela(h.agenda, new Date())) return false;
+  const guardia = sessions.find((x) => x.hostId === h.id && !sessaoMorta(x));
+  return !!guardia && guardia.id === s.id;
+}
+
+function motivoDaTrava(s) {
+  const h = hostDaSessao(s);
+  if (!h || !h.agenda) return '';
+  const fim = fimDaJanelaAtual(h.agenda, new Date());
+  const ate = fim
+    ? ` até ${fim.toLocaleString('pt-BR', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
+    : '';
+  return `Aberto pela agenda deste host (${descreverAgenda(h.agenda)})${ate}.`
+    + ' Não dá para fechar agora.';
+}
+
+// Bate o ponto: diz ao servidor que esta janela existe e o que está mostrando.
+// É o que impede a janela principal de abrir de novo um host que está numa
+// janela solta — ela não enxerga as abas das outras.
+// Uma aba está MORTA quando não há mais nada vivo por trás dela.
+//
+// Numa aba web, `status === 'encerrado'` significa outra coisa: que a ÚLTIMA
+// navegação de quadro principal falhou. O <webview> continua montado, vivo e
+// navegável — o usuário recarrega e volta. Tratá-la como morta fazia a
+// manutenção da agenda DESTRUIR uma aba viva e travada, com `forcar: true`
+// passando por cima do cadeado que a própria interface tinha acabado de mostrar.
+function sessaoMorta(s) {
+  return s.status === 'encerrado' && s.kind !== 'web';
+}
+
+function baterPonto() {
+  // Só o que está VIVO é anunciado.
+  //
+  // Anunciar aba morta congelava a agenda pela faixa inteira: a janela principal
+  // exige `status !== 'encerrado'` para as próprias abas, mas para as outras
+  // janelas aceitava qualquer hostId declarado. Uma aba caída numa janela solta
+  // seguia batendo ponto para sempre, e como a janela solta não reconecta nada,
+  // ninguém reabria — e em modo solo a barra de abas é escondida, então a aba
+  // morta era inalcançável até de dentro da própria janela.
+  const itens = sessions
+    .filter((s) => s.hostId && !sessaoMorta(s))
+    .map((s) => ({ hostId: s.hostId, kind: s.kind }));
+  api('/api/presenca', { method: 'POST', body: { janela: JANELA_ID, itens } }).catch(() => {});
+}
+
+// Aba de um host cuja conexão já morreu. Ela é substituída, não acumulada: numa
+// faixa de 8 horas com o servidor fora do ar seriam 480 abas mortas na tela.
+function fecharAbaMortaDoHost(hostId) {
+  for (const s of [...sessions]) {
+    if (s.hostId === hostId && sessaoMorta(s)) closeSession(s.id, { forcar: true });
+  }
+}
+
+let cicloAgendaEmCurso = false;
+
+async function manterAgendados() {
+  if (MODO_SOLO) return;
+  if (!state || !Array.isArray(state.hosts)) return;
+  // O ciclo tem um `await` no meio (a consulta de /api/janelas) e é disparado
+  // por temporizador, por visibilitychange e pelos testes. Sem esta guarda, dois
+  // ciclos sobrepostos passavam pela MESMA verificação de "ninguém está com este
+  // host" antes de qualquer um dos dois marcar a tentativa — e abriam duas
+  // conexões ao mesmo servidor.
+  if (cicloAgendaEmCurso) return;
+  cicloAgendaEmCurso = true;
+  try {
+    await cicloDaAgenda();
+  } finally {
+    cicloAgendaEmCurso = false;
+  }
+}
+
+async function cicloDaAgenda() {
+  const agora = new Date();
+  const agendados = state.hosts.filter((h) => h.agenda && estaNaJanela(h.agenda, agora));
+
+  // A trava entra e sai sozinha com o relógio. Sem redesenhar, o "×" continuaria
+  // na tela depois de entrar na faixa (e continuaria sumido depois de sair).
+  const assinatura = agendados.map((h) => h.id).join(',');
+  if (assinatura !== assinaturaAgenda) {
+    assinaturaAgenda = assinatura;
+    renderTermTabs();
+    // A etiqueta "⏱ … — aberto agora" do card do host também envelhece: ela é
+    // desenhada com o relógio do instante do render, e renderHosts só era
+    // chamada no loadState. Ficava mentindo até a próxima recarga.
+    renderHosts();
+  }
+  // Host que SAIU da faixa esquece a última tentativa. Isso faz o aviso na tela
+  // voltar a aparecer quando ele entrar na faixa de novo — e só então.
+  const dentro = new Set(agendados.map((h) => h.id));
+  for (const id of [...ultimaTentativaAgenda.keys()]) if (!dentro.has(id)) ultimaTentativaAgenda.delete(id);
+  if (!agendados.length) return;
+
+  let janelas;
+  try { janelas = await api('/api/janelas'); } catch { return; }
+  const presenca = janelas.presenca || [];
+  const noServidor = janelas.sessoes || [];
+
+  for (const h of agendados) {
+    // As regras (e a ORDEM delas) moram em public/agenda.js, com teste próprio.
+    // Aqui fica só o efeito colateral: abrir, reatar ou não fazer nada.
+    const d = decidirAcao({
+      hostId: h.id,
+      // `sessaoMorta` em vez de `status` cru: numa aba web "encerrado" quer dizer
+      // que a última navegação falhou, com o webview vivo — reabrir criaria uma
+      // aba a mais e destruiria a que está na tela.
+      minhas: sessions.map((s) => ({
+        hostId: s.hostId,
+        status: sessaoMorta(s) ? 'encerrado' : 'vivo',
+        sessaoId: s.sessaoId || null,
+      })),
+      presenca,
+      sessoes: noServidor,
+      janelaId: JANELA_ID,
+      entregueEm: entregandoParaOutraJanela.get(h.id) || 0,
+      ultimaTentativa: ultimaTentativaAgenda.get(h.id) || 0,
+      agora: Date.now(),
+    });
+    // Outra janela declarou este host: existe prova de que a entrega deu certo,
+    // e a carência cega deixa de fazer sentido. Descartá-la faz a sessão VOLTAR
+    // no primeiro tique depois de a janela solta fechar, em vez de esperar o
+    // resto dos 20 segundos.
+    if (d.assumida) entregandoParaOutraJanela.delete(h.id);
+    if (d.acao === 'nada') continue;
+
+    if (d.acao === 'reatar') {
+      fecharAbaMortaDoHost(h.id);
+      createSession({ hostId: h.id, hostName: h.name, reatarId: d.sessaoId });
+      baterPonto(); // declara já: até a próxima batida, outra janela abriria uma segunda
+      toast(`${h.name} voltou para o Terminal — a sessão continua de onde estava.`);
+      continue;
+    }
+
+    ultimaTentativaAgenda.set(h.id, Date.now());
+    fecharAbaMortaDoHost(h.id);
+    openSession(h.id);
+    baterPonto(); // idem: no modo web duas abas do app rodam duas agendas
+    // Só a PRIMEIRA tentativa desta entrada na faixa avisa na tela: um servidor
+    // fora do ar numa faixa de 8 horas geraria 480 avisos, e o estado da aba já
+    // conta a história a partir do primeiro.
+    if (d.primeira) toast(`${h.name} abriu pela agenda: ${descreverAgenda(h.agenda)}.`);
+  }
+}
+
+function iniciarAgenda() {
+  baterPonto();
+  setInterval(baterPonto, INTERVALO_PONTO_MS);
+  if (MODO_SOLO) {
+    // Uma janela solta nunca recarregava o cadastro: `state.hosts` congelava no
+    // instante da abertura. Isso decide errado a coisa mais cara que ela faz —
+    // se manda ou não `{t:'fim'}` ao fechar. Agenda criada depois de soltar e a
+    // janela mataria um shell que devia voltar; agenda removida depois e ela
+    // deixaria uma conexão viva sem tela, até o TTL.
+    setInterval(() => { loadState().catch(() => {}); }, 30 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { baterPonto(); loadState().catch(() => {}); }
+    });
+    return;
+  }
+  manterAgendados();
+  setInterval(manterAgendados, INTERVALO_AGENDA_MS);
+  // Voltar para o app depois de um tempo fora não pode esperar o próximo tique:
+  // o Chromium estrangula temporizador de janela em segundo plano, e um app
+  // minimizado a noite toda acordaria com a agenda parada.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { baterPonto(); manterAgendados(); }
+  });
 }
 
 // Numa janela solta, abre exatamente a sessão pedida e nada mais.
@@ -3448,6 +3794,9 @@ function abrirSolo() {
       reatarId: p.sessaoId,
     });
   }
+  // Anuncia na hora, sem esperar o próximo intervalo: até esta batida chegar, a
+  // janela principal não sabe que este host tem dono.
+  baterPonto();
 }
 
 function renderTermTabs() {
@@ -3478,9 +3827,13 @@ function renderTermTabs() {
       const pen = el(tab, 'span', 'tab-edit', '✎');
       pen.title = 'Renomear esta aba';
       pen.addEventListener('click', (e) => { e.stopPropagation(); startTabRename(s.id); });
-      const x = el(tab, 'span', 'tab-close', '×');
-      x.title = 'Fechar conexão';
-      x.addEventListener('click', (e) => { e.stopPropagation(); closeSession(s.id); });
+      // Dentro da faixa de horário da agenda o "×" não existe — não fica
+      // desabilitado, some. No lugar dele vai um cadeado que explica por quê,
+      // senão a aba pareceria quebrada.
+      const travada = sessaoTravada(s);
+      const x = el(tab, 'span', travada ? 'tab-trava' : 'tab-close', travada ? '🔒' : '×');
+      x.title = travada ? motivoDaTrava(s) : 'Fechar conexão';
+      if (!travada) x.addEventListener('click', (e) => { e.stopPropagation(); closeSession(s.id); });
       // Duplo clique detectado na mão: o 1º clique troca de aba e re-renderiza a
       // barra, destruindo o elemento — então o evento dblclick nativo nunca
       // dispararia. Comparando id + tempo, funciona mesmo com o re-render.
@@ -4493,7 +4846,18 @@ function init() {
   // solta deixaria o shell vivo no servidor até o TTL de órfã vencer — o
   // usuário fecha a janela e a conexão continua aberta no host por minutos.
   window.addEventListener('pagehide', () => {
+    // Sai do registro de presença na hora, em vez de esperar o prazo vencer —
+    // é o que faz a sessão voltar rápido para a janela principal.
+    try {
+      navigator.sendBeacon('/api/presenca/sair',
+        new Blob([JSON.stringify({ janela: JANELA_ID })], { type: 'application/json' }));
+    } catch {}
     for (const s of sessions) {
+      // Sessão travada pela agenda NÃO é encerrada ao fechar a janela: ela fica
+      // órfã de propósito, e a janela principal a traz de volta para uma aba do
+      // Terminal com o shell exatamente onde estava. É o "se ele for expandido,
+      // ao fechar a tela ele volta para o terminal".
+      if (sessaoTravada(s)) continue;
       try {
         if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ t: 'fim' }));
       } catch {}
@@ -4503,6 +4867,10 @@ function init() {
     .catch((e) => toast(e.message, 'erro'))
     .finally(() => {
       hideSplash(); // some a tela de carregamento quando os dados chegam
+      // Depois do loadState: a agenda precisa da lista de hosts para saber o que
+      // manter aberto, e o registro de presença precisa começar a bater ponto
+      // antes do primeiro tique da janela principal.
+      iniciarAgenda();
       // Janela solta: vai direto para a sessão pedida, sem mais nada na tela.
       if (MODO_SOLO) {
         try { document.querySelector('[data-tab="terminal"]').click(); } catch {}

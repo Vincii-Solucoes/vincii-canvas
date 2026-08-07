@@ -724,6 +724,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .term-tab .tab-dot.encerrado, .term-tab .tab-dot.erro { background: var(--red); }
 .term-tab .tab-close { color: var(--muted); font-size: 16px; line-height: 1; padding: 0 3px; border-radius: 4px; }
 .term-tab .tab-close:hover { color: var(--text); background: var(--border); }
+/* Ocupa o lugar do "×" enquanto a agenda do host está valendo. Cursor de ajuda
+   e não de clique: ele não fecha nada, só explica (no title) por que não dá. */
+.term-tab .tab-trava { font-size: 11px; line-height: 1; padding: 0 3px; cursor: help; opacity: .8; }
 /* lápis de renomear: discreto, aparece ao passar o mouse ou na aba ativa */
 .term-tab .tab-edit {
   color: var(--muted); font-size: 11px; line-height: 1; padding: 2px 3px; border-radius: 4px;
@@ -1049,6 +1052,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   background: color-mix(in srgb, var(--yellow) 22%, var(--panel)); color: var(--yellow);
 }
 .tag-warn { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: var(--yellow); }
+/* agenda valendo AGORA: o host está sendo mantido aberto neste instante */
+.tag-ativa { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); color: var(--accent-text); }
 .tag-global { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--accent-text); }
 .tag-host { background: color-mix(in srgb, var(--yellow) 16%, var(--panel)); color: var(--yellow); }
 .warn-hint {
@@ -1332,6 +1337,27 @@ body.term-full .term-grid.no-ai.no-sidebar {
 }
 .hist-periodo .small { color: var(--muted); }
 
+
+/* ---------- agenda do host: dias da semana + faixa de horário ---------- */
+.agenda-fs { margin-top: 4px; }
+.agenda-dias { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.dia-btn {
+  font: inherit; font-size: 12px; font-weight: 600; min-width: 46px;
+  padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+  transition: color .14s ease, border-color .14s ease, background-color .14s ease;
+}
+.dia-btn:hover { color: var(--text); border-color: var(--accent); }
+.dia-btn.on {
+  color: var(--accent-text); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.agenda-horas { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.agenda-horas label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.agenda-horas input[type="time"] {
+  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
 
 /* ---------- janela solta: uma sessão só, sem o resto da interface ---------- */
 /* A janela nasce para conter UMA aba. Some tudo que serve para navegar entre
