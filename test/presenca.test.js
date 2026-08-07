@@ -7,9 +7,15 @@
 // abre uma SEGUNDA conexão ao mesmo servidor — de novo a cada tique do relógio,
 // enquanto durar a faixa de horário.
 //
-// As duas propriedades que precisam valer sempre:
-//   - quem pergunta não pode enxergar o próprio reflexo (senão nada abre nunca);
-//   - janela que morreu de crash precisa sumir sozinha (senão nada reabre nunca).
+// Este arquivo cobre só o que o SERVIDOR faz: guardar quem anunciou o quê e
+// esquecer quem parou de anunciar. A decisão ("abro ou não abro?") é do
+// navegador e está em test/agenda-decisao.test.js — inclusive a regra de que
+// quem pergunta não pode contar a si mesmo.
+//
+// As asserções abaixo são todas sobre `listar()`, que é exatamente o que a rota
+// GET /api/janelas devolve. Uma versão anterior testava um `mostrandoPorOutra`
+// que nenhuma linha do app chamava: treze verificações verdes sobre código
+// morto.
 
 const assert = require('assert');
 const p = require('../lib/presenca');
@@ -19,59 +25,49 @@ const ok = (c, m) => { assert.ok(c, m); n += 1; };
 const naoOk = (c, m) => { assert.ok(!c, m); n += 1; };
 const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
 
-const T0 = 1_000_000;
+const T = 1_000_000;
+const tem = (hostId, agora) => p.listar(agora).some((x) => x.hostId === hostId);
 
 // ---------- o caso que motiva o módulo ----------
 
 {
   p.limpar();
   // A janela solta anuncia o host RDP que está exibindo.
-  p.anunciar('janela-solta', [{ hostId: 'h-rdp', kind: 'desk' }], T0);
-
-  ok(p.mostrandoPorOutra('h-rdp', 'janela-principal', T0),
-    'a principal precisa VER o host que está na janela solta — é isso que a impede '
-    + 'de abrir uma segunda conexão ao mesmo servidor');
-  naoOk(p.mostrandoPorOutra('h-outro', 'janela-principal', T0),
-    'um host que ninguém mostra continua livre para abrir');
-}
-
-{
-  p.limpar();
-  // A armadilha: a própria janela anuncia o que está mostrando. Se ela se
-  // enxergasse na consulta, concluiria que "já tem alguém" e nunca abriria nada.
-  p.anunciar('eu', [{ hostId: 'h1', kind: 'term' }], T0);
-  naoOk(p.mostrandoPorOutra('h1', 'eu', T0), 'quem pergunta não conta a si mesmo');
-  ok(p.mostrandoPorOutra('h1', 'outra', T0), 'mas conta para as demais');
+  p.anunciar('janela-solta', [{ hostId: 'h-rdp', kind: 'desk' }], T);
+  igual(p.listar(T), [{ janela: 'janela-solta', hostId: 'h-rdp', kind: 'desk' }],
+    'a janela principal precisa CONSEGUIR VER o host que está na janela solta — '
+    + 'é este dado que a impede de abrir uma segunda conexão ao mesmo servidor');
+  naoOk(tem('h-outro', T), 'um host que ninguém mostra não aparece');
 }
 
 // ---------- janela que morre sem avisar ----------
 
 {
   p.limpar();
-  p.anunciar('vai-morrer', [{ hostId: 'h1', kind: 'web' }], T0);
-  ok(p.mostrandoPorOutra('h1', 'x', T0), 'viva, aparece');
+  p.anunciar('vai-morrer', [{ hostId: 'h1', kind: 'web' }], T);
+  ok(tem('h1', T), 'viva, aparece');
 
   // Nenhuma batida desde então: um crash, um kill -9, a tampa do notebook.
-  ok(p.mostrandoPorOutra('h1', 'x', T0 + p.TTL_MS), 'no limite do prazo ainda vale');
-  naoOk(p.mostrandoPorOutra('h1', 'x', T0 + p.TTL_MS + 1),
+  ok(tem('h1', T + p.TTL_MS), 'no limite do prazo ainda vale');
+  naoOk(tem('h1', T + p.TTL_MS + 1),
     'passado o prazo some sozinha — sem isto o host agendado nunca mais reabriria');
-  igual(p.listar(T0 + p.TTL_MS + 1), [], 'e sai do registro de vez');
+  igual(p.listar(T + p.TTL_MS + 1), [], 'e sai do registro de vez');
 }
 
 {
   p.limpar();
   // Bater o ponto renova o prazo.
-  p.anunciar('viva', [{ hostId: 'h1', kind: 'term' }], T0);
-  p.anunciar('viva', [{ hostId: 'h1', kind: 'term' }], T0 + p.TTL_MS - 1);
-  ok(p.mostrandoPorOutra('h1', 'x', T0 + p.TTL_MS + 1),
-    'quem continua batendo o ponto continua viva');
+  p.anunciar('viva', [{ hostId: 'h1', kind: 'term' }], T);
+  p.anunciar('viva', [{ hostId: 'h1', kind: 'term' }], T + p.TTL_MS - 1);
+  ok(tem('h1', T + p.TTL_MS + 1), 'quem continua batendo o ponto continua viva');
 }
 
 {
   p.limpar();
-  p.anunciar('sai-direito', [{ hostId: 'h1', kind: 'term' }], T0);
+  p.anunciar('sai-direito', [{ hostId: 'h1', kind: 'term' }], T);
   ok(p.sair('sai-direito'), 'o aviso de saída remove na hora');
-  naoOk(p.mostrandoPorOutra('h1', 'x', T0), 'sem esperar o prazo vencer');
+  naoOk(tem('h1', T), 'sem esperar o prazo vencer — é o que faz a sessão voltar rápido '
+    + 'para a janela principal quando a solta fecha');
   naoOk(p.sair('nunca-existiu'), 'sair de quem não existe não quebra');
 }
 
@@ -79,52 +75,63 @@ const T0 = 1_000_000;
 
 {
   p.limpar();
-  p.anunciar('j', [{ hostId: 'h1', kind: 'term' }, { hostId: 'h2', kind: 'term' }], T0);
-  ok(p.mostrandoPorOutra('h2', 'x', T0), 'as duas abas contam');
+  p.anunciar('j', [{ hostId: 'h1', kind: 'term' }, { hostId: 'h2', kind: 'term' }], T);
+  ok(tem('h2', T), 'as duas abas contam');
   // Usuário fechou a aba do h2: a batida seguinte não a inclui.
-  p.anunciar('j', [{ hostId: 'h1', kind: 'term' }], T0 + 1000);
-  naoOk(p.mostrandoPorOutra('h2', 'x', T0 + 1000),
+  p.anunciar('j', [{ hostId: 'h1', kind: 'term' }], T + 1000);
+  naoOk(tem('h2', T + 1000),
     'a batida SUBSTITUI a lista — senão uma aba fechada ficaria marcada para sempre '
     + 'e o host agendado nunca reabriria');
-  ok(p.mostrandoPorOutra('h1', 'x', T0 + 1000), 'a que ficou continua valendo');
+  ok(tem('h1', T + 1000), 'a que ficou continua valendo');
+}
+
+{
+  p.limpar();
+  // Duas janelas com o MESMO host aparecem as duas: quem cruza os dados é o
+  // navegador, e ele precisa saber de qual janela cada linha veio.
+  p.anunciar('j1', [{ hostId: 'h1', kind: 'term' }], T);
+  p.anunciar('j2', [{ hostId: 'h1', kind: 'term' }], T);
+  igual(p.listar(T).map((x) => x.janela).sort(), ['j1', 'j2'],
+    'a janela de origem vai junto em cada linha — sem ela quem pergunta não '
+    + 'consegue descontar o próprio reflexo');
 }
 
 // ---------- entrada suja e limites ----------
 
 {
   p.limpar();
-  naoOk(p.anunciar('', [{ hostId: 'h1' }], T0), 'janela sem id é recusada');
-  naoOk(p.anunciar(null, [{ hostId: 'h1' }], T0), 'nem null');
-  igual(p.listar(T0), [], 'e nada entra no registro');
+  naoOk(p.anunciar('', [{ hostId: 'h1' }], T), 'janela sem id é recusada');
+  naoOk(p.anunciar(null, [{ hostId: 'h1' }], T), 'nem null');
+  igual(p.listar(T), [], 'e nada entra no registro');
 
-  ok(p.anunciar('j', 'não é lista', T0), 'itens de tipo errado não derrubam a rota');
-  igual(p.listar(T0), [], 'só não registram nada');
+  ok(p.anunciar('j', 'não é lista', T), 'itens de tipo errado não derrubam a rota');
+  igual(p.listar(T), [], 'só não registram nada');
 
-  p.anunciar('j2', [{ hostId: '', kind: 'term' }, { hostId: 'h1' }, null], T0);
-  igual(p.listar(T0), [{ janela: 'j2', hostId: 'h1', kind: 'term' }],
+  p.anunciar('j2', [{ hostId: '', kind: 'term' }, { hostId: 'h1' }, null], T);
+  igual(p.listar(T), [{ janela: 'j2', hostId: 'h1', kind: 'term' }],
     'item sem hostId e item nulo são descartados; kind ausente vira term');
 
   p.limpar();
-  p.anunciar('j3', [{ hostId: 'h1', kind: 'inventado' }], T0);
-  igual(p.listar(T0)[0].kind, 'term', 'tipo desconhecido cai no padrão em vez de passar adiante');
+  p.anunciar('j3', [{ hostId: 'h1', kind: 'inventado' }], T);
+  igual(p.listar(T)[0].kind, 'term', 'tipo desconhecido cai no padrão em vez de passar adiante');
 }
 
 {
   p.limpar();
   // O id vem do cliente: um laço de requisições não pode encher a memória.
-  for (let i = 0; i < p.MAX_JANELAS + 5; i++) p.anunciar('j' + i, [{ hostId: 'h' + i }], T0 + i);
-  ok(p.listar(T0 + 100).length <= p.MAX_JANELAS, `no máximo ${p.MAX_JANELAS} janelas`);
+  for (let i = 0; i < p.MAX_JANELAS + 5; i++) p.anunciar('j' + i, [{ hostId: 'h' + i }], T + i);
+  ok(p.listar(T + 100).length <= p.MAX_JANELAS, `no máximo ${p.MAX_JANELAS} janelas`);
   // A mais NOVA precisa sobreviver: ela é a que acabou de abrir e cuja invisibilidade
   // causaria justamente a conexão duplicada.
-  ok(p.mostrandoPorOutra('h' + (p.MAX_JANELAS + 4), 'x', T0 + 100),
+  ok(tem('h' + (p.MAX_JANELAS + 4), T + 100),
     'ao lotar, despeja a mais antiga e mantém a recém-chegada');
 }
 
 {
   p.limpar();
   const muitos = Array.from({ length: 200 }, (_, i) => ({ hostId: 'h' + i, kind: 'term' }));
-  p.anunciar('j', muitos, T0);
-  ok(p.listar(T0).length <= 60, 'a lista de uma janela tem teto');
+  p.anunciar('j', muitos, T);
+  ok(p.listar(T).length <= 60, 'a lista de uma janela tem teto');
 }
 
 console.log(`\n${n} verificações passaram`);
