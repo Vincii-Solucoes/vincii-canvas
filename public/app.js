@@ -295,6 +295,25 @@ function syncAuthFields() {
   $('#authPassFields').hidden = type !== 'password';
 }
 
+// Esconde ou mostra um campo do formulário, tirando e devolvendo o `required`.
+//
+// O modal é um <form> de verdade: um campo `required` OCULTO faz o navegador
+// recusar o submit — e recusar EM SILÊNCIO, porque não há como focar o campo
+// para mostrar a mensagem. O formulário simplesmente parava de salvar, sem erro
+// nenhum na tela. Passando por aqui, esconder um campo nunca mais trava o
+// formulário, valha para qual campo for.
+function mostrarCampo(elemento, visivel) {
+  if (!elemento) return;
+  const caixa = elemento.closest('label') || elemento;
+  caixa.hidden = !visivel;
+  if (visivel) {
+    if (elemento.dataset.eraObrigatorio === '1') elemento.required = true;
+  } else {
+    elemento.dataset.eraObrigatorio = elemento.required ? '1' : '0';
+    elemento.required = false;
+  }
+}
+
 function openHostModal(existing) {
   openModal(existing ? 'Editar host' : 'Novo host', `
     <div class="grid2">
@@ -310,8 +329,8 @@ function openHostModal(existing) {
           <option value="web">Página web (gerência de roteador, painel)</option>
         </select>
       </label>
-      <label id="f_urlWrap" hidden>URL
-        <input id="f_url" placeholder="ex.: 192.168.1.1 ou https://roteador:8443/admin">
+      <label id="f_urlWrap">URL
+        <input id="f_url" required placeholder="ex.: 192.168.1.1 ou https://roteador:8443/admin">
       </label>
       <label id="f_rdpDomainWrap" hidden>Domínio (opcional)
         <input id="f_rdpDomain" placeholder="ex.: EMPRESA">
@@ -395,12 +414,12 @@ function openHostModal(existing) {
     $('#f_rdpDomainWrap').hidden = !isRdp;
     // Numa página web quem define endereço e porta é a URL — os campos de host
     // e porta saem de cena para não haver dois lugares dizendo a mesma coisa.
+    // Numa página web quem define endereço e porta é a URL — os campos de host
+    // e porta saem de cena para não haver dois lugares dizendo a mesma coisa.
     const isWeb = proto === 'web';
-    $('#f_urlWrap').hidden = !isWeb;
-    const hostWrap = $('#f_host').closest('label');
-    const portWrap = $('#f_port').closest('label');
-    if (hostWrap) hostWrap.hidden = isWeb;
-    if (portWrap) portWrap.hidden = isWeb;
+    mostrarCampo($('#f_url'), isWeb);
+    mostrarCampo($('#f_host'), !isWeb);
+    mostrarCampo($('#f_port'), !isWeb);
     $('#f_rdpLegadoNota').hidden = !isRdp;
     $('#f_telaCredNota').hidden = !(isRdp || isVnc);
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
