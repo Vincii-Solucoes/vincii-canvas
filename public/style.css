@@ -1340,18 +1340,7 @@ body.term-full .term-grid.no-ai.no-sidebar {
 
 /* ---------- agenda do host: dias da semana + faixa de horário ---------- */
 .agenda-fs { margin-top: 4px; }
-.agenda-dias { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.dia-btn {
-  font: inherit; font-size: 12px; font-weight: 600; min-width: 46px;
-  padding: 6px 10px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border); background: var(--panel); color: var(--muted);
-  transition: color .14s ease, border-color .14s ease, background-color .14s ease;
-}
-.dia-btn:hover { color: var(--text); border-color: var(--accent); }
-.dia-btn.on {
-  color: var(--accent-text); border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
+.agenda-horas { margin-top: 8px; }
 .agenda-horas { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .agenda-horas label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .agenda-fimdia { gap: 5px; white-space: nowrap; color: var(--muted); }

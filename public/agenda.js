@@ -1,6 +1,6 @@
 'use strict';
 
-// Agenda de um host: dias da semana + faixa de horário em que a conexão dele
+// Agenda de um host: a faixa de horário, TODO DIA, em que a conexão dele
 // precisa ficar aberta.
 //
 // Durante a faixa o app abre a sessão sozinho e ela não pode ser fechada — o
@@ -8,19 +8,22 @@
 // fechável. Nada é derrubado automaticamente no fim do período; interromper um
 // comando em execução seria pior do que deixar uma aba a mais na tela.
 //
+// Houve uma seleção de dias da semana aqui, removida a pedido. Ela ainda pode
+// aparecer em dado gravado (data.json de uma versão anterior, ou um backup .xml
+// exportado por ela): `normalizarAgenda` IGNORA o campo em vez de recusar, e a
+// faixa passa a valer todo dia. Recusar transformaria um backup legítimo em erro
+// de importação; e apagar em silêncio sem dizer nada seria pior ainda, então
+// quem importa vê no diálogo que a faixa vale todo dia.
+//
 // Tudo aqui é horário LOCAL da máquina. O app é local por definição (o servidor
 // escuta só em 127.0.0.1), então o relógio de quem usa é o relógio certo — e
 // converter para UTC só criaria uma discrepância na virada do horário de verão.
 //
-// A regra que mais dá errado é a faixa que ATRAVESSA A MEIA-NOITE (22:00–02:00,
+// O caso que mais dá errado é a faixa que ATRAVESSA A MEIA-NOITE (22:00–02:00,
 // uma janela de manutenção típica). Nela a comparação ingênua
 // `minutos >= inicio && minutos < fim` é sempre falsa, e a agenda simplesmente
 // nunca abriria. O tratamento está em `estaNaJanela` e é o motivo de este
 // módulo existir separado, com teste próprio.
-
-// 0 = domingo, igual a Date#getDay().
-const DIAS_CURTOS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-const DIAS_LONGOS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 
 const RE_HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -66,36 +69,13 @@ function normalizarAgenda(bruto) {
   if (typeof bruto !== 'object' || Array.isArray(bruto)) {
     throw new Error('Agenda inválida.');
   }
-  // Os dias chegam como lista (do formulário) ou como texto separado por vírgula
-  // (do XML de backup). Separadores vazios são descartados; QUALQUER outro
-  // conteúdo é recusado com erro.
-  //
-  // Recusar é o ponto. Antes, `Number(String(d).trim())` convertia e um filtro
-  // silencioso jogava fora o que não fosse 0..6 — só que `Number('')` é ZERO, um
-  // dia perfeitamente válido. Efeito medido: `dias=""` virava `[0]` e o host
-  // passava a abrir sozinho aos DOMINGOS, e `dias="1,,3"` virava `[0,1,3]` —
-  // domingo de brinde num arquivo que só pedia segunda e quarta. Nada estourava,
-  // nada aparecia no resumo da importação, e o cadastro na tela parecia normal.
-  const brutos = Array.isArray(bruto.dias) ? bruto.dias
-    : (typeof bruto.dias === 'string' ? bruto.dias.split(',') : []);
-  const fichas = brutos.map((d) => String(d).trim()).filter((t) => t !== '');
   const inicioBruto = String(bruto.inicio || '').trim();
   const fimBruto = String(bruto.fim || '').trim();
-  // Agenda vazia (nenhum dia marcado e sem horário) é o mesmo que não ter
-  // agenda: é assim que o formulário desliga o recurso.
-  if (!fichas.length && !inicioBruto && !fimBruto) return null;
+  // Sem horário nenhum é o mesmo que não ter agenda: é assim que o formulário
+  // desliga o recurso. Um `dias` remanescente de versão antiga não segura a
+  // agenda viva sozinho — sem horário não há faixa.
+  if (!inicioBruto && !fimBruto) return null;
 
-  const dias = [];
-  for (const f of fichas) {
-    if (!/^[0-6]$/.test(f)) {
-      throw new Error(`Dia da semana inválido na agenda: "${f}". Use 0 (domingo) a 6 (sábado).`);
-    }
-    if (!dias.includes(Number(f))) dias.push(Number(f));
-  }
-  dias.sort((a, b) => a - b);
-  if (!dias.length) {
-    throw new Error('Escolha pelo menos um dia da semana para manter o host aberto.');
-  }
   const inicio = emMinutos(inicioBruto);
   const fim = emMinutos(fimBruto, true); // só o fim aceita 24:00
   if (inicio === null || fim === null) {
@@ -103,8 +83,7 @@ function normalizarAgenda(bruto) {
       + '(ou marque "até o fim do dia" no lugar da hora de fim).');
   }
   // Início igual ao fim não descreve nada: pode ser "zero minuto" ou "o dia
-  // inteiro", e escolher por conta própria é chutar. Quem quer o dia todo
-  // escreve 00:00–24:00, que é exato — e é contínuo de verdade.
+  // inteiro", e escolher por conta própria é chutar.
   if (inicio === fim) {
     // A mensagem NÃO manda digitar 24:00: um <input type="time"> recusa esse
     // valor e deixa o campo vazio, então instruir a digitá-lo era mandar o
@@ -113,54 +92,36 @@ function normalizarAgenda(bruto) {
     throw new Error('A hora de fim precisa ser diferente da de início. '
       + 'Para o dia inteiro, comece em 00:00 e marque "até o fim do dia".');
   }
-  return { dias, inicio: inicioBruto, fim: fimBruto };
+  // `dias` sai de propósito: a forma canônica é só a faixa. O que vier gravado
+  // de antes é descartado aqui, num lugar só, em vez de sobreviver como campo
+  // morto que a próxima pessoa tentaria interpretar.
+  return { inicio: inicioBruto, fim: fimBruto };
 }
 
 // A pergunta que o app faz o tempo todo: agora está dentro da janela?
 function estaNaJanela(agenda, agora) {
   if (!agenda) return false;
-  const dias = agenda.dias || [];
   const ini = emMinutos(agenda.inicio);
   const fim = emMinutos(agenda.fim, true);
-  if (!dias.length || ini === null || fim === null || ini === fim) return false;
+  if (ini === null || fim === null || ini === fim) return false;
 
-  const d = agora.getDay();
   const min = agora.getHours() * 60 + agora.getMinutes();
-
-  if (ini < fim) return dias.includes(d) && min >= ini && min < fim;
-
-  // Faixa que atravessa a meia-noite. Ela PERTENCE AO DIA EM QUE COMEÇA: uma
-  // agenda de sábado 22:00–02:00 cobre sábado à noite e as duas primeiras horas
-  // de domingo, e não domingo à noite. Marcar "sábado" e ver a conexão abrir na
-  // noite de domingo seria o oposto do combinado.
-  const ontem = (d + 6) % 7;
-  return (dias.includes(d) && min >= ini) || (dias.includes(ontem) && min < fim);
+  // Faixa dentro do mesmo dia.
+  if (ini < fim) return min >= ini && min < fim;
+  // Faixa que atravessa a meia-noite (22:00–02:00): valendo todo dia, ela é
+  // simplesmente "depois do início OU antes do fim". Enquanto havia dias da
+  // semana era preciso decidir a QUEM a madrugada pertencia, e essa era a parte
+  // mais fácil de errar — some junto com os dias.
+  return min >= ini || min < fim;
 }
 
 // Texto curto para a tela ("Seg a Sex, 08:00–18:00"). Agrupar dias seguidos
 // evita o "seg, ter, qua, qui, sex" que ninguém lê.
 function descreverAgenda(agenda) {
-  if (!agenda || !(agenda.dias || []).length) return '';
-  const dias = [...agenda.dias].sort((a, b) => a - b);
-  let texto;
-  if (dias.length === 7) texto = 'Todo dia';
-  else if (dias.length === 5 && dias.join() === '1,2,3,4,5') texto = 'Seg a Sex';
-  else if (dias.length === 2 && dias.join() === '0,6') texto = 'Fim de semana';
-  else {
-    // Agrupa corridas de 3 dias ou mais: [1,2,3,4,6] vira "Seg a Qui, Sáb".
-    const partes = [];
-    let i = 0;
-    while (i < dias.length) {
-      let j = i;
-      while (j + 1 < dias.length && dias[j + 1] === dias[j] + 1) j += 1;
-      const nome = (k) => DIAS_CURTOS[dias[k]][0].toUpperCase() + DIAS_CURTOS[dias[k]].slice(1);
-      partes.push(j - i >= 2 ? `${nome(i)} a ${nome(j)}` : dias.slice(i, j + 1).map((_, k) => nome(i + k)).join(', '));
-      i = j + 1;
-    }
-    texto = partes.join(', ');
-  }
-  const vira = emMinutos(agenda.inicio) > emMinutos(agenda.fim, true) ? ' (vira o dia)' : '';
-  return `${texto}, ${agenda.inicio}–${agenda.fim}${vira}`;
+  if (!agenda || !agenda.inicio || !agenda.fim) return '';
+  const vira = emMinutos(agenda.inicio) > emMinutos(agenda.fim, true)
+    ? ' (todo dia, virando a madrugada)' : ' (todo dia)';
+  return `${agenda.inicio}–${agenda.fim}${vira}`;
 }
 
 // Quando a janela ATUAL termina. Serve para dizer ao usuário, no lugar do "×"
@@ -261,13 +222,11 @@ if (typeof window !== 'undefined') {
   window.estaNaJanela = estaNaJanela;
   window.descreverAgenda = descreverAgenda;
   window.fimDaJanelaAtual = fimDaJanelaAtual;
-  window.DIAS_CURTOS = DIAS_CURTOS;
-  window.DIAS_LONGOS = DIAS_LONGOS;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     normalizarAgenda, estaNaJanela, descreverAgenda, fimDaJanelaAtual, decidirAcao,
-    FIM_DO_DIA, ESPERA_ENTREGA_MS, ESPERA_ENTRE_TENTATIVAS_MS, DIAS_CURTOS, DIAS_LONGOS,
+    FIM_DO_DIA, ESPERA_ENTREGA_MS, ESPERA_ENTRE_TENTATIVAS_MS,
   };
 }

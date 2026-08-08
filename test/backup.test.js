@@ -54,7 +54,7 @@ const HOST_REF = {
   icon: 'windows',
   color: 'azul',
   vars: { PAPEL: 'dc' },
-  agenda: { dias: [6], inicio: '22:00', fim: '02:00' },
+  agenda: { inicio: '22:00', fim: '02:00' },
   rdpLegado: true,
   rdpLegadoOk: true,
 };
@@ -146,12 +146,12 @@ const HOST_REF = {
 
 // ---------- 2b. o formato da agenda no arquivo casa com o validador ----------
 
-// Conferir só a presença da tag não basta: o export grava os dias como texto
-// separado por vírgula (`dias="1,2,3"`) e é `normalizarAgenda` — a MESMA função
-// que a rota de importação chama — que recebe isso de volta. Se um dos lados
-// mudar de formato (lista JSON, dias por extenso), a tag continua lá e a agenda
-// volta VAZIA da restauração, com o cadastro parecendo completo e o host não
-// abrindo no horário.
+// Conferir só a presença da tag não basta: o export grava as horas como texto
+// ("22:00") e é `normalizarAgenda` — a MESMA função que a rota de importação
+// chama — que recebe isso de volta. Se um dos lados mudar de formato (minutos
+// desde a meia-noite, ISO, 12 h com AM/PM), a tag continua lá e a agenda volta
+// VAZIA da restauração, com o cadastro parecendo completo e o host não abrindo
+// no horário.
 //
 // O que este bloco NÃO faz: rodar a rota /api/import. Ela depende do express e
 // do store, e o caminho completo (export → parser do navegador → POST → estado)
@@ -163,7 +163,8 @@ const HOST_REF = {
   ok(tag, 'a agenda foi para o arquivo');
   const attr = (a) => (new RegExp(`${a}="([^"]*)"`).exec(tag) || [])[1];
   // Exatamente o que o parser do navegador entrega à rota de importação.
-  const doArquivo = { dias: attr('dias'), inicio: attr('inicio'), fim: attr('fim') };
+  const doArquivo = { inicio: attr('inicio'), fim: attr('fim') };
+  ok(!/dias=/.test(tag), 'o arquivo não escreve mais dias da semana');
   igual(agenda.normalizarAgenda(doArquivo), HOST_REF.agenda,
     'o que o validador entende do arquivo precisa ser IDÊNTICO ao que foi exportado');
 

@@ -253,7 +253,7 @@ function hostCard(h) {
     const dentro = estaNaJanela(h.agenda, new Date());
     const t = el(meta, 'span', 'tag' + (dentro ? ' tag-ativa' : ''),
       `⏱ ${descreverAgenda(h.agenda)}${dentro ? ' — aberto agora' : ''}`);
-    t.title = 'Nestes horários o app mantém este host conectado e a aba não pode ser fechada.';
+    t.title = 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
   }
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
@@ -409,10 +409,9 @@ function openHostModal(existing) {
     </fieldset>
     <fieldset class="agenda-fs">
       <legend>Manter conectado nestes horários (opcional)</legend>
-      <p class="hint">Nos dias e no horário marcados, o app <strong>abre este host sozinho</strong> e a aba
+      <p class="hint">Neste horário, <strong>todo dia</strong>, o app <strong>abre este host sozinho</strong> e a aba
         <strong>não pode ser fechada</strong> — o "×" some. Fora da faixa, nada muda: a aba continua aberta
         e volta a ser fechável. Nada é derrubado no fim do período.</p>
-      <div id="f_agendaDias" class="agenda-dias"></div>
       <div class="agenda-horas">
         <label>Das <input id="f_agendaInicio" type="time"></label>
         <label>até <input id="f_agendaFim" type="time"></label>
@@ -584,15 +583,12 @@ function openHostModal(existing) {
   $('#f_name').addEventListener('input', refreshAvatarPreview);
   refreshAvatarPreview();
 
-  // ----- agenda: dias da semana + faixa de horário -----
-  // A leitura do formulário devolve o formato CRU (dias como números, horas
-  // como texto). Quem decide se aquilo é uma agenda válida é normalizarAgenda,
-  // o mesmo módulo que o servidor usa — aqui só para dar o retorno na hora, sem
-  // esperar o submit voltar com erro.
-  const diasSel = new Set(((existing && existing.agenda) || {}).dias || []);
-  const gradeDias = $('#f_agendaDias');
+  // ----- agenda: a faixa de horário que vale todo dia -----
+  // A leitura do formulário devolve o formato CRU (horas como texto, com a caixa
+  // do fim do dia já resolvida). Quem decide se aquilo é uma agenda válida é
+  // normalizarAgenda, o mesmo módulo que o servidor usa — aqui só para dar o
+  // retorno na hora, sem esperar o submit voltar com erro.
   const lerAgendaDoForm = () => ({
-    dias: [...diasSel],
     inicio: $('#f_agendaInicio').value,
     // O fim do dia vem da caixa, porque "24:00" não sobrevive num input de hora.
     fim: $('#f_agendaFimDia').checked ? FIM_DO_DIA : $('#f_agendaFim').value,
@@ -615,19 +611,6 @@ function openHostModal(existing) {
       alvo.classList.add('warn-hint');
     }
   };
-  DIAS_CURTOS.forEach((curto, i) => {
-    const b = el(gradeDias, 'button', 'dia-btn' + (diasSel.has(i) ? ' on' : ''),
-      curto[0].toUpperCase() + curto.slice(1));
-    b.type = 'button'; // dentro de um <form>, o padrão é submit — clicaria "salvar"
-    b.title = DIAS_LONGOS[i];
-    b.setAttribute('aria-pressed', diasSel.has(i) ? 'true' : 'false');
-    b.addEventListener('click', () => {
-      if (diasSel.has(i)) diasSel.delete(i); else diasSel.add(i);
-      b.classList.toggle('on', diasSel.has(i));
-      b.setAttribute('aria-pressed', diasSel.has(i) ? 'true' : 'false');
-      syncAgenda();
-    });
-  });
   const fimSalvo = ((existing && existing.agenda) || {}).fim || '';
   $('#f_agendaInicio').value = ((existing && existing.agenda) || {}).inicio || '';
   $('#f_agendaFimDia').checked = fimSalvo === FIM_DO_DIA;
@@ -637,11 +620,6 @@ function openHostModal(existing) {
   $('#f_agendaFim').addEventListener('input', syncAgenda);
   $('#f_agendaFimDia').addEventListener('change', () => { syncFimDoDia(); syncAgenda(); });
   $('#f_agendaLimpar').addEventListener('click', () => {
-    diasSel.clear();
-    $$('#f_agendaDias .dia-btn').forEach((b) => {
-      b.classList.remove('on');
-      b.setAttribute('aria-pressed', 'false');
-    });
     $('#f_agendaInicio').value = '';
     $('#f_agendaFim').value = '';
     $('#f_agendaFimDia').checked = false;
@@ -2234,8 +2212,10 @@ function xmlToConfig(text) {
           } : { type: 'agent' },
           // Ausente no arquivo = "não sei", não "apague". Quem valida é o
           // servidor, com o mesmo módulo que valida o cadastro manual.
+          // `dias` não é lido: a agenda passou a valer todo dia. Um arquivo
+          // exportado pela versão que tinha dias da semana continua importando —
+          // a faixa dele passa a valer todos os dias, e o diálogo diz isso.
           agenda: ag ? {
-            dias: ag.getAttribute('dias') || '',
             inicio: ag.getAttribute('inicio') || '',
             fim: ag.getAttribute('fim') || '',
           } : undefined,
@@ -2360,13 +2340,12 @@ async function importFromText(text) {
   // horário — e a aba nasce sem o "×". É a mesma pergunta que tirou o
   // fingerprint e o certificado do arquivo, e ela precisa ser feita na tela, não
   // só no código.
-  const comAgenda = (c.hosts || []).filter((h) => h.agenda
-    && String((h.agenda.dias ?? '')).length && h.agenda.inicio && h.agenda.fim);
+  const comAgenda = (c.hosts || []).filter((h) => h.agenda && h.agenda.inicio && h.agenda.fim);
   const notaAgenda = comAgenda.length
-    ? `\n\n⚠️ ${comAgenda.length} host(s) do arquivo trazem AGENDA: nos dias e horários`
-      + ' gravados neles, o app vai CONECTAR SOZINHO e a aba não poderá ser fechada'
+    ? `\n\n⚠️ ${comAgenda.length} host(s) do arquivo trazem AGENDA: neste horário,`
+      + ' TODO DIA, o app vai CONECTAR SOZINHO e a aba não poderá ser fechada'
       + ` enquanto durar o período.\n• ${comAgenda.map((h) => `${h.name}: `
-      + `${h.agenda.dias} às ${h.agenda.inicio}–${h.agenda.fim}`).join('\n• ')}`
+      + `${h.agenda.inicio}–${h.agenda.fim}`).join('\n• ')}`
       + '\nSe você não reconhece esses horários, cancele.'
     : '';
 
