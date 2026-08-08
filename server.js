@@ -626,7 +626,11 @@ function parseHostBody(body, res) {
   const username = String(body.username || '').trim();
   // no Telnet o login é feito no próprio terminal do equipamento
   if (!username && protocol === 'ssh') return fail(res, 400, 'Informe o usuário SSH.');
-  const ftps = ['auto', 'yes', 'no'].includes(body.ftps) ? body.ftps : 'auto';
+  // 'confia' estava no <select> do formulário E implementado em lib/files.js
+  // (confiaCertificado), mas fora desta lista: escolher "confiando no
+  // certificado" gravava 'auto' em silêncio, e o usuário ficava sem a opção
+  // que a tela oferecia.
+  const ftps = proto.FTPS_MODOS.includes(body.ftps) ? body.ftps : 'auto';
 
   const a = body.auth || {};
   // Página web não autentica pelo app: quem pede usuário e senha é a página.
@@ -784,7 +788,7 @@ app.post('/api/import', (req, res) => {
     const vars = cleanVarsLenient(h.vars, varsRuins);
     for (const nome of varsRuins) summary.skipped.push(`"${name}": variável ignorada por nome inválido: ${nome}`);
       const protocol = protocolo;
-      const ftps = ['auto', 'yes', 'no'].includes(h.ftps) ? h.ftps : 'auto';
+      const ftps = proto.FTPS_MODOS.includes(h.ftps) ? h.ftps : 'auto';
       const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
       const rdpDomain = opcional(h.rdpDomain, (v) => String(v).trim().slice(0, 80));
     // A URL passa pela MESMA validação do cadastro manual: o arquivo importado

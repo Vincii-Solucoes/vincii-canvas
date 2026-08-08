@@ -1354,6 +1354,8 @@ body.term-full .term-grid.no-ai.no-sidebar {
 }
 .agenda-horas { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .agenda-horas label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.agenda-fimdia { gap: 5px; white-space: nowrap; color: var(--muted); }
+.agenda-horas input[type="time"]:disabled { opacity: .45; cursor: not-allowed; }
 .agenda-horas input[type="time"] {
   font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--panel); color: var(--text);

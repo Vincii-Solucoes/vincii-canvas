@@ -79,6 +79,18 @@ const HOST_REF = {
   igual(faltando, [],
     'parseHostBody devolve campo que o HOST_REF do teste não conhece — '
     + 'acrescente-o ao HOST_REF e classifique em backup-campos.js');
+
+  // E a volta. Sem ela a guarda era de mão única: APAGAR um campo de
+  // parseHostBody (o cadastro para de gravá-lo, o backup continua com a coluna
+  // vazia) atravessava a suíte inteira em verde, porque a lista derivada do
+  // código só encolhia. `id` e `fingerprint` nunca passaram por parseHostBody —
+  // são gerados/aprendidos e estão classificados como EXCLUÍDOS.
+  const naoSaoDoFormulario = new Set(Object.keys(campos.HOST_EXCLUIDOS));
+  const sumiram = [...campos.HOST_ATRIBUTOS, ...campos.HOST_FILHOS]
+    .filter((k) => !naoSaoDoFormulario.has(k) && !esperados.has(k));
+  igual(sumiram, [],
+    'backup-campos.js classifica um campo que parseHostBody NÃO devolve mais — '
+    + 'ou o cadastro parou de gravá-lo, ou a classificação ficou para trás');
 }
 
 // ---------- 1. nenhum campo fica órfão ----------
@@ -132,13 +144,19 @@ const HOST_REF = {
   }
 }
 
-// ---------- 2b. a agenda sobrevive de ponta a ponta, com o valor certo ----------
+// ---------- 2b. o formato da agenda no arquivo casa com o validador ----------
 
 // Conferir só a presença da tag não basta: o export grava os dias como texto
-// separado por vírgula (`dias="1,2,3"`) e o validador recebe isso de volta. Se
-// um dos lados mudar de formato — lista JSON, dias por extenso — a tag continua
-// lá e a agenda volta VAZIA da restauração, com o cadastro parecendo completo e
-// o host não abrindo no horário.
+// separado por vírgula (`dias="1,2,3"`) e é `normalizarAgenda` — a MESMA função
+// que a rota de importação chama — que recebe isso de volta. Se um dos lados
+// mudar de formato (lista JSON, dias por extenso), a tag continua lá e a agenda
+// volta VAZIA da restauração, com o cadastro parecendo completo e o host não
+// abrindo no horário.
+//
+// O que este bloco NÃO faz: rodar a rota /api/import. Ela depende do express e
+// do store, e o caminho completo (export → parser do navegador → POST → estado)
+// é exercitado contra o app empacotado, não aqui. O que se verifica aqui é o
+// acordo de FORMATO entre as duas pontas, que é onde o campo morre em silêncio.
 {
   const xml = buildXml({ hosts: [HOST_REF] }, {});
   const tag = xml.split('\n').find((l) => l.includes('<agenda'));
@@ -147,7 +165,7 @@ const HOST_REF = {
   // Exatamente o que o parser do navegador entrega à rota de importação.
   const doArquivo = { dias: attr('dias'), inicio: attr('inicio'), fim: attr('fim') };
   igual(agenda.normalizarAgenda(doArquivo), HOST_REF.agenda,
-    'a agenda restaurada precisa ser IDÊNTICA à que foi exportada');
+    'o que o validador entende do arquivo precisa ser IDÊNTICO ao que foi exportado');
 
   // E um host sem agenda não pode ganhar uma tag vazia, que voltaria como erro
   // de validação na importação.

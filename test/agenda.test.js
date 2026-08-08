@@ -135,13 +135,19 @@ ok(em(`${DOM}T12:00:00`).getDay() === 0, 'e a outra, domingo');
   lanca(() => normalizarAgenda({ dias: [1], inicio: '08:60', fim: '18:00' }),
     /HH:MM/, 'minuto impossível');
   lanca(() => normalizarAgenda({ dias: [1], inicio: '8:00', fim: '18:00' }),
-    /HH:MM/, 'sem o zero à esquerda não passa — a comparação é textual em outros pontos');
+    /HH:MM/, 'sem o zero à esquerda não passa: é o formato que o <input type="time"> '
+    + 'produz e o que o XML de backup grava, então aceitar variações só criaria '
+    + 'duas grafias para a mesma hora');
   lanca(() => normalizarAgenda({ dias: [1], inicio: '08:00', fim: '08:00' }),
     /diferente da de início/, 'início igual ao fim é ambíguo (zero minuto ou o dia todo?)');
-  ok(/24:00/.test((() => { try { normalizarAgenda({ dias: [1], inicio: '08:00', fim: '08:00' }); }
-    catch (e) { return e.message; } return ''; })()),
-    'e a mensagem recomenda 24:00 — recomendar 00:00–23:59 era mandar o usuário '
-    + 'configurar um buraco de um minuto por dia');
+  // A mensagem precisa apontar para um caminho que EXISTA na tela. Ela já
+  // recomendou 00:00–23:59 (um buraco de um minuto por dia) e depois "digite
+  // 24:00" — que um <input type="time"> recusa, deixando o campo vazio. Agora
+  // aponta para a caixa de marcação, e o texto não pode voltar a mandar digitar.
+  const msg = (() => { try { normalizarAgenda({ dias: [1], inicio: '08:00', fim: '08:00' }); }
+    catch (e) { return e.message; } return ''; })();
+  ok(/fim do dia/.test(msg), 'a mensagem aponta para "até o fim do dia"');
+  ok(!/24:00/.test(msg), 'e NÃO manda digitar 24:00 — o campo de hora não aceita esse valor');
   lanca(() => normalizarAgenda([1, 2]), /inválida/, 'array não é agenda');
   lanca(() => normalizarAgenda(7), /inválida/, 'número não é agenda');
 }

@@ -316,10 +316,23 @@ function mostrarCampo(elemento, visivel) {
   const caixa = elemento.closest('label') || elemento;
   caixa.hidden = !visivel;
   if (visivel) {
+    elemento.disabled = false;
     if (elemento.dataset.eraObrigatorio === '1') elemento.required = true;
   } else {
-    elemento.dataset.eraObrigatorio = elemento.required ? '1' : '0';
+    // A memória é gravada UMA vez. Sem esta guarda, esconder duas vezes seguidas
+    // (trocar o protocolo de ssh para telnet e de volta chama isto duas vezes)
+    // lia `required` já zerado pela primeira e gravava '0' por cima: o campo
+    // perdia a obrigatoriedade para sempre naquele formulário.
+    if (elemento.dataset.eraObrigatorio === undefined) {
+      elemento.dataset.eraObrigatorio = elemento.required ? '1' : '0';
+    }
     elemento.required = false;
+    // `required` não era a única regra capaz de travar o envio: min, max, step e
+    // pattern continuam valendo num campo escondido, e um `#f_port` fora da
+    // faixa recusava o submit sem ter como mostrar a mensagem — o mesmo silêncio
+    // que motivou esta função. `disabled` tira o campo da validação inteira, e o
+    // `.value` continua legível para quem monta o corpo da requisição.
+    elemento.disabled = true;
   }
 }
 
@@ -403,6 +416,12 @@ function openHostModal(existing) {
       <div class="agenda-horas">
         <label>Das <input id="f_agendaInicio" type="time"></label>
         <label>até <input id="f_agendaFim" type="time"></label>
+        <!-- "24:00" NÃO cabe num <input type="time">: o Chromium sanea o valor e
+             deixa o campo VAZIO. Sem esta caixa, a mensagem de erro mandava
+             digitar algo que o campo não aceita, e editar um host que já viesse
+             com 24:00 (de um backup) abria o campo em branco e travava o
+             salvamento. Quem escolhe o fim do dia é a caixa, não a digitação. -->
+        <label class="agenda-fimdia"><input type="checkbox" id="f_agendaFimDia"> até o fim do dia</label>
         <button type="button" id="f_agendaLimpar" class="btn small">Não usar agenda</button>
       </div>
       <p id="f_agendaResumo" class="hint"></p>
@@ -447,6 +466,9 @@ function openHostModal(existing) {
     mostrarCampo($('#f_user'), !isWeb);
     const fsAuth = $('#authFieldset');
     if (fsAuth) fsAuth.hidden = isWeb;
+    // Sem sessão para manter aberta, a agenda não teria o que fazer.
+    const fsAgenda = document.querySelector('.agenda-fs');
+    if (fsAgenda) fsAgenda.hidden = !PROTOCOLOS_SESSAO.includes(proto);
     $('#f_rdpLegadoNota').hidden = !isRdp;
     $('#f_telaCredNota').hidden = !(isRdp || isVnc);
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
@@ -572,8 +594,14 @@ function openHostModal(existing) {
   const lerAgendaDoForm = () => ({
     dias: [...diasSel],
     inicio: $('#f_agendaInicio').value,
-    fim: $('#f_agendaFim').value,
+    // O fim do dia vem da caixa, porque "24:00" não sobrevive num input de hora.
+    fim: $('#f_agendaFimDia').checked ? FIM_DO_DIA : $('#f_agendaFim').value,
   });
+  const syncFimDoDia = () => {
+    const ate = $('#f_agendaFimDia').checked;
+    $('#f_agendaFim').disabled = ate;
+    if (ate) $('#f_agendaFim').value = '';
+  };
   const syncAgenda = () => {
     const alvo = $('#f_agendaResumo');
     try {
@@ -600,10 +628,14 @@ function openHostModal(existing) {
       syncAgenda();
     });
   });
+  const fimSalvo = ((existing && existing.agenda) || {}).fim || '';
   $('#f_agendaInicio').value = ((existing && existing.agenda) || {}).inicio || '';
-  $('#f_agendaFim').value = ((existing && existing.agenda) || {}).fim || '';
+  $('#f_agendaFimDia').checked = fimSalvo === FIM_DO_DIA;
+  $('#f_agendaFim').value = fimSalvo === FIM_DO_DIA ? '' : fimSalvo;
+  syncFimDoDia();
   $('#f_agendaInicio').addEventListener('input', syncAgenda);
   $('#f_agendaFim').addEventListener('input', syncAgenda);
+  $('#f_agendaFimDia').addEventListener('change', () => { syncFimDoDia(); syncAgenda(); });
   $('#f_agendaLimpar').addEventListener('click', () => {
     diasSel.clear();
     $$('#f_agendaDias .dia-btn').forEach((b) => {
@@ -612,6 +644,8 @@ function openHostModal(existing) {
     });
     $('#f_agendaInicio').value = '';
     $('#f_agendaFim').value = '';
+    $('#f_agendaFimDia').checked = false;
+    syncFimDoDia();
     syncAgenda();
   });
   syncAgenda();
@@ -3623,9 +3657,6 @@ function motivoDaTrava(s) {
     + ' Não dá para fechar agora.';
 }
 
-// Bate o ponto: diz ao servidor que esta janela existe e o que está mostrando.
-// É o que impede a janela principal de abrir de novo um host que está numa
-// janela solta — ela não enxerga as abas das outras.
 // Uma aba está MORTA quando não há mais nada vivo por trás dela.
 //
 // Numa aba web, `status === 'encerrado'` significa outra coisa: que a ÚLTIMA
@@ -3637,6 +3668,9 @@ function sessaoMorta(s) {
   return s.status === 'encerrado' && s.kind !== 'web';
 }
 
+// Bate o ponto: diz ao servidor que esta janela existe e o que está mostrando.
+// É o que impede a janela principal de abrir de novo um host que já está numa
+// janela solta — ela não enxerga as abas das outras.
 function baterPonto() {
   // Só o que está VIVO é anunciado.
   //
@@ -3681,7 +3715,12 @@ async function manterAgendados() {
 
 async function cicloDaAgenda() {
   const agora = new Date();
-  const agendados = state.hosts.filter((h) => h.agenda && estaNaJanela(h.agenda, agora));
+  // FTP fica de fora: ele não abre sessão nenhuma (PROTOCOLOS_SESSAO o exclui), e
+  // openSession cairia no ramo de terminal — uma tentativa de SSH na porta 21 a
+  // cada minuto, pela faixa inteira, com o erro aparecendo numa aba nova.
+  const agendados = state.hosts.filter((h) => h.agenda
+    && PROTOCOLOS_SESSAO.includes(h.protocol || 'ssh')
+    && estaNaJanela(h.agenda, agora));
 
   // A trava entra e sai sozinha com o relógio. Sem redesenhar, o "×" continuaria
   // na tela depois de entrar na faixa (e continuaria sumido depois de sair).
@@ -4854,9 +4893,14 @@ function init() {
     } catch {}
     for (const s of sessions) {
       // Sessão travada pela agenda NÃO é encerrada ao fechar a janela: ela fica
-      // órfã de propósito, e a janela principal a traz de volta para uma aba do
-      // Terminal com o shell exatamente onde estava. É o "se ele for expandido,
+      // órfã de propósito, e a janela PRINCIPAL a traz de volta para uma aba do
+      // Terminal com o shell exatamente onde estava — é o "se ele for expandido,
       // ao fechar a tela ele volta para o terminal".
+      //
+      // Quando quem fecha é a própria janela principal, não há ninguém para
+      // reatar: a sessão fica viva no servidor até o TTL de órfã vencer (5 min).
+      // É o preço de não matar um shell que talvez devesse voltar, e some junto
+      // com o app no desktop, onde o servidor morre com ele.
       if (sessaoTravada(s)) continue;
       try {
         if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ t: 'fim' }));

@@ -100,14 +100,18 @@ function normalizarAgenda(bruto) {
   const fim = emMinutos(fimBruto, true); // só o fim aceita 24:00
   if (inicio === null || fim === null) {
     throw new Error('Informe a hora de início e a de fim no formato HH:MM '
-      + `(o fim também aceita ${FIM_DO_DIA}, para ir até o fim do dia).`);
+      + '(ou marque "até o fim do dia" no lugar da hora de fim).');
   }
   // Início igual ao fim não descreve nada: pode ser "zero minuto" ou "o dia
   // inteiro", e escolher por conta própria é chutar. Quem quer o dia todo
   // escreve 00:00–24:00, que é exato — e é contínuo de verdade.
   if (inicio === fim) {
+    // A mensagem NÃO manda digitar 24:00: um <input type="time"> recusa esse
+    // valor e deixa o campo vazio, então instruir a digitá-lo era mandar o
+    // usuário para um beco sem saída. Quem liga o fim do dia é a caixa de
+    // marcação do formulário.
     throw new Error('A hora de fim precisa ser diferente da de início. '
-      + `Para o dia inteiro, use 00:00 e ${FIM_DO_DIA}.`);
+      + 'Para o dia inteiro, comece em 00:00 e marque "até o fim do dia".');
   }
   return { dias, inicio: inicioBruto, fim: fimBruto };
 }
@@ -249,6 +253,7 @@ function decidirAcao({
 }
 
 if (typeof window !== 'undefined') {
+  window.FIM_DO_DIA = FIM_DO_DIA;
   window.decidirAcao = decidirAcao;
   window.ESPERA_ENTREGA_MS = ESPERA_ENTREGA_MS;
   window.ESPERA_ENTRE_TENTATIVAS_MS = ESPERA_ENTRE_TENTATIVAS_MS;
@@ -263,6 +268,6 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     normalizarAgenda, estaNaJanela, descreverAgenda, fimDaJanelaAtual, decidirAcao,
-    ESPERA_ENTREGA_MS, ESPERA_ENTRE_TENTATIVAS_MS, DIAS_CURTOS, DIAS_LONGOS,
+    FIM_DO_DIA, ESPERA_ENTREGA_MS, ESPERA_ENTRE_TENTATIVAS_MS, DIAS_CURTOS, DIAS_LONGOS,
   };
 }

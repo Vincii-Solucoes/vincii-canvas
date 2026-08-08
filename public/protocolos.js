@@ -45,6 +45,12 @@ function portaPadrao(p) {
 // não o oferece.
 const PROTOCOLOS_SESSAO = Object.keys(PROTOCOLOS).filter((p) => p !== 'ftp');
 
+// Modos de criptografia do FTP. Lista ÚNICA: ela viveu copiada no servidor
+// (duas vezes) e no <select> do formulário, e a cópia do servidor esqueceu
+// 'confia' — que existe em lib/files.js. A opção aparecia na tela, era
+// escolhida, e virava 'auto' na gravação.
+const FTPS_MODOS = ['auto', 'yes', 'confia', 'no'];
+
 // Protocolos que NÃO abrem terminal nem executam comando: só desenham algo numa
 // aba. O agente autônomo e a execução em lote precisam recusá-los.
 const SEM_TERMINAL = ['vnc', 'rdp', 'web'];
@@ -61,7 +67,7 @@ const PORTAS_PADRAO = Object.keys(PROTOCOLOS).map((p) => PROTOCOLOS[p].porta);
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    PROTOCOLOS, PROTOCOLO_PADRAO, PROTOCOLOS_SESSAO, PORTAS_PADRAO,
+    PROTOCOLOS, PROTOCOLO_PADRAO, PROTOCOLOS_SESSAO, FTPS_MODOS, PORTAS_PADRAO,
     SEM_TERMINAL, ehProtocolo, normalizarProtocolo, portaPadrao, ehTela,
   };
 }

@@ -121,10 +121,14 @@ const tem = (hostId, agora) => p.listar(agora).some((x) => x.hostId === hostId);
   // O id vem do cliente: um laço de requisições não pode encher a memória.
   for (let i = 0; i < p.MAX_JANELAS + 5; i++) p.anunciar('j' + i, [{ hostId: 'h' + i }], T + i);
   ok(p.listar(T + 100).length <= p.MAX_JANELAS, `no máximo ${p.MAX_JANELAS} janelas`);
-  // A mais NOVA precisa sobreviver: ela é a que acabou de abrir e cuja invisibilidade
-  // causaria justamente a conexão duplicada.
-  ok(tem('h' + (p.MAX_JANELAS + 4), T + 100),
-    'ao lotar, despeja a mais antiga e mantém a recém-chegada');
+  // A mais NOVA precisa sobreviver: ela é a que acabou de abrir e cuja
+  // invisibilidade causaria justamente a conexão duplicada.
+  ok(tem('h' + (p.MAX_JANELAS + 4), T + 100), 'a recém-chegada fica');
+  // E a mais ANTIGA é a que sai. A versão anterior deste teste AFIRMAVA isso na
+  // mensagem e só verificava a sobrevivente — recusar a nova em vez de despejar
+  // a velha passaria verde, e é exatamente o comportamento errado.
+  naoOk(tem('h0', T + 100), 'a mais antiga é a despejada');
+  ok(tem('h' + (p.MAX_JANELAS + 3), T + 100), 'e a penúltima também fica');
 }
 
 {
