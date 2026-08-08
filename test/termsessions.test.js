@@ -151,6 +151,31 @@ function comCanal(sessao) {
   criadas.forEach((s) => s.encerrar('limpeza'));
 }
 
+{
+  // O teto precisa valer TAMBÉM quando não há órfã para despejar.
+  //
+  // Antes, o despejo era um `if` que derrubava UMA órfã por chamada: criar mais
+  // rápido do que o despejo fazia o registro passar do teto e continuar
+  // crescendo. E com todas as sessões LIGADAS a alguma janela não havia órfã
+  // nenhuma — nada era despejado, nada impedia a criação, e o "teto" não era
+  // teto nenhum. Derrubar um terminal em uso para caber mais um seria pior, então
+  // o certo é RECUSAR, com erro, para quem pediu saber que não abriu.
+  const vivas = [];
+  for (let i = 0; i < ts.MAX_SESSOES; i++) {
+    const s = ts.criar({ rotulo: 'ligada-' + i });
+    comCanal(s);
+    s.atacar(socketFalso());   // ligada: não é candidata a despejo
+    vivas.push(s);
+  }
+  igual(ts.listar().length, ts.MAX_SESSOES, 'o registro está cheio, todas ligadas');
+  assert.throws(() => ts.criar({ rotulo: 'a mais' }), /[Ll]imite/,
+    'sem órfã para despejar, criar RECUSA em vez de estourar o teto em silêncio');
+  n += 1;
+  igual(ts.listar().length, ts.MAX_SESSOES, 'e o registro continua no teto, não acima');
+  ok(vivas.every((s) => !s.encerrada), 'nenhum terminal em uso foi derrubado para abrir espaço');
+  vivas.forEach((s) => s.encerrar('limpeza'));
+}
+
 // ---------- id não é adivinhável ----------
 
 {

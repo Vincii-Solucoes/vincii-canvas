@@ -44,7 +44,12 @@ const HOST_REF = {
   port: 3389,
   protocol: 'rdp',
   username: 'admin',
-  auth: { type: 'password', password: 'S3nh4!' },
+  // Os QUATRO atributos de <auth> juntos de propósito: a guarda de atributos de
+  // elemento filho deriva a lista do EXPORT, e o export só escreve o que existe.
+  // Com um auth só de senha, keyPath e passphrase não apareciam no arquivo de
+  // referência e ficavam fora da conferência — que foi como o parser pôde deixar
+  // de ler `keyPath` sem quebrar nada.
+  auth: { type: 'password', password: 'S3nh4!', keyPath: '~/.ssh/id_ed25519', passphrase: 'frase' },
   fingerprint: 'SHA256:abc',
   ftps: 'auto',
   rdpDomain: 'CORP',
@@ -190,9 +195,28 @@ const HOST_REF = {
     ok(trecho.includes(`getAttribute('${a}')`),
       `o parser de importação NÃO lê o atributo "${a}" — foi assim que RDP virou SSH`);
   }
+  // Exigir só o SELETOR do filho não bastava: o parser podia achar o <agenda> e
+  // ler `getAttribute('start')` em vez de `inicio`, e a suíte inteira passava
+  // verde. Medido com essa mutação exata: 129 + 82 verificações OK, e restaurar
+  // o próprio backup APAGAVA a agenda de todo host, respondendo
+  // {"hosts":{"updated":N},"skipped":[]} — zero avisos.
+  //
+  // Os atributos esperados de cada filho saem do EXPORT, não de uma lista à mão:
+  // é o export que define o contrato, e assim um atributo novo entra na guarda
+  // sozinho.
+  const xmlRef = buildXml({ hosts: [HOST_REF] }, { includeSecrets: true });
   for (const f of campos.HOST_FILHOS) {
     ok(trecho.includes(`':scope > ${f}'`),
       `o parser de importação NÃO lê o elemento filho "${f}" — ele volta vazio da restauração`);
+    if (f === 'vars') continue; // <vars> tem <var name=…> dentro, coberto por varsOf
+    const linhaFilho = xmlRef.split('\n').find((l) => l.trim().startsWith(`<${f}`)) || '';
+    const attrs = [...linhaFilho.matchAll(/\s([A-Za-z_][\w-]*)="/g)].map((m) => m[1]);
+    ok(attrs.length > 0, `achei os atributos de <${f}> no export`);
+    for (const a of attrs) {
+      ok(trecho.includes(`getAttribute('${a}')`),
+        `o export escreve <${f} ${a}="…"> e o parser NÃO lê "${a}" — o campo volta vazio da `
+        + 'restauração e, pior, pode APAGAR o valor que estava aqui');
+    }
   }
   for (const e of Object.keys(campos.HOST_EXCLUIDOS)) {
     ok(!trecho.includes(`getAttribute('${e}')`),

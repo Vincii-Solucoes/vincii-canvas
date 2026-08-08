@@ -175,10 +175,15 @@ const base = (extra = {}) => decidirAcao({
 // renderer da outra janela estar acordado.
 
 {
-  const d = base({ sessoes: [{ id: 'ts_1', hostId: 'h1', orfa: false, ligada: true }] });
+  const d = base({ sessoes: [{ hostId: 'h1', orfa: false, ligada: true }] });
   igual(d.acao, 'nada',
     'sessão com socket vivo no servidor é de ALGUÉM — não abrir uma segunda');
   igual(d.assumida, true, 'e isso também é prova de entrega concluída');
+  // A conta não depende de id nenhum: o servidor deixou de publicar o id de
+  // sessão VIVA, porque quem tem o id reata e rouba o shell (expulsa a janela
+  // atual e recebe os últimos 256 KB de saída). Contar responde a mesma pergunta
+  // sem entregar a chave.
+  ok(!('id' in d), 'a decisão não precisa de id de sessão viva');
 }
 
 {
@@ -191,19 +196,44 @@ const base = (extra = {}) => decidirAcao({
 }
 
 {
-  // A MINHA própria sessão não pode me bloquear: se a aba daqui morreu mas o
-  // socket ainda não caiu, quem manda é a regra 1 (que já a descartou).
+  // A MINHA própria sessão não pode me bloquear.
   const d = base({
-    minhas: [{ hostId: 'h1', status: 'encerrado', sessaoId: 'ts_1' }],
-    sessoes: [{ id: 'ts_1', hostId: 'h1', orfa: false, ligada: true }],
+    minhas: [{ hostId: 'h1', kind: 'term', status: 'conectado' }],
+    sessoes: [{ hostId: 'h1', orfa: false, ligada: true }],
   });
-  igual(d.acao, 'abrir',
-    'sessão ligada que é MINHA não conta como "outra janela" — senão uma aba morta '
-    + 'daqui travaria a agenda para sempre');
+  igual(d.acao, 'nada', 'com uma ligada no servidor e uma minha, a conta bate: é a minha');
+  igual(d.motivo, 'já está aberto nesta janela', 'e quem responde é a regra 1');
 }
 
 {
-  igual(base({ sessoes: [{ id: 'ts_1', hostId: 'h1', orfa: false, ligada: false }] }).acao,
+  // Duas ligadas no servidor e só uma minha: a segunda é de outra janela.
+  const d = base({
+    minhas: [{ hostId: 'h1', kind: 'term', status: 'conectado' }],
+    sessoes: [{ hostId: 'h1', ligada: true }, { hostId: 'h1', ligada: true }],
+  });
+  igual(d.acao, 'nada', 'sobra uma ligada que não é minha');
+
+  // Aba MORTA minha não entra na conta: senão uma sessão fantasma no servidor
+  // faria a agenda desistir de reabrir para sempre.
+  const d2 = base({
+    minhas: [{ hostId: 'h1', kind: 'term', status: 'encerrado' }],
+    sessoes: [],
+  });
+  igual(d2.acao, 'abrir', 'aba morta não conta de nenhum lado');
+
+  // Aba de RDP/VNC/web não tem sessão no servidor: contá-la mascararia uma
+  // sessão de terminal alheia.
+  const d3 = base({
+    minhas: [{ hostId: 'h1', kind: 'desk', status: 'conectado' }],
+    sessoes: [{ hostId: 'h1', ligada: true }],
+  });
+  igual(d3.acao, 'nada', 'a de terminal ligada no servidor não é a minha aba de RDP');
+  igual(d3.motivo, 'já está aberto nesta janela',
+    'aqui a regra 1 já basta — mas a contagem não pode CREDITAR a aba de RDP');
+}
+
+{
+  igual(base({ sessoes: [{ hostId: 'h1', orfa: false, ligada: false }] }).acao,
     'abrir', 'sessão sem socket e sem marca de órfã não prova nada');
 }
 

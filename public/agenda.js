@@ -115,8 +115,9 @@ function estaNaJanela(agenda, agora) {
   return min >= ini || min < fim;
 }
 
-// Texto curto para a tela ("Seg a Sex, 08:00–18:00"). Agrupar dias seguidos
-// evita o "seg, ter, qua, qui, sex" que ninguém lê.
+// Texto curto para a tela ("08:00–18:00 (todo dia)"). O "(todo dia)" não é
+// enfeite: sem ele a faixa se lê como um agendamento único, e quem marca
+// 22:00–02:00 precisa ver que aquilo emenda na madrugada seguinte, todo dia.
 function descreverAgenda(agenda) {
   if (!agenda || !agenda.inicio || !agenda.fim) return '';
   const vira = emMinutos(agenda.inicio) > emMinutos(agenda.fim, true)
@@ -179,8 +180,14 @@ function decidirAcao({
   //    "Ligada" vem do próprio WebSocket do servidor: não depende de o renderer
   //    estar acordado para dizer que existe. Só vale para terminal; RDP, VNC e
   //    página web não têm sessão no servidor e continuam dependendo da presença.
-  const meus = new Set(minhas.map((s) => s.sessaoId).filter(Boolean));
-  if (sessoes.some((s) => s.hostId === hostId && !s.orfa && s.ligada && !meus.has(s.id))) {
+  //    A comparação é por CONTAGEM, e não por id: o servidor deixou de publicar
+  //    o id de sessão viva, porque quem tem o id reata e rouba o shell. Contar
+  //    responde a mesma pergunta sem entregar a chave — se há mais sessões de
+  //    terminal ligadas a este host do que as minhas, alguém mais está com uma.
+  const ligadasNoServidor = sessoes.filter((s) => s.hostId === hostId && s.ligada && !s.orfa).length;
+  const minhasDeTerminal = minhas.filter((s) => s.hostId === hostId
+    && s.status !== 'encerrado' && (s.kind === undefined || s.kind === 'term')).length;
+  if (ligadasNoServidor > minhasDeTerminal) {
     return { acao: 'nada', assumida: true, motivo: 'outra janela está ligada a esta sessão' };
   }
   // 2b. Está numa janela solta, segundo o registro de presença.

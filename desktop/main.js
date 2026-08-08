@@ -57,6 +57,60 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   let win = null;
 
+  // Travas de TODO conteúdo web do app, registradas ANTES de existir janela
+  // alguma.
+  //
+  // Isto ficava DENTRO de createWindow, depois do `new BrowserWindow` — e
+  // 'web-contents-created' só avisa de conteúdos criados DEPOIS do listener.
+  // O efeito era o oposto exato do que o comentário prometia: a trava valia em
+  // toda janela MENOS na principal, justamente a que fica aberta o tempo todo.
+  //
+  // O `setWindowOpenHandler` também não vale só para <webview>: uma janela
+  // solta é um webContents comum e ficava sem handler nenhum.
+  function protegerConteudos() {
+    electronApp.on('web-contents-created', (_e, contents) => {
+      // Quem decide as preferências do <webview> é o processo principal, não o
+      // atributo escrito na tag.
+      contents.on('will-attach-webview', (event, webPreferences, params) => {
+        delete webPreferences.preload;
+        webPreferences.nodeIntegration = false;
+        webPreferences.nodeIntegrationInSubFrames = false;
+        webPreferences.contextIsolation = true;
+        webPreferences.sandbox = true;
+        webPreferences.webSecurity = true;
+        webPreferences.allowRunningInsecureContent = false;
+        webPreferences.experimentalFeatures = false;
+        // Só http/https entram. `file:` daria leitura do disco do usuário de
+        // dentro da página remota; os demais esquemas não têm o que fazer aqui.
+        const src = String(params.src || '');
+        if (!/^https?:\/\//i.test(src)) {
+          console.error(`[desktop] webview recusado (esquema não permitido): ${src.slice(0, 80)}`);
+          event.preventDefault();
+        }
+      });
+
+      // Nenhuma página — remota num <webview>, ou a própria interface numa
+      // janela solta — abre janela nativa do app. Link externo vai para o
+      // navegador do sistema. A janela solta em si nasce pelo handler da
+      // janela principal, mais abaixo, que é o único ponto que a autoriza.
+      contents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+        return { action: 'deny' };
+      });
+
+      // Permissão não se decide em webPreferences, e sim na sessão — que nunca
+      // recebia handler. Sem handler, o padrão do Electron é CONCEDER: medido,
+      // a página remota abria microfone e câmera ao vivo, sem prompt nenhum, e
+      // disparava notificação do sistema assinada com o nome do app.
+      const ses = contents.session;
+      if (ses && !ses.__vcPermissoesNegadas) {
+        ses.__vcPermissoesNegadas = true;
+        ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+        ses.setPermissionCheckHandler(() => false);
+      }
+    });
+  }
+
   async function createWindow() {
     const server = await start(0, '127.0.0.1');
     const port = server.address().port;
@@ -88,61 +142,27 @@ if (!electronApp.requestSingleInstanceLock()) {
       },
     });
 
-    // Janela nova pedida por uma PÁGINA REMOTA. O app tinha
-    // setWindowOpenHandler só em win.webContents — a janela da interface — e um
-    // listener 'new-window' no elemento <webview>, evento removido no Electron
-    // 22 (aqui roda 41). Ou seja: as duas travas eram código morto, e uma
-    // página podia abrir janela nativa do app, sem barra de endereço e com o
-    // título que quisesse. Aqui pega de verdade, para todo guest.
-    electronApp.on('web-contents-created', (_e, contents) => {
-      // Trava do <webview>, registrada em TODA janela do app — não só na
-      // principal. Com o botão de soltar aba passaram a existir outras janelas,
-      // e uma página web aberta numa delas criaria webview sem estas garantias.
-      // Quem decide aqui é o processo principal, não o atributo escrito na tag.
-      contents.on('will-attach-webview', (event, webPreferences, params) => {
-        delete webPreferences.preload;
-        webPreferences.nodeIntegration = false;
-        webPreferences.nodeIntegrationInSubFrames = false;
-        webPreferences.contextIsolation = true;
-        webPreferences.sandbox = true;
-        webPreferences.webSecurity = true;
-        webPreferences.allowRunningInsecureContent = false;
-        webPreferences.experimentalFeatures = false;
-        // Só http/https entram. `file:` daria leitura do disco do usuário de
-        // dentro da página remota; os demais esquemas não têm o que fazer aqui.
-        const src = String(params.src || '');
-        if (!/^https?:\/\//i.test(src)) {
-          console.error(`[desktop] webview recusado (esquema não permitido): ${src.slice(0, 80)}`);
-          event.preventDefault();
-        }
-      });
-
-      if (contents.getType() !== 'webview') return;
-      contents.setWindowOpenHandler(({ url }) => {
-        if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-        return { action: 'deny' };
-      });
-      // Permissão não se decide em webPreferences, e sim na sessão — que nunca
-      // recebia handler. Sem handler, o padrão do Electron é CONCEDER: medido,
-      // a página remota abria microfone e câmera ao vivo, sem prompt nenhum, e
-      // disparava notificação do sistema assinada com o nome do app.
-      const ses = contents.session;
-      if (ses && !ses.__vcPermissoesNegadas) {
-        ses.__vcPermissoesNegadas = true;
-        ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-        ses.setPermissionCheckHandler(() => false);
-      }
-    });
-
     // Janela nova pedida pela INTERFACE do app. Duas situações diferentes:
     //
     //   mesma origem  → é o botão "soltar aba": abre uma janela nativa própria,
     //                   com as mesmas garantias da principal
     //   outra origem  → link externo, vai para o navegador do sistema, como
     //                   sempre foi
-    const origemDoApp = `http://127.0.0.1:${port}`;
+    // Comparação por ORIGEM PARSEADA, não por prefixo de texto.
+    //
+    // `url.startsWith('http://127.0.0.1:62462')` aceitava
+    // `http://127.0.0.1:62462@evil.example/` — em que o "127.0.0.1:62462" é
+    // USERINFO e o host real é evil.example — e também
+    // `http://127.0.0.1:624620/`, outra porta. Nos dois casos o app abriria a
+    // página de terceiro como JANELA NATIVA, com webviewTag ligado.
+    const ehDoApp = (bruto) => {
+      let u;
+      try { u = new URL(bruto); } catch { return false; }
+      return u.protocol === 'http:' && u.hostname === '127.0.0.1'
+        && u.port === String(port) && !u.username && !u.password;
+    };
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith(origemDoApp)) {
+      if (ehDoApp(url)) {
         return {
           action: 'allow',
           overrideBrowserWindowOptions: {
@@ -282,7 +302,7 @@ if (!electronApp.requestSingleInstanceLock()) {
     autoUpdater.checkForUpdates().catch((e) => console.error('[updater] verificação falhou:', e && e.message));
   }
 
-  electronApp.whenReady().then(createWindow).then(setupAutoUpdate).catch((err) => {
+  electronApp.whenReady().then(protegerConteudos).then(createWindow).then(setupAutoUpdate).catch((err) => {
     console.error('[desktop] falha ao iniciar:', err);
     electronApp.quit();
   });

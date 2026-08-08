@@ -2311,12 +2311,25 @@ async function importFromText(text) {
     const nome = String(h.name || '').trim();
     const porta = Number(h.port) || portaPadrao(h.protocol);
     const user = String(h.username || '');
-    const igual = state.hosts.find((x) => x.name === nome && x.host === h.host
-      && (x.port || 22) === porta && (x.username || '') === user);
-    if (igual) continue;
+    // A MESMA chave que o servidor usa para casar hosts (server.js,
+    // `mesmoDestino`). Num host web o destino é a URL: sem ela aqui, um arquivo
+    // que trocasse só a url casava como "igual", caía no `continue` e o usuário
+    // não era avisado de nada — enquanto do outro lado entrava um host novo
+    // apontando para outro lugar. Duas chaves diferentes para a mesma pergunta
+    // é como esse aviso ficou cego exatamente no caso que ele existe para pegar.
+    const proto = normalizarProtocolo(h.protocol);
+    const mesmoDestino = (x) => x.name === nome && x.host === h.host
+      && (x.port || 22) === porta && (x.username || '') === user
+      && (proto !== 'web' || (x.url || '') === (h.url || ''));
+    if (state.hosts.some(mesmoDestino)) continue;
     const ex = state.hosts.find((x) => x.name === nome);
-    if (ex) homonimos.push(`• ${nome}: você tem ${ex.username || '(sem usuário)'}@${ex.host}:${ex.port || 22}`
-      + `, o arquivo traz ${user || '(sem usuário)'}@${h.host}:${porta}`);
+    if (ex) {
+      const onde = (x, u) => (normalizarProtocolo(x.protocol) === 'web'
+        ? (u || '(sem url)')
+        : `${x.username || '(sem usuário)'}@${x.host}:${x.port || 22}`);
+      homonimos.push(`• ${nome}: você tem ${onde(ex, ex.url)}, o arquivo traz `
+        + `${onde({ ...h, port: porta, username: user }, h.url)}`);
+    }
   }
   if (homonimos.length && !confirm(
     `${homonimos.length} host(s) do arquivo têm o mesmo NOME de hosts seus, mas endereço diferente:\n\n${homonimos.join('\n')}\n\n`
@@ -2340,13 +2353,37 @@ async function importFromText(text) {
   // horário — e a aba nasce sem o "×". É a mesma pergunta que tirou o
   // fingerprint e o certificado do arquivo, e ela precisa ser feita na tela, não
   // só no código.
+  // A nota de agenda precisa dizer PARA ONDE e COM O QUÊ, não só o horário.
+  //
+  // Ela listava `nome: 08:00–18:00` e pedia "se você não reconhece esses
+  // horários, cancele" — e o horário é justamente o dado que quem monta o
+  // arquivo escolhe livremente e faz parecer plausível ("Backup Noturno:
+  // 02:00–04:00"). O que precisa ser reconhecido é o DESTINO e a CREDENCIAL.
+  //
+  // A credencial importa em especial no tipo `agent`: é o padrão quando o
+  // arquivo não traz <auth>, e significa o SEU agente SSH autenticando contra
+  // um servidor que você nunca aprovou. O aviso de segredos do diálogo não
+  // cobre esse caso, porque ali não há senha nenhuma no arquivo.
   const comAgenda = (c.hosts || []).filter((h) => h.agenda && h.agenda.inicio && h.agenda.fim);
+  const credencialDe = (h) => {
+    const t = ((h.auth || {}).type) || 'agent';
+    if (t === 'password') return 'senha do arquivo';
+    if (t === 'key') return `chave ${((h.auth || {}).keyPath) || '(sem caminho)'}`;
+    return 'SEU AGENTE SSH';
+  };
+  const destinoDe = (h) => {
+    const p = normalizarProtocolo(h.protocol);
+    if (p === 'web') return h.url || '(sem url)';
+    return `${p}://${h.username ? h.username + '@' : ''}${h.host}:${h.port || portaPadrao(p)}`;
+  };
   const notaAgenda = comAgenda.length
-    ? `\n\n⚠️ ${comAgenda.length} host(s) do arquivo trazem AGENDA: neste horário,`
-      + ' TODO DIA, o app vai CONECTAR SOZINHO e a aba não poderá ser fechada'
-      + ` enquanto durar o período.\n• ${comAgenda.map((h) => `${h.name}: `
-      + `${h.agenda.inicio}–${h.agenda.fim}`).join('\n• ')}`
-      + '\nSe você não reconhece esses horários, cancele.'
+    ? `\n\n⚠️ ${comAgenda.length} host(s) do arquivo trazem AGENDA. Nesse horário, TODO DIA,`
+      + ' o app vai CONECTAR SOZINHO ao endereço abaixo, com a credencial abaixo, e a aba'
+      + ` não poderá ser fechada enquanto durar o período:\n• ${comAgenda.map((h) => `${h.name}`
+      + `\n    ${h.agenda.inicio}–${h.agenda.fim}`
+      + `\n    destino: ${destinoDe(h)}`
+      + `\n    autentica com: ${credencialDe(h)}`).join('\n• ')}`
+      + '\n\nSe você não reconhece ALGUM desses endereços, cancele.'
     : '';
 
   if (!confirm(`Importar deste arquivo:\n\n${linhas.join('\n')}\n\n`
@@ -3733,8 +3770,8 @@ async function cicloDaAgenda() {
       // aba a mais e destruiria a que está na tela.
       minhas: sessions.map((s) => ({
         hostId: s.hostId,
+        kind: s.kind,
         status: sessaoMorta(s) ? 'encerrado' : 'vivo',
-        sessaoId: s.sessaoId || null,
       })),
       presenca,
       sessoes: noServidor,

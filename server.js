@@ -251,8 +251,25 @@ app.post('/api/presenca/sair', (req, res) => {
 app.get('/api/janelas', (req, res) => {
   res.json({
     presenca: presenca.listar(),
+    // O `id` só sai para sessões ÓRFÃS.
+    //
+    // Quem tem o id reata: `atacar` expulsa a janela anterior, entrega os
+    // últimos 256 KB de saída acumulada e passa a escrever no shell. Publicar o
+    // id de toda sessão VIVA transformava esta rota numa lista de alvos — e a
+    // janela principal nunca precisou disso: para saber que outra janela está
+    // com um host, basta CONTAR as sessões ligadas e comparar com as próprias.
+    //
+    // Órfã é outra coisa: ela não tem janela nenhuma olhando, existe justamente
+    // para ser reatada, e morre no TTL de 5 min. O id dela é o mecanismo.
+    //
+    // Isto reduz a exposição, não fecha a porta: o token do processo vai no HTML
+    // e qualquer processo local que fale HTTP consegue lê-lo — o que é anterior
+    // a esta rota e vale para o app inteiro (ver a seção Segurança do README).
     sessoes: termsessions.listar().map((s) => ({
-      id: s.id, hostId: s.hostId, rotulo: s.rotulo, ligada: s.ligada, orfa: !!s.orfaDesde,
+      id: s.orfaDesde ? s.id : null,
+      hostId: s.hostId,
+      ligada: s.ligada,
+      orfa: !!s.orfaDesde,
     })),
   });
 });
@@ -799,12 +816,28 @@ app.post('/api/import', (req, res) => {
       // Agenda mal formada no arquivo não pode derrubar a importação inteira: o
       // XML é entrada de terceiro e as outras 800 entradas não têm culpa. Cai
       // fora com aviso, igual ao que já se faz com variável de nome inválido.
+      // Três situações diferentes, e só uma delas pode mexer no que está aqui:
+      //   - o arquivo NÃO traz agenda  -> undefined: "não sei", não "apague"
+      //   - traz e é válida            -> aplica
+      //   - traz e é ILEGÍVEL          -> não aplica, e AVISA
+      // Sem a terceira, uma tag quebrada virava `null` e APAGAVA a agenda do
+      // host — o oposto da promessa de que importar nunca remove nada, e em
+      // silêncio, porque normalizarAgenda devolve null sem lançar quando os
+      // dois horários chegam vazios.
       let agenda;
-      try {
-        agenda = opcional(h.agenda, (v) => agendaLib.normalizarAgenda(v));
-      } catch (e) {
+      if (h.agenda === undefined || h.agenda === null) {
         agenda = undefined;
-        summary.skipped.push(`"${name}": agenda ignorada — ${e.message}`);
+      } else {
+        try {
+          agenda = agendaLib.normalizarAgenda(h.agenda);
+          if (agenda === null) {
+            agenda = undefined;
+            summary.skipped.push(`"${name}": agenda do arquivo veio vazia — a agenda atual foi mantida`);
+          }
+        } catch (e) {
+          agenda = undefined;
+          summary.skipped.push(`"${name}": agenda ignorada, a atual foi mantida — ${e.message}`);
+        }
       }
       // O fingerprint NUNCA vem do arquivo: ele é a prova de identidade do
       // servidor, aprendida na primeira conexão real (TOFU). Aceitá-lo de um XML
@@ -813,7 +846,16 @@ app.post('/api/import', (req, res) => {
       // Casa por NOME + ENDEREÇO. Só por nome, dois hosts homônimos (comuns em
       // parques com "Firewall" por filial) colapsavam num só na restauração — e a
       // guarda anti-reapontamento ainda apagava a senha do sobrevivente.
-      const mesmoDestino = (x) => x.name === name && x.host === hostAddr && (x.port || 22) === port && x.username === username;
+      // Num host WEB o destino real é a URL — endereço e porta são derivados
+      // dela. Casar só por name+host+port+username deixava um arquivo casar
+      // exatamente com um host web seu e trocar SÓ a url: o certificado fixado
+      // era descartado, o destino virava outro, e a única notícia era uma linha
+      // num painel intitulado "N item(ns) não importado(s)" — rotulando como
+      // não-importado justamente o que foi. Com a url no casamento, um destino
+      // diferente entra como host NOVO e o seu fica intacto.
+      const mesmoDestino = (x) => x.name === name && x.host === hostAddr
+        && (x.port || 22) === port && x.username === username
+        && (protocolo !== 'web' || (x.url || '') === (url || ''));
       // Só correspondência EXATA atualiza. Qualquer outra coisa entra como host
       // novo: importar nunca deve destruir um registro existente, e sem o endereço
       // não há como saber se "Firewall" do arquivo é o mesmo "Firewall" daqui.

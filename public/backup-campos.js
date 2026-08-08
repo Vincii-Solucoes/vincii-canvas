@@ -29,7 +29,9 @@ const HOST_ATRIBUTOS = [
 const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp', url: 'web' };
 
 // Vão como elementos filhos (<auth/>, <agenda/> e <vars>), não como atributos.
-// `agenda` é um objeto com uma lista de dias dentro — não cabe num atributo só.
+// São objetos: `agenda` tem início e fim, `auth` tem tipo e credencial. Um
+// atributo só não os representa, e achatá-los em `agendaInicio`/`agendaFim`
+// espalharia o mesmo campo por várias colunas do arquivo.
 const HOST_FILHOS = ['auth', 'agenda', 'vars'];
 
 // Fora do arquivo de propósito. O motivo fica junto: sem ele, o próximo a ler
