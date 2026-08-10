@@ -164,6 +164,17 @@ body.term-full .term-grid { height: calc(100vh - 100px); }
   max-width: 1180px;
 }
 .config-grid > .card { margin-bottom: 0; }
+/* Divisória dentro de um cartão que reúne dois assuntos próximos (tema da
+   interface e fonte do terminal são a mesma coisa para quem procura
+   "aparência"). Juntá-los não é enfeite: um cartão de três linhas nunca
+   emparelha com um que tem prévia de terminal ao lado, e era daí que vinha o
+   vão embaixo de "Tema". */
+.card .sub {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 700;
+  margin: 16px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border);
+}
+.card .sub:first-of-type { margin-top: 4px; }
 /* Um cartão que é só texto de referência não precisa disputar espaço com os
    que têm controles: ele ocupa a linha inteira, no fim. */
 .config-grid > .card.largo { grid-column: 1 / -1; }
