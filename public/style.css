@@ -1163,6 +1163,15 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .fav-del:hover { color: var(--red); background: var(--panel2); transform: scale(1.1); }
 .fav-empty { margin: 2px 8px 8px; font-size: 12.5px; color: var(--muted); }
+/* A nota que explica COMO a colagem acontece ("escreve sem executar", "vai para
+   a área de transferência da máquina remota") é a última linha do menu — e com
+   a lista rolando ela ficava cortada justamente quando havia variáveis demais
+   para ler de uma vez. Grudada no fim do painel, ela é lida sempre. */
+.fav-rodape {
+  position: sticky; bottom: -6px; margin-bottom: 0;
+  background: var(--panel); padding: 8px;
+  border-top: 1px solid var(--border);
+}
 .fav-add {
   display: block; width: calc(100% - 8px); margin: 6px 4px 4px;
   background: none; border: 1px dashed var(--border); border-radius: 8px;

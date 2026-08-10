@@ -1267,6 +1267,43 @@ app.delete('/api/hosts/:id', (req, res) => {
 // Página web: esquece o certificado fixado, para o próximo acesso aprender o
 // novo. É a saída legítima de quem TROCOU o equipamento — sem ela, a mensagem
 // de "certificado mudou" seria um beco sem saída.
+// A senha de um host, para o usuário COLAR na própria sessão.
+//
+// O menu "{ } Variáveis" lista os campos do cadastro prontos para colar, e a
+// senha faltava ali justamente porque `publicHost` a redige — o navegador nunca
+// a recebe. Sem esta rota, colar a senha num prompt de `sudo` significava abrir
+// o cadastro e copiar à mão.
+//
+// Três cuidados, e nenhum é opcional:
+//   - exige o TOKEN do processo, como a rota de credencial de RDP/VNC. A guarda
+//     de origem sozinha não basta: esta rota devolve segredo;
+//   - `no-store`, para não sobrar em cache nenhum;
+//   - passa por `credenciais.resolver`, que é o ÚNICO ponto de resolução — logo
+//     funciona igual para senha salva e para senha vinda de cofre externo, e
+//     registra o valor na redação enquanto ele existe.
+app.post('/api/hosts/:id/segredo', async (req, res) => {
+  const corpo = req.body || {};
+  if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
+  const host = store.get().hosts.find((h) => h.id === req.params.id) || quickhosts.get(req.params.id);
+  if (!host) return fail(res, 404, 'Host não encontrado.');
+  const campo = corpo.campo === 'passphrase' ? 'passphrase' : 'senha';
+
+  let cred;
+  try {
+    cred = await credenciais.resolver(host);
+  } catch (e) {
+    return fail(res, 502, `Cofre de credenciais: ${e.message}`);
+  }
+  try {
+    const valor = campo === 'passphrase' ? (cred.passphrase || '') : (cred.password || '');
+    if (!valor) return fail(res, 404, 'Este host não tem esse segredo guardado.');
+    res.set('Cache-Control', 'no-store');
+    res.json({ valor });
+  } finally {
+    cred.dispose();
+  }
+});
+
 app.post('/api/hosts/:id/forget-cert', (req, res) => {
   const host = store.get().hosts.find((h) => h.id === req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');

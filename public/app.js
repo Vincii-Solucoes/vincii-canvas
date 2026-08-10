@@ -2194,6 +2194,24 @@ function variaveisEmbutidas(h) {
   return out.filter(([, v]) => v !== undefined && v !== null && String(v) !== '');
 }
 
+// Segredos do host que valem como variável para colar. Aqui só o NOME e o campo
+// — o valor não existe no navegador e nem deve: `publicHost` redige a senha, e
+// ela é buscada no clique, pela rota que exige o token do processo.
+function segredosColaveis(h) {
+  if (!h) return [];
+  const a = h.auth || {};
+  const out = [];
+  if (a.type === 'cofre') {
+    // Num host de cofre o app não sabe de antemão se o item é senha ou chave;
+    // quem responde é o cofre, no clique. Oferecer é melhor que esconder.
+    out.push(['host.senha', 'senha']);
+  } else {
+    if (a.hasPassword) out.push(['host.senha', 'senha']);
+    if (a.hasPassphrase) out.push(['host.passphrase', 'passphrase']);
+  }
+  return out;
+}
+
 function varsDaSessaoAtiva() {
   const s = activeSession();
   if (!s) return { sessao: null, host: null, proprias: [], embutidas: [] };
@@ -2304,6 +2322,32 @@ function renderVarMenu() {
     });
   };
 
+  // Uma linha de segredo NÃO mostra o valor e NÃO o carrega junto com o menu:
+  // ele é buscado no clique e usado na hora. Abrir o menu não pode significar
+  // trazer a senha para dentro da página.
+  const linhaDeSegredo = (nome, campo, h, idSessao) => {
+    const row = el(menu, 'div', 'fav-item');
+    const body = el(row, 'div', 'fav-body');
+    body.title = `${comoCola} O valor é buscado só agora, no clique.`;
+    el(body, 'div', 'fav-label', nome);
+    el(body, 'code', 'fav-cmd', '••••••••');
+    body.addEventListener('click', async () => {
+      const atual = activeSession();
+      if (!atual || atual.id !== idSessao) {
+        fecharVarMenu();
+        toast('A aba mudou desde que este menu foi aberto — nada foi colado.', 'erro');
+        return;
+      }
+      fecharVarMenu();
+      try {
+        const r = await api(`/api/hosts/${h.id}/segredo`, {
+          method: 'POST', body: { campo, token: window.VC_TOKEN },
+        });
+        colarNaSessao(r.valor);
+      } catch (e) { toast(e.message, 'erro'); }
+    });
+  };
+
   if (proprias.length) {
     el(menu, 'div', 'fav-group', `{ } Deste host (${host ? host.name : ''})`);
     proprias.forEach(([n, v]) => linha(n, v));
@@ -2312,7 +2356,12 @@ function renderVarMenu() {
     el(menu, 'div', 'fav-group', '🖥 Do cadastro');
     embutidas.forEach(([n, v]) => linha(n, v));
   }
-  if (!proprias.length && !embutidas.length) {
+  const segredos = segredosColaveis(host);
+  if (segredos.length) {
+    el(menu, 'div', 'fav-group', '🔑 Segredos');
+    segredos.forEach(([nome, campo]) => linhaDeSegredo(nome, campo, host, idDaSessao));
+  }
+  if (!proprias.length && !embutidas.length && !segredosColaveis(host).length) {
     // A condição olhava `sessao.hostId`, que EXISTE numa conexão rápida (é o
     // `qc_…`) — então mandava cadastrar variáveis num host que não está na
     // lista. Quem decide é `host`: sem ele, é aba avulsa ou terminal local.
@@ -2320,7 +2369,7 @@ function renderVarMenu() {
       ? 'Este host não tem variáveis. Cadastre em Hosts → editar → Variáveis.'
       : 'Esta aba não é de um host salvo, então não há variáveis de host.');
   }
-  el(menu, 'p', 'fav-empty', comoCola);
+  el(menu, 'p', 'fav-empty fav-rodape', comoCola);
 }
 
 function fecharVarMenu() { const m = $('#varMenu'); if (m) m.hidden = true; }
