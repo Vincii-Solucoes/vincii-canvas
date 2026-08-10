@@ -1338,7 +1338,21 @@ body.term-full .term-grid.no-ai.no-sidebar {
 .hist-periodo .small { color: var(--muted); }
 
 
-/* ---------- agenda do host: dias da semana + faixa de horário ---------- */
+/* ---------- escolha do segredo dentro de um cofre ---------- */
+.cofre-lista { max-height: 220px; overflow: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cofre-item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
+  font: inherit; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.cofre-item:hover { border-color: var(--accent); }
+.cofre-item.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.cofre-item .tag { align-self: flex-start; }
+
+/* ---------- agenda do host: faixa de horário ---------- */
 .agenda-fs { margin-top: 4px; }
 .agenda-horas { margin-top: 8px; }
 .agenda-horas { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }

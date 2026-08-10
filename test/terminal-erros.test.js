@@ -27,6 +27,15 @@ const assert = require('assert');
 const crypto = require('crypto');
 const net = require('net');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// Diretório de dados PRÓPRIO, definido antes de qualquer require do app: o
+// store lê a variável no carregamento. Sem isto o teste escreveria hosts de
+// mentira no data.json de quem está desenvolvendo.
+const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vc-erros-'));
+process.env.SSHC_DATA_DIR = DIR;
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n += 1; };
@@ -99,7 +108,12 @@ function pegar(porta, caminho) {
   const vivo = async () => {
     try { return (await pegar(porta, '/api/janelas')).status === 200; } catch { return false; }
   };
-  const erroDe = (r) => (r.recebidas.find((m) => m && m.t === 'e') || {}).d || '';
+  // TODOS os quadros de erro juntos, não o primeiro.
+  //
+  // O primeiro costuma ser informativo ("Conectando a …@host:22…"), e pegar só
+  // ele fazia o teste procurar a mensagem de falha no lugar errado — passando a
+  // impressão de que o app não explicou nada quando ele tinha explicado.
+  const erroDe = (r) => r.recebidas.filter((m) => m && m.t === 'e').map((m) => m.d).join('');
 
   // ---------- as barreiras antes do terminal ----------
 
@@ -145,6 +159,51 @@ function pegar(porta, caminho) {
     ok(await vivo(), 'e sobrevive igual');
   }
 
+  // ---------- host que aponta para um cofre inexistente ----------
+  //
+  // Restaurar um backup noutra máquina produz exatamente isto: o host vem, o
+  // cofre não. Precisa falhar dizendo QUAL cofre falta — e não com um
+  // "falha ao autenticar" que manda o usuário procurar no lugar errado.
+  {
+    const d = require('../lib/store').get();
+    d.hosts.push({
+      id: 'host-de-cofre-quebrado', name: 'cofre quebrado',
+      host: '127.0.0.1', port: 22, username: 'x',
+      auth: { type: 'cofre' }, segredo: { cofre: 'nao-configurado', id: 'sec_x' },
+    });
+    require('../lib/store').save();
+
+    const r = await abrirWs(porta, `/api/terminal?token=${token}&hostId=host-de-cofre-quebrado`);
+    ok(/nao-configurado/.test(erroDe(r)),
+      'a mensagem precisa NOMEAR o cofre que falta — é a única pista de onde consertar');
+    ok(await vivo(), 'e o servidor continua de pé');
+  }
+
+  // ---------- o handler assíncrono está embrulhado ----------
+  //
+  // Este é um teste de CÓDIGO-FONTE, e a distinção importa: ele não provoca uma
+  // rejeição, ele confere que a rede de proteção existe.
+  //
+  // Tentei escrever o teste comportamental e ele passava VERDE com a proteção
+  // removida — porque hoje nenhum caminho de `handleConnection` rejeita de
+  // fato: cada um trata o próprio erro. A proteção é para o caminho que alguém
+  // acrescentar amanhã. Deixar a asserção comportamental ali seria o pior dos
+  // mundos: uma linha verde afirmando uma garantia que ela não verifica, que é
+  // o defeito que este projeto já teve três vezes.
+  //
+  // `handleConnection` virou async quando a credencial passou a poder vir de um
+  // cofre pela rede. Promessa rejeitada num 'connection' de EventEmitter não é
+  // capturada por ninguém e, em Node 20, derruba o processo.
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'terminal.js'), 'utf8');
+    ok(/async function handleConnection/.test(src), 'handleConnection é assíncrona');
+    ok(!/wss\.on\('connection',\s*handleConnection\s*\)/.test(src),
+      'handleConnection NÃO pode ser passada direto para o wss: rejeição sem captura '
+      + 'derruba o processo inteiro');
+    ok(/handleConnection\(ws, req\)\s*\.catch\(/.test(src),
+      'a chamada precisa terminar num .catch');
+  }
+
   // ---------- uma rajada de requisições ruins não pode derrubar nada ----------
 
   {
@@ -157,6 +216,7 @@ function pegar(porta, caminho) {
   }
 
   server.close();
+  try { fs.rmSync(DIR, { recursive: true, force: true }); } catch {}
   console.log(`\n${n} verificações passaram`);
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -423,6 +423,24 @@ try {
 
     <div class="card" style="max-width:640px">
       <div class="card-head">
+        <h2>Cofres de credenciais</h2>
+      </div>
+      <p class="hint">Em vez de guardar a senha do host aqui, o app pode buscá-la num
+        <strong>cofre externo</strong> na hora de conectar. A senha então <strong>nunca é gravada
+        neste computador</strong>: ela vive em memória pelo tempo da conexão e some. O host guarda
+        só a referência (qual cofre, qual segredo).</p>
+      <p id="cofresProtecao" class="hint"></p>
+      <div id="cofresLista"></div>
+      <div class="actions">
+        <button id="btnNovoCofre" class="btn small primary" type="button">Adicionar cofre</button>
+      </div>
+      <p class="hint">O contrato que um cofre precisa implementar está em
+        <code>docs/cofres-de-credenciais.md</code>. Para testar sem cofre nenhum no ar:
+        <code>node test/cofre-local.js</code>.</p>
+    </div>
+
+    <div class="card" style="max-width:640px">
+      <div class="card-head">
         <h2>Backup da configuração</h2>
         <div class="btn-row">
           <button id="btnImportXml" class="btn">⤒ Importar .xml</button>

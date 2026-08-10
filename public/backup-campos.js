@@ -32,7 +32,14 @@ const HOST_ATRIBUTOS_CONDICIONAIS = { ftps: 'ftp', rdpDomain: 'rdp', url: 'web' 
 // São objetos: `agenda` tem início e fim, `auth` tem tipo e credencial. Um
 // atributo só não os representa, e achatá-los em `agendaInicio`/`agendaFim`
 // espalharia o mesmo campo por várias colunas do arquivo.
-const HOST_FILHOS = ['auth', 'agenda', 'vars'];
+const HOST_FILHOS = ['auth', 'agenda', 'segredo', 'vars'];
+
+// `segredo` é a REFERÊNCIA a um item de cofre externo (apelido do cofre + id do
+// item). Vai no arquivo porque não é segredo nenhum, e sem ela a restauração
+// devolve um host que não sabe onde buscar a credencial — parecendo completo na
+// tela e falhando na conexão. A CHAVE de API do cofre é outra coisa e mora fora
+// do data.json (lib/cofresegredos.js), justamente para não ter como escorrer
+// para cá.
 
 // Fora do arquivo de propósito. O motivo fica junto: sem ele, o próximo a ler
 // isto vai "consertar" a ausência e reabrir um buraco de segurança.

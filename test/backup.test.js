@@ -60,6 +60,7 @@ const HOST_REF = {
   color: 'azul',
   vars: { PAPEL: 'dc' },
   agenda: { inicio: '22:00', fim: '02:00' },
+  segredo: { cofre: 'vitruviano-prod', id: 'sec_01HZX8Q3', rotulo: 'root@web-01' },
   rdpLegado: true,
   rdpLegadoOk: true,
 };

@@ -53,6 +53,28 @@ if (!electronApp.requestSingleInstanceLock()) {
   // Importar só depois de definir SSHC_DATA_DIR — o store lê a env ao carregar
   const { start } = require('../server');
   const store = require('../lib/store');
+  const segredosDeCofre = require('../lib/cofresegredos');
+
+  // A chave de API de um cofre não é uma senha a mais: ela abre TODAS as senhas
+  // que aquele cofre guarda. Aqui, e só aqui, existe armazenamento protegido do
+  // sistema — Keychain no macOS, DPAPI no Windows, libsecret no Linux. Fora do
+  // Electron (`npm start`) esse recurso não existe, o arquivo fica em texto
+  // claro com permissão 600, e a tela DIZ isso em vez de deixar supor.
+  //
+  // `isEncryptionAvailable` só responde de verdade depois do whenReady: no
+  // Linux ele precisa consultar o serviço de chaves da sessão gráfica.
+  try {
+    const { safeStorage } = require('electron');
+    segredosDeCofre.usarCofreDoSistema({
+      disponivel: () => {
+        try { return safeStorage.isEncryptionAvailable(); } catch { return false; }
+      },
+      cifrar: (txt) => safeStorage.encryptString(txt),
+      decifrar: (buf) => safeStorage.decryptString(buf),
+    });
+  } catch (e) {
+    console.error('[cofres] armazenamento protegido indisponível:', e && e.message);
+  }
   const quickhosts = require('../lib/quickhosts');
 
   let win = null;

@@ -118,6 +118,7 @@ function fmtMs(ms) {
 }
 
 function authLabel(auth) {
+  if (auth.type === 'cofre') return 'Cofre';
   return auth.type === 'key' ? 'Chave' : auth.type === 'password' ? 'Senha' : 'Agente';
 }
 
@@ -244,6 +245,15 @@ function hostCard(h) {
   else el(meta, 'span', 'tag', authLabel(h.auth));
   const nv = Object.keys(h.vars || {}).length;
   if (nv) el(meta, 'span', 'tag', `${nv} var(s)`);
+  if (h.auth && h.auth.type === 'cofre') {
+    const ref = h.segredo || {};
+    const existe = cofresEmCache.cofres.some((c) => c.apelido === ref.cofre);
+    const t = el(meta, 'span', 'tag' + (existe ? '' : ' tag-warn'),
+      `🔑 ${ref.cofre || '(sem cofre)'}${existe ? '' : ' — não configurado'}`);
+    t.title = existe
+      ? `A senha vem do cofre "${ref.cofre}" na hora de conectar; nada é gravado aqui.`
+      : `Este host aponta para o cofre "${ref.cofre}", que não está configurado nesta máquina.`;
+  }
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
   if (h.webCert) el(meta, 'span', 'tag', 'certificado autoassinado fixado');
   // A agenda muda o comportamento do host sem aparecer em lugar nenhum fora do
@@ -302,6 +312,8 @@ function syncAuthFields() {
   const type = checked ? checked.value : 'agent';
   $('#authKeyFields').hidden = type !== 'key';
   $('#authPassFields').hidden = type !== 'password';
+  const cofre = $('#authCofreFields');
+  if (cofre) cofre.hidden = type !== 'cofre';
 }
 
 // Esconde ou mostra um campo do formulário, tirando e devolvendo o `required`.
@@ -334,6 +346,274 @@ function mostrarCampo(elemento, visivel) {
     // `.value` continua legível para quem monta o corpo da requisição.
     elemento.disabled = true;
   }
+}
+
+// ---------- cofres de credenciais ----------
+//
+// Nada aqui recebe valor de segredo. A tela configura o cofre, testa a conexão e
+// ajuda a ESCOLHER qual segredo o host usa; quem lê o valor é o servidor, no
+// instante da conexão.
+
+let cofresEmCache = { catalogo: [], cofres: [], chavesProtegidas: false };
+
+async function carregarCofres() {
+  try { cofresEmCache = await api('/api/cofres'); } catch { /* tela offline: mantém o que tinha */ }
+  return cofresEmCache;
+}
+
+const adaptadorDe = (tipo) => cofresEmCache.catalogo.find((c) => c.tipo === tipo) || null;
+
+function renderCofres() {
+  const wrap = $('#cofresLista');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const aviso = $('#cofresProtecao');
+  if (aviso) {
+    // Um app que guarda segredo em texto claro sem dizer é pior que um que diz.
+    aviso.textContent = cofresEmCache.chavesProtegidas
+      ? '🔒 As chaves de API dos cofres ficam no armazenamento protegido do sistema (Keychain).'
+      : '⚠️ Fora do app desktop não há Keychain: as chaves ficam em texto claro em '
+        + 'cofres-chaves.json (permissão 600). Elas nunca vão para o backup.';
+    aviso.classList.toggle('warn-hint', !cofresEmCache.chavesProtegidas);
+  }
+  if (!cofresEmCache.cofres.length) {
+    el(wrap, 'p', 'empty', 'Nenhum cofre configurado. Sem cofre, as senhas continuam '
+      + 'salvas no próprio host, como sempre.');
+    return;
+  }
+  for (const c of cofresEmCache.cofres) {
+    const card = el(wrap, 'div', 'card item');
+    const head = el(card, 'div', 'item-head');
+    el(head, 'strong', null, c.apelido);
+    el(head, 'span', 'muted small', c.desconhecido ? `tipo desconhecido: ${c.tipo}` : c.nome);
+    const meta = el(card, 'div', 'meta');
+    el(meta, 'span', 'tag', c.config.baseUrl || '(sem endereço)');
+    if (c.preenchidos.length) el(meta, 'span', 'tag', 'chave configurada');
+    else el(meta, 'span', 'tag tag-warn', 'sem chave');
+    if (c.certificadoFixado) el(meta, 'span', 'tag', 'certificado fixado');
+    // Quantos hosts dependem deste cofre: é o número que decide se remover dói.
+    const usam = state.hosts.filter((h) => h.segredo && h.segredo.cofre === c.apelido);
+    if (usam.length) el(meta, 'span', 'tag', `${usam.length} host(s)`);
+    const estado = el(card, 'p', 'hint');
+
+    const acoes = el(card, 'div', 'actions');
+    const bTestar = el(acoes, 'button', 'btn small primary', 'Testar');
+    bTestar.addEventListener('click', async () => {
+      estado.textContent = 'Falando com o cofre…';
+      estado.classList.remove('warn-hint');
+      try {
+        const r = await api(`/api/cofres/${encodeURIComponent(c.apelido)}/testar`, { method: 'POST' });
+        if (r.ok) {
+          const i = r.info;
+          const venc = i.expiraEm ? ` · chave vence em ${new Date(i.expiraEm).toLocaleDateString('pt-BR')}` : '';
+          estado.textContent = `✅ ${i.produto} v${i.versao} · chave "${i.rotuloDaChave}"`
+            + ` · permissões: ${i.permissoes.join(', ') || '—'}`
+            + ` · cofres: ${i.cofres.map((x) => x.nome).join(', ') || '—'}${venc}`;
+        } else {
+          estado.textContent = `❌ ${r.mensagem} (${r.codigo})`;
+          estado.classList.add('warn-hint');
+        }
+        await carregarCofres();
+        renderCofres();
+      } catch (e) { estado.textContent = e.message; estado.classList.add('warn-hint'); }
+    });
+    const bEditar = el(acoes, 'button', 'btn small', 'Editar');
+    bEditar.addEventListener('click', () => abrirModalDeCofre(c));
+    if (c.certificadoFixado) {
+      const bCert = el(acoes, 'button', 'btn small', 'Esquecer certificado');
+      bCert.addEventListener('click', async () => {
+        await api(`/api/cofres/${encodeURIComponent(c.apelido)}/esquecer-certificado`, { method: 'POST' });
+        toast('Certificado esquecido — será fixado de novo na próxima conexão.');
+        await carregarCofres(); renderCofres();
+      });
+    }
+    const bDel = el(acoes, 'button', 'btn small danger', 'Remover');
+    bDel.addEventListener('click', async () => {
+      const nota = usam.length
+        ? `\n\n${usam.length} host(s) usam este cofre e vão parar de conectar até você `
+          + `apontá-los para outro:\n• ${usam.map((h) => h.name).join('\n• ')}\n\n`
+          + 'Os hosts NÃO serão apagados.'
+        : '';
+      if (!confirm(`Remover o cofre "${c.apelido}"?${nota}`)) return;
+      await api(`/api/cofres/${encodeURIComponent(c.apelido)}`, { method: 'DELETE' });
+      toast('Cofre removido.');
+      await carregarCofres(); renderCofres(); renderHosts();
+    });
+  }
+}
+
+function abrirModalDeCofre(existente) {
+  const cat = cofresEmCache.catalogo;
+  if (!cat.length) { toast('Nenhum tipo de cofre disponível.', 'erro'); return; }
+  openModal(existente ? `Cofre "${existente.apelido}"` : 'Novo cofre de credenciais', `
+    <label>Apelido
+      <input id="cf_apelido" required placeholder="ex.: vitruviano-prod" pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]">
+    </label>
+    <p class="hint">Minúsculas, números e hífen. <strong>É por este apelido que o backup
+      encontra o cofre noutra máquina</strong> — mudá-lo reaponta todos os hosts que o usam.</p>
+    <label>Tipo <select id="cf_tipo"></select></label>
+    <p id="cf_desc" class="hint"></p>
+    <div id="cf_campos"></div>
+  `);
+  const sel = $('#cf_tipo');
+  cat.forEach((c) => { const o = el(sel, 'option', null, c.nome); o.value = c.tipo; });
+  $('#cf_apelido').value = existente ? existente.apelido : '';
+  sel.value = existente ? existente.tipo : cat[0].tipo;
+  sel.disabled = !!existente; // trocar o tipo de um cofre existente é criar outro
+
+  const desenharCampos = () => {
+    const a = adaptadorDe(sel.value);
+    $('#cf_desc').textContent = a ? a.descricao || '' : '';
+    const box = $('#cf_campos');
+    box.innerHTML = '';
+    if (!a) return;
+    for (const campo of a.config) {
+      const lab = el(box, 'label', null, campo.rotulo + (campo.obrigatorio ? '' : ' (opcional)'));
+      const inp = el(lab, 'input');
+      inp.id = 'cf_campo_' + campo.chave;
+      inp.type = campo.segredo ? 'password' : 'text';
+      if (campo.segredo) inp.autocomplete = 'new-password';
+      const jaTem = existente && existente.preenchidos.includes(campo.chave);
+      inp.placeholder = jaTem ? '•••••• (em branco = manter atual)' : (campo.dica || '');
+      // Campo secreto NUNCA é reexibido: o servidor não devolve o valor.
+      if (!campo.segredo) inp.value = (existente && existente.config[campo.chave]) || campo.padrao || '';
+      if (campo.dica && !campo.segredo) el(box, 'p', 'hint', campo.dica);
+    }
+  };
+  sel.addEventListener('change', desenharCampos);
+  desenharCampos();
+
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const a = adaptadorDe(sel.value);
+    const config = {};
+    for (const campo of a.config) config[campo.chave] = $('#cf_campo_' + campo.chave).value;
+    try {
+      await api('/api/cofres', { method: 'POST', body: {
+        apelido: $('#cf_apelido').value.trim().toLowerCase(),
+        apelidoAtual: existente ? existente.apelido : '',
+        tipo: sel.value, nome: a.nome, config,
+      } });
+      closeModal();
+      toast('Cofre salvo.');
+      await carregarCofres(); await loadState(); renderCofres();
+    } catch (e) { toast(e.message, 'erro'); }
+  };
+}
+
+// ---- escolha do segredo, dentro do cadastro de host ----
+
+let segredoEscolhido = null;
+
+function lerSegredoDoForm() {
+  const sel = $('#f_cofreApelido');
+  if (!sel || !segredoEscolhido) return null;
+  return { cofre: sel.value, id: segredoEscolhido.id, rotulo: segredoEscolhido.rotulo || '' };
+}
+
+function montarEscolhaDeCofre(existing) {
+  const sel = $('#f_cofreApelido');
+  if (!sel) return;
+  sel.innerHTML = '';
+  segredoEscolhido = (existing && existing.segredo)
+    ? { id: existing.segredo.id, rotulo: existing.segredo.rotulo || '' } : null;
+
+  if (!cofresEmCache.cofres.length) {
+    const o = el(sel, 'option', null, '(nenhum cofre configurado)');
+    o.value = '';
+    $('#f_cofreNota').textContent = 'Configure um cofre em Configurações → Cofres de credenciais.';
+    $('#f_cofreEscolha').innerHTML = '';
+    return;
+  }
+  for (const c of cofresEmCache.cofres) {
+    const o = el(sel, 'option', null, `${c.apelido} — ${c.nome}`);
+    o.value = c.apelido;
+  }
+  // Um host restaurado pode apontar para um cofre que não existe AQUI. Mostrar
+  // isso é o que evita o "falha ao autenticar" enganoso na hora de conectar.
+  const apelidoAtual = existing && existing.segredo ? existing.segredo.cofre : '';
+  if (apelidoAtual && !cofresEmCache.cofres.some((c) => c.apelido === apelidoAtual)) {
+    const o = el(sel, 'option', null, `${apelidoAtual} — NÃO CONFIGURADO nesta máquina`);
+    o.value = apelidoAtual;
+  }
+  sel.value = apelidoAtual || cofresEmCache.cofres[0].apelido;
+  sel.onchange = () => { segredoEscolhido = null; desenharEscolhaDeSegredo(); };
+  desenharEscolhaDeSegredo();
+}
+
+async function desenharEscolhaDeSegredo() {
+  const box = $('#f_cofreEscolha');
+  const nota = $('#f_cofreNota');
+  const apelido = $('#f_cofreApelido').value;
+  box.innerHTML = '';
+  if (!apelido) return;
+  const cofre = cofresEmCache.cofres.find((c) => c.apelido === apelido);
+  const a = cofre ? adaptadorDe(cofre.tipo) : null;
+
+  const mostrarEscolhido = () => {
+    nota.textContent = segredoEscolhido
+      ? `Segredo: ${segredoEscolhido.rotulo || segredoEscolhido.id}`
+      : 'Nenhum segredo escolhido — o host não vai conectar.';
+    nota.classList.toggle('warn-hint', !segredoEscolhido);
+  };
+
+  // Produto que NÃO lista (ou cofre ausente): caminho digitado. Um seletor
+  // eternamente vazio seria pior que um campo de texto honesto.
+  if (!cofre || !a || !a.capacidades.listar) {
+    const lab = el(box, 'label', null, 'Identificador do segredo no cofre');
+    const inp = el(lab, 'input');
+    inp.id = 'f_segredoId';
+    inp.placeholder = 'ex.: sec_01HZX8Q3 ou Infra/Produção/web-01';
+    inp.value = segredoEscolhido ? segredoEscolhido.id : '';
+    inp.addEventListener('input', () => {
+      segredoEscolhido = inp.value.trim() ? { id: inp.value.trim(), rotulo: '' } : null;
+      mostrarEscolhido();
+    });
+    mostrarEscolhido();
+    return;
+  }
+
+  const busca = el(box, 'input');
+  busca.placeholder = 'Buscar segredo no cofre…';
+  busca.id = 'f_segredoBusca';
+  const lista = el(box, 'div', 'cofre-lista');
+  mostrarEscolhido();
+
+  const buscar = async () => {
+    lista.innerHTML = '';
+    el(lista, 'p', 'hint', 'Buscando…');
+    let r;
+    try {
+      r = await api(`/api/cofres/${encodeURIComponent(apelido)}/segredos?busca=${encodeURIComponent(busca.value)}`);
+    } catch (e) { lista.innerHTML = ''; el(lista, 'p', 'hint warn-hint', e.message); return; }
+    lista.innerHTML = '';
+    if (r.erro) { el(lista, 'p', 'hint warn-hint', `${r.erro.mensagem} (${r.erro.codigo})`); return; }
+    if (!r.itens.length) { el(lista, 'p', 'hint', 'Nenhum segredo encontrado.'); return; }
+    // O segredo cujo endereço BATE com o do host aparece primeiro: apontar o
+    // host para o segredo do vizinho é o erro mais comum desta integração.
+    const enderecoDoHost = ($('#f_host') && $('#f_host').value.trim()) || '';
+    const ordenados = [...r.itens].sort((x, y) =>
+      (y.host === enderecoDoHost ? 1 : 0) - (x.host === enderecoDoHost ? 1 : 0));
+    for (const it of ordenados) {
+      const linha = el(lista, 'button', 'cofre-item'
+        + (segredoEscolhido && segredoEscolhido.id === it.id ? ' on' : ''));
+      linha.type = 'button';
+      el(linha, 'strong', null, it.nome);
+      const det = [it.caminho, it.usuario && `usuário ${it.usuario}`,
+        it.host && `${it.host}${it.porta ? ':' + it.porta : ''}`].filter(Boolean).join(' · ');
+      el(linha, 'span', 'muted small', det);
+      if (it.host && it.host === enderecoDoHost) el(linha, 'span', 'tag tag-ativa', 'mesmo endereço');
+      linha.addEventListener('click', () => {
+        segredoEscolhido = { id: it.id, rotulo: it.nome };
+        mostrarEscolhido();
+        $$('.cofre-item').forEach((x) => x.classList.remove('on'));
+        linha.classList.add('on');
+      });
+    }
+  };
+  let t = null;
+  busca.addEventListener('input', () => { clearTimeout(t); t = setTimeout(buscar, 250); });
+  buscar();
 }
 
 function openHostModal(existing) {
@@ -397,10 +677,16 @@ function openHostModal(existing) {
         <label><input type="radio" name="authType" value="agent"> Agente SSH</label>
         <label><input type="radio" name="authType" value="key"> Chave privada</label>
         <label><input type="radio" name="authType" value="password"> Senha</label>
+        <label><input type="radio" name="authType" value="cofre"> Cofre de credenciais</label>
       </div>
       <div id="authKeyFields" class="auth-fields" hidden>
         <label>Caminho da chave <input id="f_keyPath" placeholder="~/.ssh/id_ed25519"></label>
         <label>Passphrase (opcional) <input id="f_passphrase" type="password" autocomplete="new-password"></label>
+      </div>
+      <div id="authCofreFields" class="auth-fields" hidden>
+        <label>Cofre <select id="f_cofreApelido"></select></label>
+        <div id="f_cofreEscolha"></div>
+        <p id="f_cofreNota" class="hint"></p>
       </div>
       <div id="authPassFields" class="auth-fields" hidden>
         <label><span id="f_passwordLabel">Senha</span> <input id="f_password" type="password" autocomplete="new-password"></label>
@@ -493,6 +779,7 @@ function openHostModal(existing) {
   };
   $('#f_protocol').addEventListener('change', syncProtocol);
   syncProtocol();
+  montarEscolhaDeCofre(existing);
   $('#f_keyPath').value = (existing && existing.auth.keyPath) || '';
   $('#f_vars').value = varsToText(existing && existing.vars);
   const type = (existing && existing.auth.type) || 'agent';
@@ -651,6 +938,7 @@ function openHostModal(existing) {
       rdpDomain: $('#f_rdpDomain').value,
       url: $('#f_url').value,
       agenda: lerAgendaDoForm(),
+      segredo: lerSegredoDoForm(),
       vars,
       auth: { type: authType },
     };
@@ -2181,6 +2469,7 @@ function xmlToConfig(text) {
       hosts: [...root.querySelectorAll(':scope > hosts > host')].map((h) => {
         const auth = h.querySelector(':scope > auth');
         const ag = h.querySelector(':scope > agenda');
+        const sg = h.querySelector(':scope > segredo');
         return {
           name: h.getAttribute('name'),
           host: h.getAttribute('host'),
@@ -2219,9 +2508,24 @@ function xmlToConfig(text) {
             inicio: ag.getAttribute('inicio') || '',
             fim: ag.getAttribute('fim') || '',
           } : undefined,
+          // Referência a segredo de cofre. `cofre` é o APELIDO — é ele que faz o
+          // host reencontrar o cofre noutra máquina.
+          segredo: sg ? {
+            cofre: sg.getAttribute('cofre') || '',
+            id: sg.getAttribute('item') || '',
+            rotulo: sg.getAttribute('rotulo') || '',
+          } : undefined,
           vars: varsOf(h.querySelector(':scope > vars')),
         };
       }),
+      cofres: [...root.querySelectorAll(':scope > cofres > cofre')].map((c) => ({
+        apelido: c.getAttribute('apelido') || '',
+        tipo: c.getAttribute('tipo') || '',
+        nome: c.getAttribute('nome') || '',
+        config: Object.fromEntries([...c.querySelectorAll(':scope > opcao')]
+          .map((o) => [o.getAttribute('chave') || '', o.getAttribute('valor') || ''])
+          .filter(([k]) => k)),
+      })),
       playbooks: [...root.querySelectorAll(':scope > playbooks > playbook')].map((pb) => ({
         name: pb.getAttribute('name'),
         description: pb.getAttribute('description') || '',
@@ -4830,6 +5134,7 @@ function init() {
   $('#btnNewProfile').addEventListener('click', () => openProfileModal(null));
   $('#btnSaveGlobals').addEventListener('click', saveGlobals);
   $('#btnExportXml').addEventListener('click', exportXml);
+  $('#btnNovoCofre').addEventListener('click', () => abrirModalDeCofre(null));
   $('#btnImportXml').addEventListener('click', () => $('#importFile').click());
   $('#importFile').addEventListener('change', onImportFile);
   $('#playbookSelect').addEventListener('change', syncAdhoc);
@@ -4927,6 +5232,10 @@ function init() {
     .catch((e) => toast(e.message, 'erro'))
     .finally(() => {
       hideSplash(); // some a tela de carregamento quando os dados chegam
+      // Os cofres são carregados aqui porque o cadastro de host precisa deles
+      // para montar a opção "Cofre" — e o cadastro pode ser aberto antes de o
+      // usuário passar pela aba Configurações.
+      carregarCofres().then(renderCofres);
       // Depois do loadState: a agenda precisa da lista de hosts para saber o que
       // manter aberto, e o registro de presença precisa começar a bater ponto
       // antes do primeiro tique da janela principal.

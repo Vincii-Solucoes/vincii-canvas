@@ -23,8 +23,17 @@ const proto = require('./public/protocolos');
 const weburl = require('./public/weburl');
 const agendaLib = require('./public/agenda');
 const presenca = require('./lib/presenca');
+const credenciais = require('./lib/credenciais');
+const cofres = require('./lib/cofres');
+const segredosDeCofre = require('./lib/cofresegredos');
 const termsessions = require('./lib/termsessions');
 const pkg = require('./package.json');
+
+// Uma lista só. Ela vivia copiada em TRÊS pontos deste arquivo (cadastro,
+// atualização e importação), e acrescentar 'cofre' em dois de três produziria
+// exatamente o defeito que o backup já teve: o campo entra pela tela e some na
+// restauração, sem erro nenhum.
+const TIPOS_DE_AUTH = ['agent', 'key', 'password', 'cofre'];
 
 const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e executa comandos
 const PORT = Number(process.env.PORT || 3033);
@@ -274,6 +283,144 @@ app.get('/api/janelas', (req, res) => {
   });
 });
 
+// ---------- cofres de credenciais ----------
+//
+// A senha de um host pode morar num cofre externo. Estas rotas configuram os
+// cofres e ajudam a escolher o segredo — NENHUMA delas devolve valor de
+// segredo ao navegador. A leitura do valor acontece só no momento da conexão,
+// dentro do processo (lib/credenciais.js), e para RDP/VNC pela rota própria.
+
+function cofrePublico(c) {
+  const adapt = cofres.pegar(c.tipo);
+  const guardados = segredosDeCofre.pegar(c.apelido);
+  return {
+    apelido: c.apelido,
+    tipo: c.tipo,
+    nome: c.nome || (adapt ? adapt.nome : c.tipo),
+    config: { ...(c.config || {}) },       // só os campos NÃO secretos moram aqui
+    // Nunca o valor: só se existe. É o que a tela precisa para mostrar
+    // "(preenchido — deixe em branco para manter)".
+    preenchidos: (adapt ? adapt.config.filter((f) => f.segredo).map((f) => f.chave) : [])
+      .filter((k) => !!guardados[k]),
+    certificadoFixado: c.certificadoFixado || null,
+    desconhecido: !adapt,
+  };
+}
+
+app.get('/api/cofres', (req, res) => {
+  res.json({
+    catalogo: cofres.catalogo(),
+    cofres: credenciais.listaDeCofres().map(cofrePublico),
+    // Fora do Electron não há Keychain: a tela precisa DIZER que a chave fica
+    // em texto claro, em vez de deixar o usuário supor que está protegida.
+    chavesProtegidas: segredosDeCofre.protegido(),
+  });
+});
+
+const RE_APELIDO = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+app.post('/api/cofres', (req, res) => {
+  const b = req.body || {};
+  const apelido = String(b.apelido || '').trim().toLowerCase();
+  // O apelido é o que o backup carrega, e é por ele que o host encontra o cofre
+  // noutra máquina. Formato restrito para não virar um id frágil cheio de
+  // espaço e acento.
+  if (!RE_APELIDO.test(apelido)) {
+    return fail(res, 400, 'Apelido inválido. Use letras minúsculas, números e hífen (3 a 40).');
+  }
+  const adapt = cofres.pegar(b.tipo);
+  if (!adapt) return fail(res, 400, 'Tipo de cofre desconhecido.');
+
+  const d = store.get();
+  if (!Array.isArray(d.cofres)) d.cofres = [];
+  const existente = d.cofres.find((c) => c.apelido === apelido);
+  const editando = String(b.apelidoAtual || '').trim().toLowerCase();
+  if (existente && existente.apelido !== editando) {
+    return fail(res, 400, `Já existe um cofre com o apelido "${apelido}".`);
+  }
+
+  const config = {};
+  const segredos = {};
+  for (const campo of adapt.config) {
+    const valor = (b.config || {})[campo.chave];
+    if (campo.segredo) {
+      // Campo em branco = manter o que está guardado. É como a tela reexibe um
+      // cofre já configurado sem nunca receber a chave de volta.
+      if (valor) segredos[campo.chave] = String(valor);
+      continue;
+    }
+    const texto = String(valor === undefined || valor === null ? (campo.padrao || '') : valor).trim();
+    if (campo.obrigatorio && !texto) return fail(res, 400, `Preencha "${campo.rotulo}".`);
+    config[campo.chave] = texto.slice(0, 500);
+  }
+
+  const alvo = editando ? d.cofres.find((c) => c.apelido === editando) : null;
+  if (alvo) {
+    const mudouApelido = alvo.apelido !== apelido;
+    const anterior = alvo.apelido;
+    Object.assign(alvo, { apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config });
+    if (mudouApelido) {
+      segredosDeCofre.renomear(anterior, apelido);
+      // Renomear reaponta todo host que usava o apelido antigo. Sem isto eles
+      // ficariam órfãos silenciosamente, com o erro só aparecendo na conexão.
+      let reapontados = 0;
+      for (const h of d.hosts || []) {
+        if (h.segredo && h.segredo.cofre === anterior) { h.segredo.cofre = apelido; reapontados += 1; }
+      }
+      if (reapontados) console.error(`[cofres] ${reapontados} host(s) reapontados de "${anterior}" para "${apelido}"`);
+    }
+  } else {
+    d.cofres.push({ apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config });
+  }
+  if (Object.keys(segredos).length) segredosDeCofre.definir(apelido, segredos);
+  store.save();
+  res.json({ cofre: cofrePublico(credenciais.cofrePorApelido(apelido)) });
+});
+
+app.delete('/api/cofres/:apelido', (req, res) => {
+  const apelido = String(req.params.apelido || '');
+  const d = store.get();
+  const i = (d.cofres || []).findIndex((c) => c.apelido === apelido);
+  if (i < 0) return fail(res, 404, 'Cofre não encontrado.');
+  const orfaos = (d.hosts || []).filter((h) => h.segredo && h.segredo.cofre === apelido).map((h) => h.name);
+  d.cofres.splice(i, 1);
+  store.save();
+  segredosDeCofre.remover(apelido);
+  // Os hosts NÃO são apagados junto: eles continuam lá, apontando para um cofre
+  // que não existe mais, e a tela mostra isso. Apagar host por causa de uma
+  // configuração removida seria destruir dado que o usuário não mandou destruir.
+  res.json({ removido: apelido, hostsOrfaos: orfaos });
+});
+
+app.post('/api/cofres/:apelido/testar', async (req, res) => {
+  try {
+    const info = await credenciais.ping(String(req.params.apelido || ''));
+    res.json({ ok: true, info });
+  } catch (e) {
+    res.status(200).json({ ok: false, codigo: e.codigo || 'indisponivel', mensagem: e.message });
+  }
+});
+
+app.post('/api/cofres/:apelido/esquecer-certificado', (req, res) => {
+  const c = credenciais.cofrePorApelido(String(req.params.apelido || ''));
+  if (!c) return fail(res, 404, 'Cofre não encontrado.');
+  delete c.certificadoFixado;
+  store.save();
+  res.json({ ok: true });
+});
+
+app.get('/api/cofres/:apelido/segredos', async (req, res) => {
+  try {
+    const r = await credenciais.listarSegredos(String(req.params.apelido || ''), {
+      busca: req.query.busca, cursor: req.query.cursor, limite: req.query.limite,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(r);
+  } catch (e) {
+    res.status(200).json({ erro: { codigo: e.codigo || 'indisponivel', mensagem: e.message }, itens: [] });
+  }
+});
+
 app.get('/api/prefs', (req, res) => res.json(uiPrefs()));
 
 app.put('/api/prefs', (req, res) => {
@@ -475,7 +622,7 @@ app.post('/api/rdp/consentir', (req, res) => {
 // Barreiras: guarda de origem (como todas as rotas) MAIS o token do processo,
 // que não está em disco e é sorteado a cada abertura do app. É POST para a
 // credencial nunca aparecer em URL, histórico ou log de acesso.
-app.post('/api/desktop/credencial', (req, res) => {
+app.post('/api/desktop/credencial', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
   const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId);
@@ -485,13 +632,30 @@ app.post('/api/desktop/credencial', (req, res) => {
   }
   const padrao = proto.portaPadrao(host.protocol);
   res.set('Cache-Control', 'no-store');
-  res.json({
-    protocolo: host.protocol,
-    username: host.username || '',
-    password: (host.auth && host.auth.password) || '',
-    domain: host.rdpDomain || '',
-    destino: `${host.host}:${host.port || padrao}`,
-  });
+  // RDP e VNC rodam no RENDERER (IronRDP em WebAssembly, noVNC), então a senha
+  // precisa chegar até lá — é assim desde antes do cofre e não muda com ele. O
+  // que muda é a origem: com cofre, ela é buscada agora e nunca existiu em
+  // disco. Prometer "a senha nunca sai do servidor" seria mentira nestes dois
+  // protocolos, e o descritivo (docs/cofres-de-credenciais.md) diz isso.
+  let cred;
+  try {
+    cred = await credenciais.resolver(host);
+  } catch (e) {
+    return fail(res, 502, `Cofre de credenciais: ${e.message}`);
+  }
+  try {
+    res.json({
+      protocolo: host.protocol,
+      username: host.username || cred.usuario || '',
+      password: cred.password || '',
+      domain: host.rdpDomain || '',
+      destino: `${host.host}:${host.port || padrao}`,
+    });
+  } finally {
+    // A credencial some do cadastro de redação assim que a resposta sai: daqui
+    // em diante quem a guarda é o renderer, pelo tempo do handshake.
+    cred.dispose();
+  }
 });
 
 // ---------- histórico de comandos ----------
@@ -540,7 +704,7 @@ app.post('/api/quick-connect', (req, res) => {
   }
   const port = Math.min(65535, Math.max(1, porta));
   const a = b.auth || {};
-  const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
+  const type = TIPOS_DE_AUTH.includes(a.type) ? a.type : 'agent';
   const auth = { type };
   if (type === 'key') {
     auth.keyPath = String(a.keyPath || '').trim();
@@ -552,7 +716,18 @@ app.post('/api/quick-connect', (req, res) => {
   // Página web não tem login do lado do app — guardar credencial aqui seria
   // segredo parado sem nada que o consuma.
   const credencial = protocol === 'web' ? { type: 'agent' } : auth;
-  const id = quickhosts.add({ name, host: endereco, port, username: protocol === 'web' ? '' : username, protocol, url, auth: credencial });
+  // Referência a segredo de cofre também na conexão rápida: o host é efêmero, a
+  // referência não guarda segredo nenhum, e sem isto o `type: 'cofre'` aceito
+  // acima ficaria sem o que buscar — pior que não aceitar.
+  let segredoRapido = null;
+  if (credencial.type === 'cofre') {
+    const b2 = b.segredo || {};
+    const apelido = String(b2.cofre || '').trim();
+    const idSegredo = String(b2.id || '').trim().slice(0, 200);
+    if (!apelido || !idSegredo) return fail(res, 400, 'Escolha o cofre e o segredo.');
+    segredoRapido = { cofre: apelido, id: idSegredo, rotulo: String(b2.rotulo || '').slice(0, 200) };
+  }
+  const id = quickhosts.add({ name, host: endereco, port, username: protocol === 'web' ? '' : username, protocol, url, auth: credencial, segredo: segredoRapido });
   res.json({ hostId: id, name, protocol, url });
 });
 
@@ -609,6 +784,9 @@ function publicHost(h) {
     icon: h.icon || '',
     color: h.color || '',
     agenda: h.agenda || null,
+    // Referência, não segredo: sem ela a tela não consegue mostrar de qual cofre
+    // o host depende nem avisar quando esse cofre não está configurado.
+    segredo: h.segredo || null,
     vars: h.vars || {},
     fingerprint: h.fingerprint || null,
     webCert: h.webCert || null,
@@ -652,7 +830,7 @@ function parseHostBody(body, res) {
   const a = body.auth || {};
   // Página web não autentica pelo app: quem pede usuário e senha é a página.
   const type = protocol === 'web' ? 'agent'
-    : (['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent');
+    : (TIPOS_DE_AUTH.includes(a.type) ? a.type : 'agent');
   const auth = { type };
   if (type === 'key') {
     auth.keyPath = String(a.keyPath || '').trim();
@@ -672,7 +850,18 @@ function parseHostBody(body, res) {
   // servidor recusava, ou pior, o contrário.
   let agenda;
   try { agenda = agendaLib.normalizarAgenda(body.agenda); } catch (e) { return fail(res, 400, e.message); }
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, auth, vars };
+  // Referência ao segredo num cofre externo. NÃO é segredo: é apelido do cofre
+  // + id do item, e sem ela um host de `type: cofre` não sabe o que buscar.
+  let segredo = null;
+  if (type === 'cofre') {
+    const b2 = body.segredo || {};
+    const apelido = String(b2.cofre || '').trim();
+    const idSegredo = String(b2.id || '').trim().slice(0, 200);
+    if (!apelido) return fail(res, 400, 'Escolha o cofre de credenciais deste host.');
+    if (!idSegredo) return fail(res, 400, 'Escolha (ou informe) o segredo dentro do cofre.');
+    segredo = { cofre: apelido, id: idSegredo, rotulo: String(b2.rotulo || '').trim().slice(0, 200) };
+  }
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, segredo, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -794,7 +983,7 @@ app.post('/api/import', (req, res) => {
       let port = Number(h.port) || proto.portaPadrao(protocolo);
       if (!Number.isInteger(port) || port < 1 || port > 65535) port = proto.portaPadrao(protocolo);
       const a = h.auth || {};
-      const type = ['agent', 'key', 'password'].includes(a.type) ? a.type : 'agent';
+      const type = TIPOS_DE_AUTH.includes(a.type) ? a.type : 'agent';
       const auth = { type };
       if (type === 'key') {
         auth.keyPath = String(a.keyPath || '');
@@ -813,6 +1002,15 @@ app.post('/api/import', (req, res) => {
     const url = opcional(h.url, (v) => weburl.normalizarUrl(v) || '');
       const icon = opcional(h.icon, slug);
       const color = opcional(h.color, slug);
+      // Referência a segredo de cofre. Vem do arquivo, mas NÃO é segredo: é
+      // apelido + id. Sem ela um host de `type: cofre` restaura sem saber o que
+      // buscar — completo na tela, quebrado na conexão.
+      const segredo = opcional(h.segredo, (v) => {
+        const cofre = String((v && v.cofre) || '').trim().slice(0, 40);
+        const idSeg = String((v && v.id) || '').trim().slice(0, 200);
+        if (!cofre || !idSeg) return null;
+        return { cofre, id: idSeg, rotulo: String((v && v.rotulo) || '').trim().slice(0, 200) };
+      });
       // Agenda mal formada no arquivo não pode derrubar a importação inteira: o
       // XML é entrada de terceiro e as outras 800 entradas não têm culpa. Cai
       // fora com aviso, igual ao que já se faz com variável de nome inválido.
@@ -882,7 +1080,7 @@ app.post('/api/import', (req, res) => {
         }
         // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
         // um arquivo sem a variável X não é motivo para apagar o X daqui.
-        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, auth }),
+        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, segredo, auth }),
           { vars: { ...(ex.vars || {}), ...vars } });
         summary.hosts.updated++;
       } else {
@@ -893,9 +1091,32 @@ app.post('/api/import', (req, res) => {
         // identidade aprendida NESTA máquina, não configuração.
         d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps,
           rdpDomain: rdpDomain || '', url: url || '', group: group || '', icon: icon || '', color: color || '',
-          agenda: agenda || null, auth, vars });
+          agenda: agenda || null, segredo: segredo || null, auth, vars });
         summary.hosts.added++;
       }
+    }
+
+    // Cofres de credenciais: endereço e tipo. A CHAVE nunca vem do arquivo —
+    // ela mora fora do data.json e o export não a alcança. Restaurar noutra
+    // máquina devolve o cofre configurado faltando só a chave, que é
+    // exatamente o que se quer: sem digitar endereço de novo, sem o arquivo
+    // carregar o que abre todas as senhas.
+    if (!Array.isArray(d.cofres)) d.cofres = [];
+    for (const c of asArray(body.cofres)) {
+      const apelido = String((c && c.apelido) || '').trim().toLowerCase();
+      const tipo = String((c && c.tipo) || '').trim();
+      if (!apelido || !cofres.pegar(tipo)) {
+        if (apelido) summary.skipped.push(`cofre "${apelido}": tipo desconhecido "${tipo}"`);
+        continue;
+      }
+      const config = {};
+      for (const [k, v] of Object.entries((c && c.config) || {})) {
+        config[String(k).slice(0, 40)] = String(v).slice(0, 500);
+      }
+      const ex = d.cofres.find((x) => x.apelido === apelido);
+      if (ex) Object.assign(ex, { tipo, nome: String(c.nome || ex.nome || tipo).slice(0, 80), config });
+      else d.cofres.push({ apelido, tipo, nome: String(c.nome || tipo).slice(0, 80), config });
+      summary.cofres = (summary.cofres || 0) + 1;
     }
 
     // Playbooks
