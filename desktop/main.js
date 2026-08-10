@@ -61,8 +61,11 @@ if (!electronApp.requestSingleInstanceLock()) {
   // Electron (`npm start`) esse recurso não existe, o arquivo fica em texto
   // claro com permissão 600, e a tela DIZ isso em vez de deixar supor.
   //
-  // `isEncryptionAvailable` só responde de verdade depois do whenReady: no
-  // Linux ele precisa consultar o serviço de chaves da sessão gráfica.
+  // NADA aqui pergunta ao sistema agora. `usarCofreDoSistema` só GUARDA estas
+  // funções; a pergunta (`isEncryptionAvailable`, que no macOS abre o Keychain)
+  // acontece na primeira leitura ou gravação de chave de cofre — não no
+  // arranque. Perguntar no arranque fazia o macOS pedir a senha de login TODA
+  // VEZ que o app abria, sem cofre nenhum configurado e sem nada a proteger.
   try {
     const { safeStorage } = require('electron');
     segredosDeCofre.usarCofreDoSistema({
@@ -72,6 +75,8 @@ if (!electronApp.requestSingleInstanceLock()) {
       cifrar: (txt) => safeStorage.encryptString(txt),
       decifrar: (buf) => safeStorage.decryptString(buf),
     });
+    // A preferência do usuário é aplicada antes de qualquer leitura.
+    segredosDeCofre.definirPreferencia((store.get().settings || {}).cofreChavesNoSistema !== false);
   } catch (e) {
     console.error('[cofres] armazenamento protegido indisponível:', e && e.message);
   }

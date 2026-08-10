@@ -370,11 +370,37 @@ function renderCofres() {
   const aviso = $('#cofresProtecao');
   if (aviso) {
     // Um app que guarda segredo em texto claro sem dizer é pior que um que diz.
-    aviso.textContent = cofresEmCache.chavesProtegidas
-      ? '🔒 As chaves de API dos cofres ficam no armazenamento protegido do sistema (Keychain).'
-      : '⚠️ Fora do app desktop não há Keychain: as chaves ficam em texto claro em '
-        + 'cofres-chaves.json (permissão 600). Elas nunca vão para o backup.';
-    aviso.classList.toggle('warn-hint', !cofresEmCache.chavesProtegidas);
+    // "ainda-nao-perguntado" é um estado de verdade: o app NÃO consultou o
+    // sistema, porque consultar abre o Keychain e pede a senha de login. Dizer
+    // "protegido" sem ter perguntado seria afirmar o que não se sabe.
+    const textos = {
+      sistema: '🔒 As chaves de API dos cofres ficam no armazenamento protegido do sistema (Keychain).',
+      'ainda-nao-perguntado': '🔒 As chaves de API ficarão no armazenamento protegido do sistema '
+        + '(Keychain). O macOS vai pedir sua senha de login na primeira vez que o app usar uma chave '
+        + 'depois de cada atualização — o app não tem certificado de desenvolvedor, então a assinatura '
+        + 'muda a cada versão e o Keychain não o reconhece. Se preferir não ser perguntado, desmarque abaixo.',
+      'desligado-pelo-usuario': '⚠️ As chaves ficam em texto claro em cofres-chaves.json (permissão 600), '
+        + 'como as demais credenciais do app. Nunca vão para o backup.',
+      'texto-claro': '⚠️ O sistema não ofereceu armazenamento protegido: as chaves ficam em texto claro '
+        + 'em cofres-chaves.json (permissão 600). Nunca vão para o backup.',
+      indisponivel: '⚠️ Fora do app desktop não há Keychain: as chaves ficam em texto claro em '
+        + 'cofres-chaves.json (permissão 600). Nunca vão para o backup.',
+    };
+    const est = cofresEmCache.protecao || 'indisponivel';
+    aviso.textContent = textos[est] || textos.indisponivel;
+    aviso.classList.toggle('warn-hint', est !== 'sistema' && est !== 'ainda-nao-perguntado');
+  }
+  const cx = $('#cofreUsarSistema');
+  if (cx) {
+    cx.checked = cofresEmCache.usarSistema !== false;
+    cx.disabled = cofresEmCache.protecao === 'indisponivel';
+    cx.onchange = async () => {
+      try {
+        const r = await api('/api/cofres/protecao', { method: 'PUT', body: { usarSistema: cx.checked } });
+        toast(r.regravadas ? `${r.regravadas} chave(s) regravada(s) no regime novo.` : 'Preferência salva.');
+        await carregarCofres(); renderCofres();
+      } catch (e) { toast(e.message, 'erro'); cx.checked = !cx.checked; }
+    };
   }
   if (!cofresEmCache.cofres.length) {
     el(wrap, 'p', 'empty', 'Nenhum cofre configurado. Sem cofre, as senhas continuam '

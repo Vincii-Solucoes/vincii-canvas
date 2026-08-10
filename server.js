@@ -311,10 +311,29 @@ app.get('/api/cofres', (req, res) => {
   res.json({
     catalogo: cofres.catalogo(),
     cofres: credenciais.listaDeCofres().map(cofrePublico),
-    // Fora do Electron não há Keychain: a tela precisa DIZER que a chave fica
-    // em texto claro, em vez de deixar o usuário supor que está protegida.
-    chavesProtegidas: segredosDeCofre.protegido(),
+    // Estado descritivo, e NÃO um booleano obtido perguntando ao sistema: a
+    // pergunta abre o Keychain, e desenhar tela não é motivo para isso.
+    protecao: segredosDeCofre.estadoDaProtecao(),
+    usarSistema: (store.get().settings || {}).cofreChavesNoSistema !== false,
   });
+});
+
+// Liga ou desliga o armazenamento protegido do sistema para as chaves de cofre.
+app.put('/api/cofres/protecao', (req, res) => {
+  const usar = (req.body || {}).usarSistema !== false;
+  const d = store.get();
+  if (!d.settings || typeof d.settings !== 'object') d.settings = {};
+  d.settings.cofreChavesNoSistema = usar;
+  store.save();
+  segredosDeCofre.definirPreferencia(usar);
+  // Regrava o que já existe no regime novo. Sem isto, desligar deixaria as
+  // chaves antigas presas no Keychain — e o usuário seguiria sendo perguntado.
+  let regravadas = 0;
+  for (const c of d.cofres || []) {
+    const atual = segredosDeCofre.pegar(c.apelido);
+    if (Object.keys(atual).length) { segredosDeCofre.definir(c.apelido, atual); regravadas += 1; }
+  }
+  res.json({ protecao: segredosDeCofre.estadoDaProtecao(), regravadas });
 });
 
 const RE_APELIDO = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;

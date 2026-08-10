@@ -191,6 +191,63 @@ const servidor = http.createServer((req, res) => {
 
   // ---------- a chave de API fica fora do data.json ----------
 
+  // ---------- o Keychain não é tocado sem ter o que proteger ----------
+  //
+  // A primeira versão perguntava ao sistema no ARRANQUE do app. No macOS essa
+  // pergunta é `safeStorage.isEncryptionAvailable()`, que abre o Keychain — e o
+  // macOS pedia a senha de login TODA VEZ que o app abria, sem nenhum cofre
+  // configurado e sem nada a proteger. Pior: o app é assinado ad-hoc e
+  // reassinado a cada versão, então o Keychain nunca reconhecia o app anterior e
+  // a pergunta voltava sempre. Medido no app empacotado, perfil zerado: 1 acesso
+  // por arranque; depois do conserto, 0.
+  {
+    const os2 = require('os');
+    const dir2 = fs.mkdtempSync(path.join(os2.tmpdir(), 'vc-kc-'));
+    const antigo = process.env.SSHC_DATA_DIR;
+    process.env.SSHC_DATA_DIR = dir2;
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    const seg = require('../lib/cofresegredos');
+    let toques = 0;
+    seg.usarCofreDoSistema({
+      disponivel: () => { toques += 1; return true; },
+      cifrar: (t) => Buffer.from('C:' + t),
+      decifrar: (b) => b.toString().replace(/^C:/, ''),
+    });
+    igual(toques, 0, 'INJETAR a interface do sistema não pode perguntar nada — era aqui que o '
+      + 'arranque do app abria o Keychain');
+    igual(seg.estadoDaProtecao(), 'ainda-nao-perguntado',
+      'e a tela sabe dizer isso sem forçar a pergunta');
+    seg.pegar('qualquer');
+    igual(toques, 0, 'ler sem arquivo nenhum também não pergunta');
+
+    seg.definir('lab', { chave: 'k' });
+    igual(toques, 1, 'a pergunta acontece ao GRAVAR uma chave de verdade — aí há o que proteger');
+    igual(seg.estadoDaProtecao(), 'sistema', 'e só então o estado é conhecido');
+    igual(seg.pegar('lab'), { chave: 'k' }, 'a chave volta decifrada');
+    igual(toques, 1, 'a resposta do sistema é guardada: não se pergunta duas vezes');
+
+    // Desligado pelo usuário: o Keychain não é tocado nem para gravar.
+    const dir3 = fs.mkdtempSync(path.join(os2.tmpdir(), 'vc-kc2-'));
+    process.env.SSHC_DATA_DIR = dir3;
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    const seg2 = require('../lib/cofresegredos');
+    let toques2 = 0;
+    seg2.usarCofreDoSistema({ disponivel: () => { toques2 += 1; return true; },
+      cifrar: (t) => Buffer.from(t), decifrar: (b) => b.toString() });
+    seg2.definirPreferencia(false);
+    seg2.definir('lab', { chave: 'k' });
+    igual(toques2, 0, 'com o armazenamento do sistema DESLIGADO, nada de Keychain — nem ao gravar');
+    const arq = JSON.parse(fs.readFileSync(path.join(dir3, 'cofres-chaves.json'), 'utf8'));
+    igual(arq.formato, 'texto-claro', 'a chave vai para o arquivo, no regime das demais credenciais');
+    igual(fs.statSync(path.join(dir3, 'cofres-chaves.json')).mode & 0o777, 0o600, 'com permissão 600');
+    igual(seg2.pegar('lab'), { chave: 'k' }, 'e volta de lá sem perguntar nada');
+
+    process.env.SSHC_DATA_DIR = antigo;
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    try { fs.rmSync(dir2, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(dir3, { recursive: true, force: true }); } catch {}
+  }
+
   {
     const bruto = fs.readFileSync(path.join(DIR, 'data.json'), 'utf8');
     naoOk(bruto.includes('a-chave'),
