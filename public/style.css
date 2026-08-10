@@ -127,6 +127,47 @@ body.term-full .term-grid { height: calc(100vh - 100px); }
 @keyframes panelIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes panelFade { from { opacity: 0; } to { opacity: 1; } }
 
+/* ---------- Configurações: uma grade, e não uma pilha desalinhada ---------- */
+/*
+   A largura era decidida cartão a cartão, com `style="max-width:640px"` em uns
+   e nada em outros: a coluna ia estreita, estreita, LARGA, estreita, e a metade
+   direita da tela ficava vazia. Aqui a largura é do container, e cada cartão
+   preenche a coluna que lhe cabe — duas em tela larga, uma em tela estreita,
+   sem media query escrita à mão.
+
+   `align-items: start` é o que impede um cartão curto de esticar até a altura
+   do vizinho, que era o outro motivo de a tela parecer desalinhada.
+*/
+/*
+   Grade de duas colunas, cada cartão com a ALTURA DO SEU CONTEÚDO.
+   Foram três tentativas até aqui, e vale registrar por que as outras saíram:
+
+   - largura decidida cartão a cartão (`style="max-width:640px"` em uns, nada
+     em outros): a coluna ia estreita, estreita, LARGA, estreita, com metade da
+     tela vazia à direita;
+   - `columns` (colunas de texto): os cartões escorrem e preencheriam bem, mas
+     nenhum pode ser partido ao meio — e o equilíbrio do navegador, com um
+     cartão de 415px no meio, deixou uma coluna terminando 500px antes da outra;
+   - `align-items: stretch`: alinha as linhas, mas estica "Tema" (três linhas de
+     texto) até a altura do cartão com prévia de terminal ao lado. Um retângulo
+     com 200px de nada dentro é pior que o buraco que ele resolvia.
+
+   `minmax(min(100%, 430px), 1fr)` troca duas colunas por uma na janela estreita
+   sem media query escrita à mão; o `min(100%, …)` impede a coluna mínima de
+   estourar a largura numa janela menor que 430px.
+*/
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr));
+  gap: 16px;
+  align-items: start;
+  max-width: 1180px;
+}
+.config-grid > .card { margin-bottom: 0; }
+/* Um cartão que é só texto de referência não precisa disputar espaço com os
+   que têm controles: ele ocupa a linha inteira, no fim. */
+.config-grid > .card.largo { grid-column: 1 / -1; }
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -340,7 +381,11 @@ input:focus, select:focus, textarea:focus {
 
 .hint { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
 .precedence { margin-top: 4px; }
+/* O texto vai dentro de UM <span>. Sem ele, cada pedaço solto entre as tags
+   virava um item de flex independente — "senhas e chave da API" descolava numa
+   coluna própria e o resto da frase quebrava em volta. */
 .check-danger { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 0; color: var(--text); font-size: 13px; }
+.check-danger input { flex: 0 0 auto; }
 .check-danger strong { color: var(--yellow); }
 .font-preview {
   background: #0a0d12;
@@ -770,8 +815,16 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .host-card .info { flex: 1; min-width: 0; }
 .host-card .hname { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
 .host-card .haddr { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.host-card .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
-.host-card .tag { font-size: 10.5px; background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; color: var(--muted); }
+/* `.meta` e `.tag` valiam SÓ dentro de .host-card. Usadas em qualquer outro
+   lugar — no cartão de um cofre, por exemplo — viravam texto solto e colado:
+   "http://127.0.0.1:4711/v1chave configurada", sem pílula e sem espaço. São
+   peças genéricas; o seletor é que estava estreito demais. */
+.meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+.tag {
+  font-size: 10.5px; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 9px; color: var(--muted);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .host-card .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .host-card .avatar-lg { width: 40px; height: 40px; font-size: 16px; border-radius: 11px; }
 
@@ -1351,6 +1404,12 @@ body.term-full .term-grid.no-ai.no-sidebar {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .cofre-item .tag { align-self: flex-start; }
+
+/* cartão de um cofre configurado, dentro da lista */
+.cofre-cfg { padding: 12px 14px; margin-bottom: 10px; }
+.cofre-cfg .item-head { margin-bottom: 4px; }
+.cofre-cfg .actions { margin-top: 10px; }
+.cofre-cfg .hint { margin: 8px 0 0; }
 
 /* ---------- agenda do host: faixa de horário ---------- */
 .agenda-fs { margin-top: 4px; }

@@ -382,7 +382,7 @@ function renderCofres() {
     return;
   }
   for (const c of cofresEmCache.cofres) {
-    const card = el(wrap, 'div', 'card item');
+    const card = el(wrap, 'div', 'card item cofre-cfg');
     const head = el(card, 'div', 'item-head');
     el(head, 'strong', null, c.apelido);
     el(head, 'span', 'muted small', c.desconhecido ? `tipo desconhecido: ${c.tipo}` : c.nome);

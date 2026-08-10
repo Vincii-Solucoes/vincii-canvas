@@ -353,7 +353,8 @@ try {
   </section>
 
   <section id="tab-config" class="tab-panel">
-    <div class="card" style="max-width:640px">
+    <div class="config-grid">
+    <div class="card">
       <h2>Tema</h2>
       <p class="hint">Escolha entre o modo claro (padrão) e escuro. A preferência é lembrada nesta máquina. O terminal e blocos de código continuam escuros nos dois temas.</p>
       <div id="themeSeg" class="theme-seg">
@@ -362,36 +363,8 @@ try {
       </div>
     </div>
 
-    <div class="card" style="max-width:640px">
-      <h2>Inteligência Artificial</h2>
-      <p class="hint">Os recursos de IA (assistente e agente no terminal, e geração de playbooks) usam a API da Anthropic (Claude). Informe sua própria chave — ela fica salva só nesta máquina (data.json, permissão 600) e nunca é enviada ao navegador. Precisa de créditos ativos na sua conta Anthropic.</p>
-      <label>Chave da API
-        <input id="cfgApiKey" type="password" autocomplete="new-password" placeholder="sk-ant-…">
-      </label>
-      <p id="cfgKeyState" class="hint"></p>
-      <label>Modelo
-        <select id="cfgModel"></select>
-      </label>
-      <p class="hint">O agente autônomo e o assistente usam o modelo escolhido aqui. O <strong>Opus 5</strong> é o mais capaz; o <strong>Haiku 4.5</strong> é o mais rápido e barato. Modelos exigem créditos ativos na sua conta Anthropic.</p>
-      <div class="btn-row">
-        <button id="cfgClearKey" class="btn small danger" hidden>Remover chave salva</button>
-        <span class="spacer"></span>
-        <button id="cfgSaveAi" class="btn primary">Salvar</button>
-      </div>
-    </div>
-
-    <div class="card" style="max-width:640px">
+    <div class="card">
       <h2>Aparência do terminal</h2>
-    </div>
-
-    <div class="card">
-      <h2>Área de trabalho remota (VNC e RDP)</h2>
-      <p class="hint">Cadastre o host com protocolo <strong>VNC</strong> ou <strong>RDP</strong> em <strong>Hosts</strong> e clique nele na barra lateral do <strong>Terminal</strong> — a área de trabalho abre como mais uma aba.</p>
-      <p class="hint"><strong>Os dois funcionam sem instalar nada</strong> — nem Docker, nem guacd. O RDP roda em WebAssembly dentro do próprio app, com NLA/CredSSP, e o servidor entra só como ponte de rede.</p>
-      <p class="hint">O RDP <strong>exige TLS no servidor</strong> (que é o padrão no Windows). Em servidores Linux com xrdp configurado em <code>security_layer=rdp</code> a conexão é recusada: troque para <code>security_layer=negotiate</code> em <code>/etc/xrdp/xrdp.ini</code> e reinicie o xrdp.</p>
-    </div>
-
-    <div class="card">
       <p class="hint">A fonte e o tamanho valem para o terminal interativo. Veja a prévia abaixo e clique em <strong>Salvar</strong> para aplicar.</p>
       <div class="grid2">
         <label>Fonte
@@ -421,7 +394,25 @@ try {
       <p class="hint">Dica: fontes como Fira Code, JetBrains Mono ou Cascadia Code só aparecem se estiverem instaladas no sistema; caso contrário o terminal usa uma fonte monoespaçada padrão.</p>
     </div>
 
-    <div class="card" style="max-width:640px">
+    <div class="card">
+      <h2>Inteligência Artificial</h2>
+      <p class="hint">Os recursos de IA (assistente e agente no terminal, e geração de playbooks) usam a API da Anthropic (Claude). Informe sua própria chave — ela fica salva só nesta máquina (data.json, permissão 600) e nunca é enviada ao navegador. Precisa de créditos ativos na sua conta Anthropic.</p>
+      <label>Chave da API
+        <input id="cfgApiKey" type="password" autocomplete="new-password" placeholder="sk-ant-…">
+      </label>
+      <p id="cfgKeyState" class="hint"></p>
+      <label>Modelo
+        <select id="cfgModel"></select>
+      </label>
+      <p class="hint">O agente autônomo e o assistente usam o modelo escolhido aqui. O <strong>Opus 5</strong> é o mais capaz; o <strong>Haiku 4.5</strong> é o mais rápido e barato. Modelos exigem créditos ativos na sua conta Anthropic.</p>
+      <div class="btn-row">
+        <button id="cfgClearKey" class="btn small danger" hidden>Remover chave salva</button>
+        <span class="spacer"></span>
+        <button id="cfgSaveAi" class="btn primary">Salvar</button>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head">
         <h2>Cofres de credenciais</h2>
       </div>
@@ -439,7 +430,7 @@ try {
         <code>node test/cofre-local.js</code>.</p>
     </div>
 
-    <div class="card" style="max-width:640px">
+    <div class="card">
       <div class="card-head">
         <h2>Backup da configuração</h2>
         <div class="btn-row">
@@ -448,8 +439,16 @@ try {
         </div>
       </div>
       <p class="hint">Exporta ou importa a configuração num arquivo XML: hosts, playbooks, perfis, variáveis globais, favoritos, configurações de IA/terminal e preferências da interface. Ficam de fora o histórico de comandos e as provas de identidade dos servidores (fingerprint e consentimento de RDP legado), que valem só nesta máquina. Ao importar, nenhum registro é removido — hosts e perfis com mesmo nome e endereço são atualizados; playbooks de mesmo nome têm os comandos substituídos, e o app lista quais antes de confirmar. Mesmo sem segredos, variáveis e comandos vão em texto claro: revise antes de compartilhar.</p>
-      <label class="check-danger"><input type="checkbox" id="exportSecrets"> Incluir <strong>senhas e chave da API</strong> no arquivo exportado (texto claro — guarde com cuidado)</label>
+      <label class="check-danger"><input type="checkbox" id="exportSecrets"><span>Incluir <strong>senhas e chave da API</strong> no arquivo exportado (texto claro — guarde com cuidado)</span></label>
       <input type="file" id="importFile" accept=".xml,application/xml,text/xml" hidden>
+    </div>
+    <div class="card largo">
+      <h2>Área de trabalho remota (VNC e RDP)</h2>
+      <p class="hint">Cadastre o host com protocolo <strong>VNC</strong> ou <strong>RDP</strong> em <strong>Hosts</strong> e clique nele na barra lateral do <strong>Terminal</strong> — a área de trabalho abre como mais uma aba.</p>
+      <p class="hint"><strong>Os dois funcionam sem instalar nada</strong> — nem Docker, nem guacd. O RDP roda em WebAssembly dentro do próprio app, com NLA/CredSSP, e o servidor entra só como ponte de rede.</p>
+      <p class="hint">O RDP <strong>exige TLS no servidor</strong> (que é o padrão no Windows). Em servidores Linux com xrdp configurado em <code>security_layer=rdp</code> a conexão é recusada: troque para <code>security_layer=negotiate</code> em <code>/etc/xrdp/xrdp.ini</code> e reinicie o xrdp.</p>
+    </div>
+
     </div>
   </section>
 </main>
