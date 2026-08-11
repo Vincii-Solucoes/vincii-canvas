@@ -16,6 +16,8 @@
 //   --401 --expira --403 --inativo --429 --503
 //   --erp-validation     erro no envelope do ERP (error/code, em inglês)
 //   --erp-500            internal_error
+//   --conflict           409 conflict (envelope do ERP, texto em português)
+//   --sem-cliente        /v1/secrets sem cofre/cofreNome (ERP anterior a 11/08)
 //   --sem-janela         nenhum cliente tem janela de atendimento
 //   --fora-de-horario    /v1/secrets/{id} recusa com sem_permissao (a trava real)
 //   --lento=3000
@@ -33,6 +35,7 @@ function modosDaLinhaDeComando(args) {
     invalida: tem('--401'), expira: tem('--expira'), semPermissao: tem('--403'),
     inativo: tem('--inativo'), limite: tem('--429'), indisponivel: tem('--503'),
     erpValidation: tem('--erp-validation'), erp500: tem('--erp-500'),
+    conflito: tem('--conflict'), semCliente: tem('--sem-cliente'),
     semJanela: tem('--sem-janela'), foraDeHorario: tem('--fora-de-horario'),
     lento: num('--lento', 0),
   };
@@ -58,11 +61,14 @@ const CLIENTES = [
 ];
 
 const SISTEMAS = [
-  { cofre: VELONIC, cofreNome: 'Velonic', nome: 'OPA', url: 'https://opa.velonic.com.br/atendente/' },
-  { cofre: VELONIC, cofreNome: 'Velonic', nome: 'IXC', url: 'https://velonic.velonic.com.br/adm.php',
+  { id: '8f21c000-0000-4000-8000-000000000001', cofre: VELONIC, cofreNome: 'Velonic',
+    nome: 'OPA', url: 'https://opa.velonic.com.br/atendente/' },
+  { id: 'b3d90700-0000-4000-8000-000000000002', cofre: VELONIC, cofreNome: 'Velonic',
+    nome: 'IXC', url: 'https://velonic.velonic.com.br/adm.php',
     campos: [{ nome: 'IP', valor: '10.0.0.5' }] },
-  // Sistema SEM url e SEM campos: a especificação diz que os dois são opcionais,
-  // e o adaptador precisa aguentar.
+  // Sistema SEM url, SEM campos e SEM id: os três são opcionais na prática. O
+  // id falta em sistema antigo que ainda não passou por um save no ERP, e o
+  // adaptador precisa cair no `cliente + nome` sem quebrar.
   { cofre: MAYLINK, cofreNome: 'Maylink', nome: 'Rede interna' },
 ];
 
@@ -83,6 +89,9 @@ const SEGREDOS = [
     valor: { chavePrivada: '-----BEGIN OPENSSH PRIVATE KEY-----\nmentira\n-----END OPENSSH PRIVATE KEY-----\n',
       passphrase: 'frase-secreta' } },
   { id: '9a1f0000-0000-4000-8000-000000000004', cliente: MAYLINK,
+    // cofreNome null: o contrato avisa que pode vir, e sem alguém mandando
+    // null o "trate como anulável" nunca é exercitado.
+    semNomeDeCliente: true,
     nome: 'admin@roteador', caminho: 'Filial Norte', tipo: 'senha',
     atualizadoEm: '2026-06-11T08:00:00Z', usuario: 'admin', host: '192.168.1.1', porta: 443,
     valor: { senha: 'admin-do-roteador' } },
@@ -97,17 +106,32 @@ function responder(res, status, corpo, cab = {}) {
 const erro = (res, status, codigo, mensagem, cab) =>
   responder(res, status, { erro: { codigo, mensagem } }, cab);
 // Envelope GENÉRICO DO ERP (inglês) — nasce antes do cofre
-const erroErp = (res, status, code, message) =>
-  responder(res, status, { error: { code, message } });
+const erroErp = (res, status, code, message) => {
+  // O 422 do ERP NÃO tem `message`: só `details`. Mandar message aqui deixaria
+  // o teste passar contra um formato que a API real não produz.
+  if (status === 422) {
+    const i = String(message).indexOf(': ');
+    const campo = i > 0 ? String(message).slice(0, i) : 'parametro';
+    const motivo = i > 0 ? String(message).slice(i + 2) : String(message);
+    return responder(res, status, { error: { code,
+      details: [{ loc: ['query', campo], msg: motivo }] } });
+  }
+  return responder(res, status, { error: { code, message } });
+};
 
-// A referência é o segredo MENOS o valor e MENOS o cliente.
+// A referência é o segredo MENOS o valor.
 //
-// Reproduz de propósito uma característica da API real: /v1/secrets NÃO diz a
-// qual cliente cada segredo pertence (só /v1/sistemas diz). É por isso que o
-// Canvas precisa guardar o cliente escolhido no momento da seleção — e é o
-// principal ponto a alinhar com quem mantém o ERP.
-function referenciaDe(s) {
-  const r = { id: s.id, nome: s.nome, caminho: s.caminho, tipo: s.tipo, atualizadoEm: s.atualizadoEm };
+// `cofre` (id do cliente) passou a vir sempre; `cofreNome` pode vir null — e o
+// fake devolve null de propósito num deles, porque "pode ser null" só vira
+// código correto quando alguém manda null.
+function referenciaDe(s, M) {
+  const r = { id: s.id, nome: s.nome, caminho: s.caminho, tipo: s.tipo,
+    atualizadoEm: s.atualizadoEm };
+  if (!M.semCliente) {
+    r.cofre = s.cliente;
+    const c = CLIENTES.find((x) => x.id === s.cliente);
+    r.cofreNome = s.semNomeDeCliente ? null : (c ? c.nome : null);
+  }
   if (s.usuario) r.usuario = s.usuario;
   if (s.host) r.host = s.host;
   if (s.porta) r.porta = s.porta;
@@ -148,8 +172,10 @@ function atender(req, res, M, token, diario) {
   if (M.inativo) return erro(res, 403, 'cliente_inativo', 'Contrato encerrado (modo de teste).');
   if (M.limite) return erro(res, 429, 'limite_de_taxa', 'Devagar (modo de teste).', { 'Retry-After': '2' });
   if (M.indisponivel) return erro(res, 503, 'indisponivel', 'Cofre sem chave de cifra (modo de teste).');
-  if (M.erpValidation) return erroErp(res, 422, 'validation_error', 'limite must be between 1 and 200');
-  if (M.erp500) return erroErp(res, 500, 'internal_error', 'unexpected');
+  if (M.erpValidation) return erroErp(res, 422, 'validation_error', 'limite: must be between 1 and 200');
+  if (M.erp500) return erroErp(res, 500, 'internal_error', 'Falha inesperada do cofre.');
+  // conflict sai em PORTUGUÊS, no envelope do ERP — o idioma não indica o envelope.
+  if (M.conflito) return erroErp(res, 409, 'conflict', 'O cadastro mudou durante a leitura.');
 
   if (req.method !== 'GET') return erroErp(res, 405, 'http_error', 'Method Not Allowed');
 
@@ -194,11 +220,16 @@ function atender(req, res, M, token, diario) {
       .filter((s) => !b || s.nome.toLowerCase().includes(b));
     // Paginação de mentira, mas de verdade: uma página por vez, para o cliente
     // exercitar o `proximoCursor` — que na API real vem SEMPRE, null no fim.
-    const inicio = Number(url.searchParams.get('cursor') || 0);
+    // Cursor inválido NÃO dá erro: degrada para a primeira página com 200. É o
+    // comportamento real, e é o que pode fazer um laço de paginação repetir
+    // itens sem nada avisar.
+    const cursorBruto = url.searchParams.get('cursor');
+    const n = Number(cursorBruto);
+    const inicio = (cursorBruto && Number.isInteger(n) && n >= 0 && n <= todos.length) ? n : 0;
     const pagina = todos.slice(inicio, inicio + Math.min(limite, 2));
     const fim = inicio + pagina.length;
     return responder(res, 200, {
-      itens: pagina.map(referenciaDe),
+      itens: pagina.map((x) => referenciaDe(x, M)),
       proximoCursor: fim < todos.length ? String(fim) : null,
     });
   }

@@ -281,12 +281,41 @@ const { fimDoAtendimento } = require('../public/janela');
 }
 
 {
-  // Turno degenerado (início == fim): a especificação diz que dá a volta, ou
-  // seja, 24 h contínuas. O laço de emenda não pode girar em falso nele.
+  // TURNO DE DURAÇÃO ZERO (início == fim) NÃO É 24/7.
+  //
+  // Este teste afirmava o contrário, e afirmava errado: o código tratava
+  // `fim <= inicio` como "dá a volta na semana", então 09:00→09:00 passava a
+  // valer os SETE DIAS INTEIROS. Efeito na tela: a aba daquele host travava
+  // para sempre, com o cofre recusando a credencial fora do expediente de
+  // verdade — o laço de conexões negadas que este módulo existe para evitar.
+  //
+  // O contrato só descreve a volta quando o fim é MENOR que o início. Igual não
+  // está definido, e na dúvida este módulo fecha.
   const j = { fuso: '-03:00', turnos: [
     { diaInicio: 1, inicio: '09:00', diaFim: 1, fim: '09:00' }] };
-  const f = fimDoAtendimento(j, em('2026-08-11T15:00:00Z')); // terça 12:00 BR
-  ok(f instanceof Date, 'turno de volta completa devolve uma data, e não trava o laço');
+  let abertos = 0;
+  for (let d = 0; d < 7; d += 1) {
+    for (const h of [0, 6, 9, 12, 18, 23]) {
+      if (estaEmAtendimento(j, new Date(Date.UTC(2026, 7, 10 + d, h + 3)))) abertos += 1;
+    }
+  }
+  igual(abertos, 0,
+    'turno de duração zero não abre em instante nenhum da semana — tratá-lo como '
+    + 'volta completa travava a aba do host para sempre');
+  igual(fimDoAtendimento(j, em('2026-08-11T15:00:00Z')), null,
+    'e não há "aberto até", porque não há nada aberto');
+
+  // O que É volta de verdade continua funcionando.
+  const volta = { fuso: '-03:00', turnos: [
+    { diaInicio: 6, inicio: '22:00', diaFim: 0, fim: '06:00' }] };
+  ok(estaEmAtendimento(volta, em('2026-08-17T02:00:00Z')),
+    'o plantão que atravessa a semana (fim MENOR que o início) segue valendo');
+
+  // Exceção de duração zero, mesma regra.
+  const excZero = { fuso: '-03:00', turnos: [],
+    excecoes: [{ data: '2026-12-24', fechado: false, inicio: '09:00', fim: '09:00' }] };
+  naoOk(estaEmAtendimento(excZero, new Date(Date.UTC(2026, 11, 24, 15))),
+    'exceção de duração zero também não abre o dia inteiro');
 }
 
 
@@ -313,6 +342,129 @@ const { fimDoAtendimento } = require('../public/janela');
   const j2 = normalizarJanela(comExcecao);
   igual(typeof j2.excecoes[0].inicio, 'string', 'idem para o horário da exceção');
   igual(JSON.parse(JSON.stringify(j2)), j2, 'e a exceção também atravessa o JSON inteira');
+}
+
+
+// ---------- a armadilha: EXCEÇÃO não atravessa o dia, TURNO atravessa ----------
+
+// As duas vêm no mesmo payload, e a escrita é parecida. Um turno 22:00→06:00
+// significa "de hoje à noite até amanhã de manhã" (ele tem diaInicio/diaFim).
+// Uma exceção 22:00→06:00 significa outra coisa: as duas pontas do MESMO dia.
+// Aplicar a regra do turno na exceção deixava a madrugada inteira de fora, sem
+// erro em lugar nenhum — o sistema só não abria.
+{
+  const j = { fuso: '-03:00', turnos: [],
+    excecoes: [{ data: '2026-12-24', fechado: false, inicio: '22:00', fim: '06:00' }] };
+  // hora de Brasília -> instante UTC (BR = UTC-3)
+  const brasilia = (h) => new Date(Date.UTC(2026, 11, 24, h + 3, 0, 0));
+
+  ok(estaEmAtendimento(j, brasilia(1)),
+    '01:00 do dia 24 ABRE — é a metade que o código perdia inteira');
+  ok(estaEmAtendimento(j, brasilia(5)), '05:00 ainda abre');
+  naoOk(estaEmAtendimento(j, brasilia(6)), '06:00 fecha (o fim não conta)');
+  naoOk(estaEmAtendimento(j, brasilia(12)), 'meio-dia fica fora das duas pontas');
+  naoOk(estaEmAtendimento(j, brasilia(21)), '21:00 ainda fora');
+  ok(estaEmAtendimento(j, brasilia(22)), '22:00 abre a ponta da noite');
+  ok(estaEmAtendimento(j, brasilia(23)), '23:00 também');
+
+  // E, o ponto todo: NÃO invade o dia seguinte.
+  const dia25 = (h) => new Date(Date.UTC(2026, 11, 25, h + 3, 0, 0));
+  naoOk(estaEmAtendimento(j, dia25(2)),
+    '02:00 do dia 25 NÃO abre — a exceção não atravessa para o dia seguinte, '
+    + 'ao contrário do turno');
+
+  igual(fimDoAtendimento(j, brasilia(1)).toISOString(), '2026-12-24T09:00:00.000Z',
+    'quem está na madrugada termina às 06:00 do próprio dia');
+  igual(fimDoAtendimento(j, brasilia(23)).toISOString(), '2026-12-25T03:00:00.000Z',
+    'quem está na noite termina à meia-noite, e não às 06:00 do dia seguinte');
+}
+
+{
+  // O mesmo horário, agora como TURNO: aí sim atravessa.
+  const j = { fuso: '-03:00', turnos: [
+    { diaInicio: 3, inicio: '22:00', diaFim: 4, fim: '06:00' }] }; // quinta 22:00 -> sexta 06:00
+  ok(estaEmAtendimento(j, new Date('2026-08-14T05:00:00Z')),
+    'turno 22:00→06:00 ATRAVESSA: sexta 02:00 ainda está dentro');
+  naoOk(estaEmAtendimento(j, new Date('2026-08-13T05:00:00Z')),
+    'e não vale na madrugada da própria quinta — que é justamente o oposto da exceção');
+}
+
+// ---------- o feriado substitui os turnos NOS DOIS SENTIDOS ----------
+
+{
+  // Cliente SEM turno nenhum, com feriado de expediente reduzido: ABRE.
+  const j = { fuso: '-03:00', turnos: [],
+    excecoes: [{ data: '2026-12-25', fechado: false, inicio: '01:00', fim: '03:00' }] };
+  ok(estaEmAtendimento(j, new Date(Date.UTC(2026, 11, 25, 5, 0, 0))),
+    'cliente sem turnos ABRE às 02:00 numa data com exceção de expediente reduzido — '
+    + '"sem turnos" NÃO implica "nunca abre"');
+  naoOk(estaEmAtendimento(j, new Date(Date.UTC(2026, 11, 25, 15, 0, 0))),
+    'mas só dentro da faixa da exceção');
+  naoOk(estaEmAtendimento(j, new Date(Date.UTC(2026, 11, 26, 5, 0, 0))),
+    'e só naquela data');
+}
+
+{
+  // O corte é por DIA-CALENDÁRIO: plantão domingo 22:00 -> segunda 06:00 com
+  // feriado na segunda entrega no domingo e recusa na segunda.
+  const j = { fuso: '-03:00',
+    turnos: [{ diaInicio: 6, inicio: '22:00', diaFim: 0, fim: '06:00' }],
+    excecoes: [{ data: '2026-08-17', fechado: true, rotulo: 'feriado na segunda' }] };
+  ok(estaEmAtendimento(j, new Date('2026-08-17T02:00:00Z')),
+    'domingo 23:00 entrega — o feriado é do dia seguinte e não corta a véspera');
+  naoOk(estaEmAtendimento(j, new Date('2026-08-17T05:00:00Z')),
+    'segunda 02:00 recusa — a cauda do plantão morre na virada do dia-calendário, '
+    + 'que é exatamente o que o cofre faz');
+}
+
+// ---------- fuso: deslocamento fixo OU nome de zona ----------
+
+{
+  const comZona = normalizarJanela({ fuso: 'America/Sao_Paulo',
+    turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 4, fim: '18:00' }] });
+  igual(comZona.fuso, 'America/Sao_Paulo',
+    'nome de zona IANA é PRESERVADO — caía no padrão -03:00 calado, e no horário '
+    + 'de verão isso é uma hora errada todo dia sem nenhum erro na tela');
+  ok(estaEmAtendimento(comZona, new Date('2026-08-10T15:00:00Z')),
+    'e a zona decide o horário: segunda 12:00 em São Paulo está dentro');
+  naoOk(estaEmAtendimento(comZona, new Date('2026-08-10T10:00:00Z')),
+    'segunda 07:00 em São Paulo, fora');
+
+  // Zona de OUTRO país, para provar que não é o -03:00 disfarçado.
+  const lisboa = normalizarJanela({ fuso: 'Europe/Lisbon',
+    turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 0, fim: '18:00' }] });
+  ok(estaEmAtendimento(lisboa, new Date('2026-08-10T10:00:00Z')),
+    'segunda 11:00 em Lisboa está dentro do comercial de lá');
+  naoOk(estaEmAtendimento(lisboa, new Date('2026-08-10T18:00:00Z')),
+    'e às 19:00 de Lisboa, fora — com -03:00 seriam 15:00 e daria "dentro"');
+
+  // O DESLOCAMENTO É DO INSTANTE, não da zona.
+  //
+  // É o ponto inteiro de aceitar zona em vez de offset. Brasília não tem
+  // horário de verão hoje, então isso não dá para provar com -03:00 — mas Nova
+  // York tem, e a mesma zona vale -04:00 em agosto e -05:00 em janeiro. Se o
+  // deslocamento fosse calculado uma vez e reusado, uma das duas datas erraria
+  // uma hora. É o mesmo erro que nos espera quando o horário de verão voltar.
+  {
+    const ny = normalizarJanela({ fuso: 'America/New_York',
+      turnos: [{ diaInicio: 0, inicio: '09:00', diaFim: 0, fim: '17:00' }] });
+    // Segunda 13:00 UTC. Em agosto (EDT, -04:00) são 09:00 em NY: dentro.
+    ok(estaEmAtendimento(ny, new Date('2026-08-10T13:00:00Z')),
+      'agosto: 13:00 UTC é 09:00 em Nova York (horário de verão), dentro do comercial');
+    // Mesma hora UTC em janeiro (EST, -05:00) são 08:00 em NY: fora.
+    naoOk(estaEmAtendimento(ny, new Date('2026-01-05T13:00:00Z')),
+      'janeiro: a MESMA hora UTC é 08:00 em Nova York, fora — o deslocamento é '
+      + 'calculado para cada instante, e não uma vez para a zona');
+    ok(estaEmAtendimento(ny, new Date('2026-01-05T14:00:00Z')),
+      'e às 14:00 UTC de janeiro são 09:00 em NY, dentro');
+  }
+
+  igual(normalizarJanela({ fuso: 'Marte/Olympus',
+    turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 4, fim: '18:00' }] }).fuso, '-03:00',
+    'zona inexistente cai no padrão do contrato, em vez de derrubar a janela');
+  igual(normalizarJanela({ fuso: '+05:30',
+    turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 4, fim: '18:00' }] }).fuso, '+05:30',
+    'e deslocamento fixo continua valendo, inclusive positivo e quebrado');
 }
 
 console.log(`\n${n} verificações passaram`);

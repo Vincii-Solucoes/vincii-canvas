@@ -196,8 +196,9 @@ async function comServidor(modos, corpo) {
       'erro em INGLÊS do ERP (error/validation_error) é lido — se só o envelope '
       + 'do cofre fosse lido, isto viraria "indisponivel" e o app insistiria');
     ok(e.message.includes('parâmetro'), 'e a mensagem diz de quem é a culpa: do Canvas');
-    ok(e.message.includes('limite must be between 1 and 200'),
-      'sem jogar fora o detalhe que o ERP mandou');
+    ok(e.message.includes('limite') && e.message.includes('must be between 1 and 200'),
+      'sem jogar fora o detalhe que o ERP mandou — que no 422 mora em `details`, '
+      + 'e não em `message`');
     igual(e.transitorio, false, 'parâmetro errado não conserta sozinho');
   });
 
@@ -393,6 +394,129 @@ async function comServidor(modos, corpo) {
       'o token não aparece em nenhuma URL — ali ele entraria em log de servidor, '
       + 'histórico de proxy e mensagem de erro');
   });
+
+  // ---------- o contrato de 11/08: o cliente vem no próprio segredo ----------
+
+  await comServidor({}, async (cfg) => {
+    const r = await adaptador.listar(cfg, { limite: 50 });
+    const web = r.itens.find((i) => i.nome === 'root@web-01');
+    igual(web.cliente, fake.VELONIC,
+      'cada segredo diz de qual CLIENTE é — era o pedido de maior efeito da nossa '
+      + 'lista, e é o que liga o segredo ao horário sem depender de filtro');
+    igual(web.clienteNome, 'Velonic', 'com o nome, para a lista não mostrar um UUID');
+
+    const roteador = r.itens.find((i) => i.nome === 'admin@roteador');
+    igual(roteador.cliente, fake.MAYLINK, 'o id do cliente nunca vem null');
+    igual(roteador.clienteNome, '',
+      'cofreNome null vira string vazia — o contrato avisa que é anulável, e '
+      + '"null" impresso na tela é o que acontece com quem não lê o aviso');
+  });
+
+  // ERP anterior a 11/08 não manda o campo: o app não pode quebrar por isso.
+  await comServidor({ semCliente: true }, async (cfg) => {
+    const r = await adaptador.listar(cfg, { limite: 50 });
+    igual(r.itens[0].cliente, '',
+      'sem o campo, o cliente fica vazio em vez de undefined — e a tela cai no filtro');
+    ok(r.itens.length > 0, 'e a listagem continua funcionando');
+  });
+
+  // ---------- sistemas: id estável, com reserva ----------
+
+  await comServidor({}, async (cfg) => {
+    const r = await adaptador.sistemas(cfg, {});
+    const opa = r.itens.find((s) => s.nome === 'OPA');
+    igual(opa.id, '8f21c000-0000-4000-8000-000000000001',
+      'sistema com id usa o id — é a chave que sobrevive a renomear');
+    ok(opa.idEstavel, 'e o app sabe que aquele id é confiável');
+
+    const antigo = r.itens.find((s) => s.nome === 'Rede interna');
+    igual(antigo.id, `${fake.MAYLINK}::Rede interna`,
+      'sistema antigo (sem id) cai para cliente + nome, em vez de ficar sem chave');
+    naoOk(antigo.idEstavel,
+      'marcado como NÃO estável: nome não é único por cliente, então essa chave '
+      + 'quebra se o admin renomear ou criar um segundo com o mesmo nome');
+  });
+
+  // ---------- 422 tem `details`, e NÃO tem `message` ----------
+
+  await comServidor({ erpValidation: true }, async (cfg) => {
+    const e = await falha(() => adaptador.listar(cfg), '422 deveria falhar');
+    igual(e.codigo, 'requisicao_invalida', '422 continua sendo erro do Canvas');
+    ok(e.message.includes('limite'),
+      'a mensagem sai de `details` — lendo só `message`, que o 422 NÃO tem, ela '
+      + 'virava "erro 422" e escondia justamente o parâmetro que precisa mudar');
+    ok(e.message.includes('between 1 and 200'), 'com o texto do validador inteiro');
+  });
+
+  {
+    const t = adaptador._traduzirErro;
+    const so = t(422, { error: { code: 'validation_error',
+      details: [{ loc: ['query', 'busca'], msg: 'no máximo 128 caracteres' }] } }, {});
+    ok(so.message.includes('busca') && so.message.includes('128'),
+      'details no formato do validador vira "campo: motivo"');
+
+    const varios = t(422, { error: { code: 'validation_error', details: [
+      { loc: ['query', 'limite'], msg: 'fora da faixa' },
+      { loc: ['query', 'cofre'], msg: 'não é UUID' }] } }, {});
+    ok(varios.message.includes('limite') && varios.message.includes('cofre'),
+      'e dois problemas de uma vez aparecem os dois');
+
+    const vazio = t(422, { error: { code: 'validation_error' } }, {});
+    ok(vazio.message.includes('422'), '422 sem details nenhum ainda diz alguma coisa');
+  }
+
+  // ---------- conflict: envelope do ERP, texto em PORTUGUÊS ----------
+
+  await comServidor({ conflito: true }, async (cfg) => {
+    const e = await falha(() => adaptador.ping(cfg), 'conflict deveria falhar');
+    igual(e.codigo, 'conflito', 'conflict tem código próprio');
+    igual(e.transitorio, false, 'e não é para insistir');
+    ok(e.message.includes('conflito de estado'),
+      'reconhecido pelo CÓDIGO, e não pelo status: a mensagem ganha a explicação '
+      + 'do que aconteceu. Só o palpite por status devolveria o texto cru, sem '
+      + 'dizer que a leitura pegou o cadastro no meio de uma mudança');
+    ok(e.message.includes('cadastro mudou'),
+      'a mensagem do ERP chega inteira, mesmo saindo no envelope em inglês: o '
+      + 'IDIOMA não indica o envelope, só o código indica');
+  });
+
+  // ---------- cursor inválido degrada para a página 1, sem erro ----------
+
+  {
+    const http2 = require('../lib/cofres/http');
+    const original = http2.pedir;
+    // Cofre que "esquece" o cursor e devolve sempre a primeira página, com um
+    // cursor novo a cada vez. É o comportamento documentado (cursor inválido
+    // degrada com 200) levado ao pior caso.
+    let volta = 0;
+    require.cache[require.resolve('../lib/cofres/http')].exports.pedir = async () => {
+      volta += 1;
+      return { itens: [{ id: 'a', nome: 'A' }, { id: 'b', nome: 'B' }],
+        proximoCursor: `cursor-${volta}` };
+    };
+    delete require.cache[require.resolve('../lib/cofres/vitruviano')];
+    const a = require('../lib/cofres/vitruviano');
+    const r = await a.listar({ baseUrl: 'https://x', chave: 'k' }, { limite: 200 });
+    igual(r.itens.map((i) => i.id), ['a', 'b'],
+      'a mesma página voltando não duplica os segredos na lista — cursor inválido '
+      + 'não dá erro, degrada para a página 1, e sem esta guarda o analista veria '
+      + 'o mesmo segredo repetido sem nada indicando o problema');
+    ok(volta <= 2, `e a varredura para assim que nada novo aparece (${volta} requisições)`);
+
+    // Cursor repetido pelo cofre: encerra em vez de girar.
+    let voltas2 = 0;
+    require.cache[require.resolve('../lib/cofres/http')].exports.pedir = async () => {
+      voltas2 += 1;
+      return { itens: [{ id: `s${voltas2}`, nome: 'x' }], proximoCursor: 'sempre-o-mesmo' };
+    };
+    delete require.cache[require.resolve('../lib/cofres/vitruviano')];
+    const a2 = require('../lib/cofres/vitruviano');
+    await a2.listar({ baseUrl: 'https://x', chave: 'k' }, { limite: 200 });
+    ok(voltas2 <= 2, `cursor que nunca muda encerra a varredura (${voltas2} requisições)`);
+
+    require.cache[require.resolve('../lib/cofres/http')].exports.pedir = original;
+    delete require.cache[require.resolve('../lib/cofres/vitruviano')];
+  }
 
   console.log(`ok — ${n} verificações do adaptador do Homem Vitruviano`);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -120,16 +120,52 @@ const servidor = http.createServer((req, res) => {
   // ---------- chave SSH ----------
 
   {
+    // Chave de mentira, mas com o CORPO base64 comprido de uma de verdade: é o
+    // que faz a redação por linha ser testável (linha curta é filtrada por ser
+    // curta demais, e aí o teste passaria por acidente).
+    const MIOLO = 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gt';
+    const CHAVE = `-----BEGIN OPENSSH PRIVATE KEY-----\n${MIOLO}\n-----END OPENSSH PRIVATE KEY-----`;
     proximaResposta = { status: 200, corpo: {
-      tipo: 'chave-ssh', usuario: 'deploy',
-      chavePrivada: '-----BEGIN OPENSSH PRIVATE KEY-----\nx\n', passphrase: 'frase-longa',
+      tipo: 'chave-ssh', usuario: 'deploy', chavePrivada: CHAVE, passphrase: 'frase-longa',
     } };
     const c = await credenciais.resolver(host('h-cofre'));
     igual(c.type, 'key', 'chave do cofre vira o tipo que o ssh2 entende');
     ok(c.privateKey.startsWith('-----BEGIN'), 'a chave vem em memória, sem passar por arquivo');
     ok(credenciais.segredosVivos().includes('frase-longa'),
       'a passphrase também precisa ser redigida — ela abre a chave');
+
+    // A CHAVE em si. Faltava, e a falta era pior do que parece: a passphrase
+    // era apagada da saída e a chave que ela protege atravessava inteira, na
+    // MESMA saída de comando, a caminho da API da Anthropic.
+    ok(credenciais.segredosVivos().includes(CHAVE),
+      'a chave privada inteira entra no cadastro de redação — proteger só a '
+      + 'passphrase é trancar a porta e deixar a chave na fechadura');
+
+    // E cada LINHA, porque `redigir()` casa substring exata: uma chave que
+    // passou por um terminal volta com \r\n, ou reembrulhada por um grep no
+    // caminho, e o blob inteiro deixa de casar.
+    ok(credenciais.segredosVivos().includes(MIOLO),
+      'cada linha do PEM entra sozinha — é o que sobrevive à reformatação do terminal');
+
+    // Prova de ponta a ponta, com o mesmo algoritmo do redigir() de agent.js.
+    const apagar = (t) => {
+      let x = t;
+      for (const v of credenciais.segredosVivos().filter((y) => y.length >= 6)) {
+        x = x.split(v).join('[…removido…]');
+      }
+      return x;
+    };
+    const saida = `deploy@web-01:~$ cat /opt/deploy/id_rsa\n${CHAVE}\n$ echo $PASS\nfrase-longa`;
+    naoOk(apagar(saida).includes(MIOLO), 'a saída limpa não contém o corpo da chave');
+    naoOk(apagar(saida.replace(/\n/g, '\r\n')).includes(MIOLO),
+      'nem quando a saída vem com quebra de linha de terminal (\\r\\n), que é o '
+      + 'caso REAL: é assim que um PTY entrega o texto');
+    naoOk(apagar(saida).includes('frase-longa'), 'e a passphrase continua apagada');
+
     c.dispose();
+    igual(credenciais.segredosVivos(), [],
+      'e o dispose() devolve tudo: linha por linha, sem sobrar resíduo protegido '
+      + 'para sempre no cadastro');
   }
 
   // ---------- erros: o código é o que decide o comportamento ----------

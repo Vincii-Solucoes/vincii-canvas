@@ -42,12 +42,62 @@ function emMinutos(hhmm) {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
-function deslocamentoEmMinutos(fuso) {
-  const m = RE_FUSO.exec(String(fuso || '').trim());
-  if (!m) return null;
-  const sinal = m[1] === '-' ? -1 : 1;
-  return sinal * (Number(m[2]) * 60 + Number(m[3]));
+// Nome de zona IANA ("America/Sao_Paulo"), além do deslocamento fixo.
+//
+// Hoje o ERP manda `-03:00`. Eles avisaram que, se o horário de verão voltar,
+// passam a mandar a ZONA — porque deslocamento fixo não representa DST. Sem
+// isto, `America/Sao_Paulo` não casava com RE_FUSO e caía no padrão `-03:00`
+// CALADO: durante o horário de verão, uma hora errada todo dia, sem erro em
+// lugar nenhum. Uma hora errada aqui é a tela travada fora do expediente com o
+// cofre recusando a credencial em laço.
+//
+// `Intl` existe nos dois lados (Node e navegador) e calcula o deslocamento PARA
+// O INSTANTE consultado — que é o único jeito certo com DST, já que ele muda ao
+// longo do ano.
+const RE_ZONA = /^[A-Za-z]{2,}(?:\/[A-Za-z0-9_+-]+){1,2}$/;
+const formatadores = new Map();
+
+function deslocamentoDaZona(zona, instante) {
+  if (!formatadores.has(zona)) {
+    let f = null;
+    try {
+      f = new Intl.DateTimeFormat('en-US', {
+        timeZone: zona, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    } catch { f = null; } // zona desconhecida: não inventa deslocamento
+    formatadores.set(zona, f);
+  }
+  const f = formatadores.get(zona);
+  if (!f) return null;
+  const p = {};
+  for (const { type, value } of f.formatToParts(instante)) p[type] = value;
+  // O mesmo relógio de parede, lido como se fosse UTC. A diferença para o
+  // instante real É o deslocamento da zona naquele momento.
+  const comoUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day),
+    Number(p.hour), Number(p.minute), Number(p.second));
+  // Os segundos do instante são zerados dos dois lados: formatToParts arredonda
+  // para o segundo, e um resto de milissegundos viraria minuto quebrado.
+  const semMilis = Math.floor(instante.getTime() / 1000) * 1000;
+  return Math.round((comoUtc - semMilis) / 60000);
 }
+
+function deslocamentoEmMinutos(fuso, instante) {
+  const t = String(fuso || '').trim();
+  const m = RE_FUSO.exec(t);
+  if (m) {
+    const sinal = m[1] === '-' ? -1 : 1;
+    return sinal * (Number(m[2]) * 60 + Number(m[3]));
+  }
+  if (RE_ZONA.test(t) && instante instanceof Date) return deslocamentoDaZona(t, instante);
+  return null;
+}
+
+// Um fuso é aceitável se este módulo sabe transformá-lo em deslocamento.
+// Usado pela normalização para NÃO trocar em silêncio um fuso que ela entende
+// mal por `-03:00`.
+const fusoConhecido = (f) => deslocamentoEmMinutos(f, new Date(0)) !== null;
 
 // O "relógio de parede" do fuso da janela: dia da semana no formato do Homem
 // Vitruviano (0 = segunda), minutos do dia, e a data em texto para casar com as
@@ -56,7 +106,10 @@ function deslocamentoEmMinutos(fuso) {
 // O deslocamento é somado ao instante e o resultado é lido pelos getters UTC.
 // É o único jeito de obter a hora de OUTRO fuso sem depender do fuso da máquina.
 function relogioNoFuso(agora, fuso) {
-  const desloc = deslocamentoEmMinutos(fuso);
+  // O instante VAI JUNTO: com zona IANA, o deslocamento depende da data
+  // (horário de verão). Calcular uma vez e reusar seria o mesmo erro de uma
+  // hora, só que escondido mais fundo.
+  const desloc = deslocamentoEmMinutos(fuso, agora);
   if (desloc === null) return null;
   const t = new Date(agora.getTime() + desloc * 60000);
   // getUTCDay: 0 = domingo. Aqui 0 = segunda.
@@ -73,7 +126,9 @@ const diaValido = (d) => Number.isInteger(d) && d >= 0 && d <= 6;
 // hora ilegível precisa ser DESCARTADO, e não virar "sempre aberto".
 function normalizarJanela(bruta) {
   if (!bruta || typeof bruta !== 'object') return null;
-  const fuso = RE_FUSO.test(String(bruta.fuso || '')) ? String(bruta.fuso) : '-03:00';
+  // Fuso ilegível vira o padrão do contrato; fuso que este módulo ENTENDE é
+  // preservado como veio, inclusive nome de zona.
+  const fuso = fusoConhecido(bruta.fuso) ? String(bruta.fuso).trim() : '-03:00';
 
   const turnos = (Array.isArray(bruta.turnos) ? bruta.turnos : []).map((t) => {
     if (!t || typeof t !== 'object') return null;
@@ -123,13 +178,49 @@ function normalizarJanela(bruta) {
 function faixaDoTurno(t) {
   const ini = t.diaInicio * MIN_POR_DIA + emMinutos(t.inicio);
   const fim = t.diaFim * MIN_POR_DIA + emMinutos(t.fim);
-  return { ini, fim, davolta: fim <= ini };
+  // `davolta` só quando o fim é MENOR que o início, como o contrato descreve
+  // ("diaFim/fim menores que o início"). Igual é duração ZERO, e é tratado
+  // separadamente — ver abaixo.
+  return { ini, fim, davolta: fim < ini, vazio: fim === ini };
 }
 
 function dentroDoTurno(t, minutosDaSemana) {
-  const { ini, fim, davolta } = faixaDoTurno(t);
+  const { ini, fim, davolta, vazio } = faixaDoTurno(t);
+  // Turno de duração zero (09:00 → 09:00, mesmo dia) NÃO é 24/7.
+  //
+  // O código tratava `fim <= ini` como "dá a volta na semana", e um turno assim
+  // passava a valer os sete dias inteiros: a aba do host ficava travada PARA
+  // SEMPRE, com o cofre recusando a credencial fora do expediente de verdade —
+  // o laço de conexões negadas que este módulo existe para evitar.
+  //
+  // O contrato não define esse caso. Na dúvida, este módulo fecha: um turno que
+  // não descreve período nenhum não abre nada, e o pior que acontece é o
+  // analista clicar para conectar.
+  if (vazio) return false;
   if (davolta) return minutosDaSemana >= ini || minutosDaSemana < fim;
   return minutosDaSemana >= ini && minutosDaSemana < fim;
+}
+
+// EXCEÇÃO NÃO É TURNO, e é aqui que a diferença mora.
+//
+// Um turno tem `diaInicio`/`diaFim`, então 22:00→06:00 significa "de hoje às
+// 22:00 até AMANHÃ às 06:00". Uma exceção não tem esses campos, e a mesma
+// escrita significa outra coisa: DENTRO DA MESMA DATA, ou seja 00:00–06:00 E
+// 22:00–24:00 daquele dia.
+//
+// O código lia as duas do mesmo payload e aplicava a semântica do turno nas
+// duas: numa véspera 22:00→06:00, a madrugada inteira (00:00–06:00) ficava de
+// fora. O sistema não abria, ninguém via erro, e a explicação na tela dizia que
+// era expediente reduzido — que é verdade, só que na metade errada do dia.
+function dentroDaExcecao(exc, minutosDoDia) {
+  const ini = emMinutos(exc.inicio);
+  const fim = emMinutos(exc.fim);
+  if (ini === null || fim === null) return false;
+  // Duração zero não abre nada, pela mesma razão do turno.
+  if (fim === ini) return false;
+  // `fim < ini`: as duas pontas do MESMO dia, sem atravessar para o seguinte.
+  if (fim < ini) return minutosDoDia >= ini || minutosDoDia < fim;
+  return minutosDoDia >= ini && minutosDoDia < fim;
 }
 
 // A pergunta que o app faz: o cliente está em atendimento agora?
@@ -149,11 +240,7 @@ function estaEmAtendimento(janela, agora) {
   const exc = j.excecoes.find((e) => e.data === r.data);
   if (exc) {
     if (exc.fechado) return false;
-    const ini = emMinutos(exc.inicio);
-    const fim = emMinutos(exc.fim);
-    if (fim > ini) return r.minutosDoDia >= ini && r.minutosDoDia < fim;
-    // Expediente reduzido que atravessa a meia-noite: vale até o fim do dia.
-    return r.minutosDoDia >= ini;
+    return dentroDaExcecao(exc, r.minutosDoDia);
   }
 
   return j.turnos.some((t) => dentroDoTurno(t, r.minutosDaSemana));
@@ -182,8 +269,12 @@ function fimDoAtendimento(janela, agora) {
   if (exc) {
     const ini = emMinutos(exc.inicio);
     const fim = emMinutos(exc.fim);
-    // Expediente reduzido que atravessa a meia-noite vale até o fim do dia.
-    const ate = fim > ini ? fim : MIN_POR_DIA;
+    // A exceção de duas pontas (22:00→06:00) tem DOIS fins possíveis no mesmo
+    // dia: quem está na madrugada termina em `fim`; quem está na noite termina
+    // à meia-noite, porque a exceção não atravessa para o dia seguinte.
+    let ate;
+    if (fim > ini) ate = fim;
+    else ate = r.minutosDoDia < fim ? fim : MIN_POR_DIA;
     return daquiA(ate - r.minutosDoDia);
   }
 

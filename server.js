@@ -458,6 +458,36 @@ app.get('/api/cofres/:apelido/segredos', async (req, res) => {
   }
 });
 
+// A mesa de trabalho do cliente: os sistemas que ele usa, com URL.
+//
+// É a quarta rota do Homem Vitruviano, e a única sem paralelo no contrato
+// aberto — por isso passa por `capacidades.sistemas` antes de qualquer coisa.
+// Sem esta rota, o adaptador anunciava saber listar sistemas e nenhuma tela
+// tinha como pedir: capacidade anunciada e não entregue é pior que ausente,
+// porque a interface decide o que oferecer olhando para ela.
+app.get('/api/cofres/:apelido/sistemas', async (req, res) => {
+  const apelido = String(req.params.apelido || '');
+  const cofre = credenciais.cofrePorApelido(apelido);
+  if (!cofre) return fail(res, 404, 'Cofre não encontrado.');
+  const adapt = cofres.pegar(cofre.tipo);
+  if (!adapt || !adapt.capacidades.sistemas || typeof adapt.sistemas !== 'function') {
+    return res.json({ itens: [], erro: { codigo: 'sem_sistemas',
+      mensagem: `${(adapt && adapt.nome) || cofre.tipo} não tem mesa de trabalho.` } });
+  }
+  try {
+    const r = await adapt.sistemas(credenciais.configCompleta(cofre), {
+      cofre: req.query.cliente, busca: req.query.busca,
+    });
+    res.set('Cache-Control', 'no-store');
+    // `campos` é texto livre preenchido pelo admin do ERP e a política de lá não
+    // impede senha ali. Vai para a tela porque é o motivo de existir, mas não
+    // entra em log nem em disco — mesma regra do valor de segredo.
+    res.json(r);
+  } catch (e) {
+    res.status(200).json({ itens: [], erro: { codigo: e.codigo || 'indisponivel', mensagem: e.message } });
+  }
+});
+
 app.get('/api/prefs', (req, res) => res.json(uiPrefs()));
 
 app.put('/api/prefs', (req, res) => {

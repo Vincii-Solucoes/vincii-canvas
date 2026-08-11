@@ -198,5 +198,28 @@ const janelaComercial = { fuso: '-03:00', turnos: [
   igual(janelasDeCofre.janelaDoHost(hostDoCliente), null,
     'apagar o cofre apaga as janelas dele — senão o cache vira lixo permanente');
 
+  // ---------- lista vazia: "não perguntei" x "você não atende ninguém" ----------
+
+  {
+    const jc2 = require('../lib/janelasdecofre');
+    jc2.esquecer('erp');
+    igual(jc2.estado().erp, undefined, 'cofre esquecido some do estado');
+
+    // Cofre que responde 200 com ZERO clientes — é o que um analista desligado
+    // recebe, idêntico a quem acabou de abrir o app.
+    const vazio = fake.criar({});
+    const original = fake.CLIENTES.splice(0, fake.CLIENTES.length);
+    await new Promise((r) => vazio.listen(porta, '127.0.0.1', r));
+    await jc2.renovarAgora('erp');
+    const e = jc2.estado().erp;
+    igual(e.clientes, [], 'a lista vem vazia');
+    ok(e.jaBuscou,
+      'mas o app SABE que perguntou — sem essa marca a tela diz "ainda não chegou" '
+      + 'para quem perdeu o acesso, e a pessoa fica esperando algo que não vem');
+    igual(e.erro, null, 'e não é erro: o cofre respondeu 200, só não há cliente nenhum');
+    fake.CLIENTES.push(...original);
+    await new Promise((r) => vazio.close(r));
+  }
+
   console.log(`\n${n} verificações passaram`);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -447,6 +447,13 @@ function renderCofres() {
         renderCofres();
       } catch (e) { estado.textContent = e.message; estado.classList.add('warn-hint'); }
     });
+    // Mesa de trabalho: só aparece para produto que TEM esse conceito. O
+    // adaptador anuncia a capacidade; a tela pergunta antes de oferecer.
+    const adapt = adaptadorDe(c.tipo);
+    if (adapt && adapt.capacidades && adapt.capacidades.sistemas) {
+      const bSis = el(acoes, 'button', 'btn small', 'Sistemas do cliente');
+      bSis.addEventListener('click', () => abrirMesaDeTrabalho(c));
+    }
     const bEditar = el(acoes, 'button', 'btn small', 'Editar');
     bEditar.addEventListener('click', () => abrirModalDeCofre(c));
     if (c.certificadoFixado) {
@@ -470,6 +477,66 @@ function renderCofres() {
       await carregarCofres(); renderCofres(); renderHosts();
     });
   }
+}
+
+// A mesa de trabalho do cliente: o que ele usa, e um clique para virar host web.
+//
+// É o que a quarta rota do ERP existe para entregar. Sem esta tela, o adaptador
+// sabia buscar sistemas e ninguém tinha como ver — código pronto e promessa não
+// cumprida ao mesmo tempo.
+async function abrirMesaDeTrabalho(cofre) {
+  // Template ESTÁTICO, como manda openModal: nada que veio do ERP é interpolado
+  // em HTML. Os nomes de cliente e de sistema entram por `el()`, que escreve em
+  // textContent — o `<select>` nasce vazio e é preenchido logo abaixo.
+  openModal(`Sistemas — ${cofre.apelido}`, `
+    <label>Cliente <select id="f_mesaCliente"></select></label>
+    <div id="f_mesaLista" class="cofre-lista"></div>
+    <p class="hint">Um clique cria um host de página web apontando para o sistema.
+      A senha continua vindo do cofre, na hora de entrar.</p>
+  `);
+
+  const sel = $('#f_mesaCliente');
+  el(sel, 'option', null, 'Todos os clientes').value = '';
+  const clientes = ((cofresEmCache.janelas || {})[cofre.apelido] || {}).clientes || [];
+  for (const x of clientes) el(sel, 'option', null, x.nome).value = x.id;
+
+  const lista = $('#f_mesaLista');
+  const buscar = async () => {
+    lista.innerHTML = '';
+    el(lista, 'p', 'hint', 'Buscando…');
+    let r;
+    const cli = $('#f_mesaCliente').value;
+    try {
+      r = await api(`/api/cofres/${encodeURIComponent(cofre.apelido)}/sistemas`
+        + `?cliente=${encodeURIComponent(cli)}`);
+    } catch (e) { lista.innerHTML = ''; el(lista, 'p', 'hint warn-hint', e.message); return; }
+    lista.innerHTML = '';
+    if (r.erro) { el(lista, 'p', 'hint warn-hint', `${r.erro.mensagem} (${r.erro.codigo})`); return; }
+    if (!r.itens.length) { el(lista, 'p', 'hint', 'Nenhum sistema cadastrado para este cliente.'); return; }
+    for (const s of r.itens) {
+      const linha = el(lista, 'div', 'cofre-item');
+      el(linha, 'strong', null, s.nome);
+      const det = [s.clienteNome, s.url || 'sem endereço',
+        ...s.campos.map((c) => `${c.nome}: ${c.valor}`)].filter(Boolean).join(' · ');
+      el(linha, 'span', 'muted small', det);
+      if (!s.url) { el(linha, 'span', 'tag tag-warn', 'sem URL — não dá para abrir'); continue; }
+      const b = el(linha, 'button', 'btn small primary', 'Criar host');
+      b.type = 'button';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          await api('/api/hosts', { method: 'POST', body: {
+            name: s.nome, host: new URL(s.url).hostname, port: 443, username: '',
+            protocol: 'web', url: s.url, group: s.clienteNome || '',
+            auth: { type: 'agent' } } });
+          toast(`Host "${s.nome}" criado.`);
+          await loadState(); renderHosts();
+        } catch (e) { toast(e.message, 'erro'); b.disabled = false; }
+      });
+    }
+  };
+  $('#f_mesaCliente').addEventListener('change', buscar);
+  buscar();
 }
 
 function abrirModalDeCofre(existente) {
@@ -637,8 +704,18 @@ async function desenharEscolhaDeSegredo() {
     }
     clienteSel.value = atual || '';
     if (!clientes.length) {
-      el(box, 'p', 'hint', 'A lista de clientes ainda não chegou do cofre. '
-        + 'Use "Testar" nas configurações do cofre para buscá-la agora.');
+      // Lista vazia tem DOIS significados, e a resposta do cofre não os separa:
+      // ou o app ainda não perguntou, ou perguntou e a pessoa não atende
+      // ninguém (é o que um analista desligado recebe — 200 com lista vazia).
+      // Dizer "ainda não chegou" para quem perdeu o acesso deixa a pessoa
+      // esperando por algo que não vem.
+      const j = (cofresEmCache.janelas || {})[apelido] || {};
+      el(box, 'p', 'hint' + (j.jaBuscou ? ' warn-hint' : ''), j.jaBuscou
+        ? 'O cofre respondeu que você não atende nenhum cliente. Se isso estiver '
+          + 'errado, é cadastro no ERP (o vínculo do seu usuário com o cliente), '
+          + 'não configuração daqui.'
+        : 'A lista de clientes ainda não chegou do cofre. '
+          + 'Use "Testar" nas configurações do cofre para buscá-la agora.');
     }
   }
 
@@ -670,16 +747,17 @@ async function desenharEscolhaDeSegredo() {
         + (segredoEscolhido && segredoEscolhido.id === it.id ? ' on' : ''));
       linha.type = 'button';
       el(linha, 'strong', null, it.nome);
-      const det = [it.caminho, it.usuario && `usuário ${it.usuario}`,
+      const det = [it.clienteNome, it.caminho, it.usuario && `usuário ${it.usuario}`,
         it.host && `${it.host}${it.porta ? ':' + it.porta : ''}`].filter(Boolean).join(' · ');
       el(linha, 'span', 'muted small', det);
       if (it.host && it.host === enderecoDoHost) el(linha, 'span', 'tag tag-ativa', 'mesmo endereço');
       linha.addEventListener('click', () => {
-        // O cliente vem do FILTRO, não do item: a API de segredos não devolve
-        // esse campo. Sem cliente escolhido não há horário de atendimento — e a
-        // nota abaixo diz isso, em vez de o host abrir sem explicação.
+        // O cliente vem do ITEM. Ele passou a vir na listagem do cofre, o que
+        // resolve o caso que antes ficava sem horário: escolher um segredo sem
+        // filtrar por cliente. O filtro só entra como reserva, para produto que
+        // ainda não devolva o campo.
         segredoEscolhido = { id: it.id, rotulo: it.nome,
-          cliente: clienteSel ? clienteSel.value : '' };
+          cliente: it.cliente || (clienteSel ? clienteSel.value : '') };
         mostrarEscolhido();
         $$('.cofre-item').forEach((x) => x.classList.remove('on'));
         linha.classList.add('on');
@@ -3889,7 +3967,10 @@ function connectSession(session) {
       renderTermTabs();
       renderHostSidebar();
       if (activeSessionId === session.id) { setTimeout(() => { sendResize(session); focusActive(); }, 30); }
-    } else if (m.t === 'e') session.term.write(`\r\n\x1b[33m${m.d}\x1b[0m`);
+    } else if (m.t === 'e') {
+      session.term.write(`\r\n\x1b[33m${m.d}\x1b[0m`);
+      if (m.cofre) anotarRecusaDoCofre(session.hostId, m.cofre);
+    }
     // O servidor manda o id assim que a sessão existe. É por ele que outra
     // janela reata ao MESMO shell, sem perder diretório nem o que está rodando.
     else if (m.t === 'sessao') { session.sessaoId = m.id; renderTermTabs(); }
@@ -4053,6 +4134,35 @@ const INTERVALO_PONTO_MS = 5 * 1000;
 // public/agenda.js, junto com a decisão que as usa.
 
 const ultimaTentativaAgenda = new Map();
+
+// Hosts cujo COFRE recusou de um jeito que não melhora com insistência.
+//
+// A agenda reabre o host a cada minuto enquanto ele está na faixa. Quando o
+// cofre responde `sem_permissao` (o analista deixou de atender aquele cliente) ou
+// `cliente_inativo` (contrato encerrado), tentar de novo é gastar requisição
+// contra uma parede — e o limite do Homem Vitruviano é de 120 por minuto POR IP,
+// do ERP inteiro, dividido com o navegador do próprio analista. Numa faixa de
+// oito horas eram 480 tentativas, cada uma criando e destruindo uma aba.
+//
+// A marca dura até o host SAIR da faixa (mesma limpeza da última tentativa), ou
+// até o app reabrir. Reentrar na faixa tenta de novo, que é o certo: o cadastro
+// no ERP pode ter sido corrigido nesse meio-tempo.
+const COFRE_DEFINITIVO = new Set([
+  'sem_permissao', 'cliente_inativo', 'chave_invalida', 'chave_expirada',
+  'nao_encontrado', 'cofre_ausente', 'config_invalida', 'certificado_mudou',
+]);
+const recusadoPeloCofre = new Map();
+
+function anotarRecusaDoCofre(hostId, codigo) {
+  if (!hostId || !COFRE_DEFINITIVO.has(codigo)) return;
+  if (recusadoPeloCofre.has(hostId)) return;
+  recusadoPeloCofre.set(hostId, codigo);
+  const h = (state.hosts || []).find((x) => x.id === hostId);
+  if (h && temHorario(h)) {
+    toast(`${h.name}: o cofre recusou (${codigo}). A agenda para de tentar até o `
+      + 'próximo período — corrija no ERP e reabra.', 'erro');
+  }
+}
 let assinaturaAgenda = null;
 
 // Hosts que ACABARAM de sair daqui para uma janela nova.
@@ -4160,6 +4270,9 @@ async function cicloDaAgenda() {
   const agendados = state.hosts.filter((h) => temHorario(h)
     && PROTOCOLOS_SESSAO.includes(h.protocol || 'ssh')
     && noHorario(h, agora));
+  // Fora da lista de "abrir agora", mas AINDA na faixa: continua travado e
+  // continua contando como agendado para a limpeza abaixo.
+  const paraAbrir = agendados.filter((h) => !recusadoPeloCofre.has(h.id));
 
   // A trava entra e sai sozinha com o relógio. Sem redesenhar, o "×" continuaria
   // na tela depois de entrar na faixa (e continuaria sumido depois de sair).
@@ -4176,14 +4289,21 @@ async function cicloDaAgenda() {
   // voltar a aparecer quando ele entrar na faixa de novo — e só então.
   const dentro = new Set(agendados.map((h) => h.id));
   for (const id of [...ultimaTentativaAgenda.keys()]) if (!dentro.has(id)) ultimaTentativaAgenda.delete(id);
+  // A recusa do cofre também é esquecida ao sair da faixa: entrar de novo é
+  // motivo legítimo para tentar mais uma vez.
+  for (const id of [...recusadoPeloCofre.keys()]) if (!dentro.has(id)) recusadoPeloCofre.delete(id);
   if (!agendados.length) return;
+  // Todos recusados pelo cofre: a trava da aba continua valendo (eles seguem em
+  // `agendados`), mas não há nada para abrir — e ir ao servidor buscar a lista de
+  // janelas a cada dez segundos por nada é o mesmo desperdício em outra escala.
+  if (!paraAbrir.length) return;
 
   let janelas;
   try { janelas = await api('/api/janelas'); } catch { return; }
   const presenca = janelas.presenca || [];
   const noServidor = janelas.sessoes || [];
 
-  for (const h of agendados) {
+  for (const h of paraAbrir) {
     // As regras (e a ORDEM delas) moram em public/agenda.js, com teste próprio.
     // Aqui fica só o efeito colateral: abrir, reatar ou não fazer nada.
     const d = decidirAcao({

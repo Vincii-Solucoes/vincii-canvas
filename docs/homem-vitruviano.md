@@ -1,9 +1,11 @@
 # Homem Vitruviano — o que o Canvas já faz, e o que falta alinhar
 
 Este documento tem duas partes. A primeira descreve o que está **implementado e
-testado** no Canvas contra a especificação do cofre v1. A segunda é a lista de
-perguntas para quem mantém o ERP — são pontos em que a especificação deixa
-espaço para duas leituras, e onde escolher errado dá erro silencioso.
+testado** no Canvas contra o contrato do cofre v1. A segunda registra o que o
+time do ERP respondeu às dez perguntas de 11/08/2026 e o que ficou em aberto.
+
+Contrato autoritativo: `docs/INTEGRACAO-CANVAS.md`, no repositório do Homem
+Vitruviano. Quando os dois discordarem, ele manda.
 
 Para o contrato geral de cofres (o que vale para qualquer produto), veja
 [cofres-de-credenciais.md](cofres-de-credenciais.md). Este arquivo é só sobre o
@@ -23,7 +25,9 @@ Homem Vitruviano.
 | `GET /v1/sistemas` | a mesa de trabalho: os sistemas do cliente, com URL |
 
 Arquivo: [`lib/cofres/vitruviano.js`](../lib/cofres/vitruviano.js).
-Testes: [`test/vitruviano.test.js`](../test/vitruviano.test.js) — 93 verificações.
+Testes: [`test/vitruviano.test.js`](../test/vitruviano.test.js) — 118 verificações,
+mais [`test/cofre-http.test.js`](../test/cofre-http.test.js) no transporte e
+[`test/redigir.test.js`](../test/redigir.test.js) na redação.
 
 ### Os quatro pontos em que este produto difere do contrato aberto
 
@@ -45,12 +49,48 @@ parede.
 faz o Canvas **abrir sozinho** os hosts daquele cliente e **travar a aba** (o "×"
 some) durante o período. Fora dele a aba volta a fechar normalmente. Nada é
 derrubado no fim do horário — interromper um comando em execução seria pior.
-Arquivo: [`public/janela.js`](../public/janela.js), 67 verificações em
+Arquivo: [`public/janela.js`](../public/janela.js), 102 verificações em
 [`test/janela.test.js`](../test/janela.test.js).
 
 **4. Limites são recusa, não ajuste.** `limite=500` devolve 422 em vez de cortar
 em 200. Então o Canvas corta **antes** de perguntar: `limite` em 200, `busca` em
-128, `cofre` em 64.
+128, `cofre` em 64. E o 422 **não tem `message`** — a explicação mora em
+`details`, que é de onde a mensagem da tela sai.
+
+### As duas armadilhas da janela
+
+Vieram da resposta do time do ERP, e as duas quebravam calado:
+
+**`excecoes` NÃO atravessa o dia; `turnos` atravessa.** Vêm no mesmo payload e a
+escrita é idêntica, mas significam coisas diferentes. Um turno `22:00→06:00`
+(que tem `diaInicio`/`diaFim`) vai de hoje à noite até amanhã de manhã. Uma
+exceção `22:00→06:00` vale **dentro da mesma data**: `00:00–06:00` **e**
+`22:00–24:00` daquele dia. O Canvas aplicava a regra do turno nas duas, e perdia
+a madrugada inteira — o sistema não abria, sem erro em lugar nenhum.
+
+**O corte é por dia-calendário.** Um plantão domingo 22:00 → segunda 06:00 com
+feriado na segunda entrega às 23:00 do domingo e **recusa** às 02:00 da segunda.
+A escolha conservadora que o Canvas já tinha (exceção manda no dia inteiro) era
+a certa, e agora tem teste.
+
+E o feriado substitui os turnos **nos dois sentidos**: um cliente **sem turno
+nenhum** abre numa data com exceção de expediente reduzido. "Sem turnos" não
+implica "nunca abre".
+
+### Horário de verão
+
+O `fuso` hoje é `-03:00`, fixo. Se o horário de verão voltar, o ERP passa a
+mandar a **zona** (`America/Sao_Paulo`) em vez do deslocamento — porque
+deslocamento fixo não representa DST. O Canvas já aceita as duas formas, e
+calcula o deslocamento **para cada instante consultado**. Antes, um nome de zona
+não casava com o formato esperado e virava `-03:00` em silêncio: uma hora errada
+todo dia durante o verão, sem nada na tela.
+
+### `expiraEm` não trava nada
+
+É **puramente informativo**: o cofre não para de entregar o segredo depois dessa
+data — não existe checagem nenhuma. A leitura certa é "esta senha deve ser
+trocada até tal dia". Nada na interface promete que a sessão cai, porque não cai.
 
 ### O que o Canvas guarda no disco
 
@@ -76,105 +116,112 @@ clientes (um 24 h, outro comercial com feriado e véspera reduzida), três siste
 e quatro segredos. Modos para exercitar os caminhos difíceis:
 
 ```bash
-node test/vitruviano-local.js --expira --429 --503 --erp-validation --fora-de-horario
+node test/vitruviano-local.js --expira --429 --503 --erp-validation --conflict --fora-de-horario
 ```
 
----
-
-## Parte 2 — o que preciso alinhar com vocês
-
-Em ordem de impacto. As três primeiras mudam código.
-
-### 1. `/v1/secrets` não diz de qual cliente é o segredo — pode incluir?
-
-Hoje a listagem devolve `id`, `nome`, `caminho`, `tipo`, `usuario`, `host`,
-`porta`, `atualizadoEm` — mas **não** o cliente. Só `/v1/sistemas` traz `cofre` e
-`cofreNome`.
-
-Isso significa que não há como, olhando um segredo, saber a qual janela de
-atendimento ele obedece. O Canvas contorna guardando o cliente **no momento em
-que o analista escolhe o segredo** (ele escolheu filtrando por cliente, então a
-tela sabe). Funciona, mas é frágil: um segredo escolhido sem filtro fica sem
-cliente, e o host não segue horário nenhum.
-
-**Pedido:** incluir `cofre` e `cofreNome` em cada item de `/v1/secrets`, como já
-existe em `/v1/sistemas`. É o mesmo dado, no mesmo formato.
-
-### 2. Sistemas não têm id estável
-
-A especificação diz para usar `cofre + nome` como chave. Isso quer dizer que
-renomear um sistema no ERP quebra qualquer referência que o Canvas tenha
-guardado, sem aviso. Há um id interno que possa ser exposto?
-
-### 3. Uma exceção pode cair no meio de um turno que atravessa o dia?
-
-Exemplo: plantão de domingo 22:00 até segunda 06:00, e a segunda é feriado
-(`fechado: true`).
-
-O Canvas hoje decide de forma **conservadora**: a exceção manda no dia inteiro
-dela e corta o turno que entrou na madrugada. A lógica é que o cofre é a trava
-real — se ele fosse recusar a credencial às 02:00 do feriado, manter a tela
-aberta produziria um laço de conexões negadas.
-
-**Pergunta:** o cofre de vocês recusa ou aceita a credencial às 02:00 desse
-feriado? Se aceita, invertemos a regra.
-
-### 4. Algum 503 é transitório?
-
-Tratamos **todo** `indisponivel` como definitivo, pelo texto da documentação
-("não adianta reintentar"). Se houver um caso de 503 que passa sozinho
-(manutenção, reinício), ele precisa de código próprio — senão o analista vai
-precisar clicar de novo à toa.
-
-### 5. O que `expiraEm` do segredo significa exatamente?
-
-Instante em que a credencial **deixa de ser válida no destino** (a senha muda no
-servidor), ou em que **o cofre para de entregá-la**? A tela precisa dizer coisas
-diferentes: "esta senha vence às 18:00, sua sessão vai cair" é diferente de
-"depois das 18:00 você vai precisar pedir de novo".
-
-### 6. O limite de 120 req/min é por chave ou por IP?
-
-Se for por IP, um escritório inteiro atrás do mesmo NAT compartilha o limite, e
-a conta muda: com dez analistas, são 12 requisições por minuto cada um. Hoje o
-Canvas busca a lista de janelas a cada 5 minutos por cofre e lê o segredo uma vez
-por conexão, o que é folgado por chave — mas apertado se o limite for por IP.
-
-### 7. A `janela` de `/v1/secrets/{id}` pode divergir da de `/v1/ping`?
-
-Ambas trazem a janela do cliente. Se elas puderem diferir (uma mais atual que a
-outra), qual manda? O Canvas hoje usa a do `ping`, porque é a que ele tem sem
-gastar uma leitura de segredo.
-
-### 8. Qual código o analista desligado recebe?
-
-Quando alguém sai da empresa ou perde o acesso a um cliente, a próxima chamada
-volta com `sem_permissao` (403), `chave_invalida` (401) ou `cliente_inativo`
-(403)? A mensagem na tela muda bastante: "fale com seu gestor" é diferente de
-"seu token foi revogado".
-
-### 9. E se o horário de verão voltar?
-
-O `fuso` é fixo em `-03:00`. Se o horário de verão voltar, muda o campo `fuso`
-por cliente, ou mudam os `turnos`? O Canvas calcula com o deslocamento declarado,
-nunca com o relógio da máquina — então segue vocês, mas precisa saber onde olhar.
-
-### 10. `campos` de `/v1/sistemas` é texto livre
-
-A política de vocês diz que senha não deveria ir aí, mas nada impede. O Canvas
-trata esses valores como potencialmente sensíveis: não registra em log e não
-grava em disco. Vale confirmar se essa é a expectativa — ou se há validação no
-ERP que eu possa assumir.
+E `--sem-cliente` simula o ERP anterior a 11/08/2026, que não mandava `cofre`
+em `/v1/secrets` — é o caminho de reserva do seletor de cliente.
 
 ---
 
-## Resumo do que muda se vocês aceitarem o pedido 1
+## Parte 2 — o que já foi respondido, e o que continua em aberto
 
-Se `/v1/secrets` passar a trazer `cofre` e `cofreNome`:
+O time do ERP respondeu tudo, verificado contra o código deles. Os dois pedidos
+que mudavam código **foram atendidos** e o Canvas já consome as duas coisas.
 
-- some a necessidade de guardar o cliente no cadastro do host;
-- um segredo escolhido sem filtro passa a ter janela também;
-- hosts restaurados de backup antigo ganham horário sozinhos.
+### Atendido: `cofre` e `cofreNome` em `/v1/secrets`
 
-É a mudança de maior efeito da lista, e a mais barata: um campo que vocês já têm,
-numa rota que já existe.
+Cada segredo agora diz de qual cliente é. Isso resolveu o buraco que existia:
+escolher um segredo **sem** filtrar por cliente deixava o host sem horário
+nenhum. Agora o cliente vem no próprio item, e o filtro é só reserva para ERP
+anterior a 11/08/2026.
+
+`cofre` nunca vem null; `cofreNome` pode — e o Canvas trata como anulável (senão
+a tela imprimiria "null" no lugar do nome do cliente).
+
+### Atendido: `id` estável por sistema
+
+`/v1/sistemas` traz `id`, e ele sobrevive a renomear. O Canvas usa esse id como
+chave e marca internamente quando teve de cair no `cliente + nome` — o que só
+acontece com sistema antigo que ainda não passou por um save no ERP, e é frágil
+porque **nome não é único por cliente**.
+
+### Respondido, sem mudança de código
+
+| Pergunta | Resposta | O que o Canvas faz |
+|---|---|---|
+| Exceção no meio de plantão que vira o dia | o cofre **recusa** às 02:00 | a regra conservadora estava certa; agora com teste |
+| Algum 503 é transitório? | **nenhum** — os dois casos exigem ação humana | tratado como definitivo, sem retry |
+| `expiraEm` | puramente informativo | nada na tela promete queda de sessão |
+| As duas `janela` podem divergir? | não por implementação, só por tempo | usa a do ping; a do segredo confirma |
+| `campos` de `/v1/sistemas` | **nenhuma** validação de conteúdo | tratado como sensível: não loga, não grava |
+
+### O limite é pior do que eu supus
+
+**120 req/min por IP, do ERP inteiro** — não por token, e não é um balde só do
+cofre. Atrás do NAT do escritório, o Canvas divide o contador com a interface web
+que os analistas estão usando ao mesmo tempo.
+
+O que o Canvas gasta hoje: **1 requisição por cofre a cada 5 minutos** (a lista
+de janelas, em cache no servidor, compartilhada por todas as janelas do app) mais
+**1 leitura por conexão**. E o `Retry-After` de um 429 agora é obedecido também
+no cache — antes ele tentava de novo a cada 60 s, o que é ajudar a estourar um
+balde que já estourou.
+
+**Aceito a oferta de trocar para limite por chave** (hash do Bearer) com fallback
+por IP. Não é urgente para o Canvas, mas o problema real de vocês é a interface
+web dividindo balde com o resto — isso vai morder alguém num dia de pico.
+
+### Aberto: as duas coisas que vocês ofereceram criar
+
+**1. `funcionario_inativo` — sim, por favor.** Hoje "analista desligado" e
+"perdeu o acesso a um cliente" são indistinguíveis, e a mensagem "você não atende
+esse cliente" manda a pessoa pedir acesso a um cliente quando o problema é a
+conta inteira. Enquanto não existe, o Canvas distingue o que dá: uma lista de
+clientes **vazia depois de uma consulta bem-sucedida** passa a dizer "o cofre
+respondeu que você não atende nenhum cliente — é cadastro no ERP", em vez de "a
+lista ainda não chegou", que deixava a pessoa esperando.
+
+**2. Um campo que distinga "sem turnos" de "encaminhamento desativado" — sim.**
+É o pior caso restante: o cliente **tem** trava, o Canvas só não recebe qual é.
+Resultado hoje: o host não abre sozinho (correto, conservador) mas, se o analista
+clicar fora do expediente, toma 403 sem que nada na tela tivesse como avisar
+quando ele podia entrar. Um booleano `horarioOculto: true` já resolveria — dá
+para escrever "este cliente tem horário de atendimento, mas ele não está
+disponível aqui" em vez de silêncio.
+
+### O que a auditoria do próprio Canvas achou
+
+Reler o contrato de vocês virou uma auditoria adversarial do nosso lado, e ela
+achou **sete defeitos nossos** — quatro deles graves, e nenhum tinha nada a ver
+com o ERP. Registrado aqui porque dois afetam o que vocês entregam:
+
+- **A trava de certificado nunca entrava em vigor.** O gancho que grava a
+  impressão digital era o sexto parâmetro posicional de uma função, e nenhum dos
+  oito pontos de chamada o passava. Como o transporte também tinha
+  `rejectUnauthorized: false` (para aceitar cofre com certificado autoassinado),
+  o resultado era: **qualquer certificado aceito, sempre**, com o token `hvk_`
+  indo junto. Corrigido, com teste que sobe dois servidores HTTPS e prova que a
+  troca de certificado é recusada.
+
+- **Acento partido entre pacotes.** O corpo da resposta era concatenado
+  Buffer a Buffer sem declarar UTF-8. Um "ç" que caísse na fronteira entre dois
+  pacotes do socket voltava como lixo — e isso acontece com `caminho`,
+  `cofreNome` e nome de sistema, que são justamente os campos com acento.
+
+- **Resposta grande demais pendurava a chamada.** O corte existia, mas rejeitava
+  no evento `end`, que `destroy()` impede de acontecer. Descobri porque o teste
+  travou em vez de falhar.
+
+Os outros quatro (chave privada fora da lista de redação, `Retry-After` cortado
+em 5 s, credencial de Telnet/FTP nunca devolvida, e turno de duração zero virando
+24/7 permanente) são internos e já estão corrigidos.
+
+### Uma coisa que notei lendo o contrato de novo
+
+`/v1/secrets` promete que `cursor` inválido **degrada para a primeira página com
+200**, sem erro. Numa varredura paginada isso pode fazer a página 1 voltar no
+meio e repetir segredos na lista, sem nada indicando que houve problema. O Canvas
+agora ignora id repetido e encerra a varredura quando um cursor se repete — mas
+vale vocês saberem que "degrada em silêncio" é uma armadilha para qualquer
+cliente que pagine.
