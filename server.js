@@ -26,6 +26,7 @@ const presenca = require('./lib/presenca');
 const credenciais = require('./lib/credenciais');
 const cofres = require('./lib/cofres');
 const segredosDeCofre = require('./lib/cofresegredos');
+const janelasDeCofre = require('./lib/janelasdecofre');
 const termsessions = require('./lib/termsessions');
 const pkg = require('./package.json');
 
@@ -308,6 +309,7 @@ function cofrePublico(c) {
 }
 
 app.get('/api/cofres', (req, res) => {
+  janelasDeCofre.renovarSeVencido();
   res.json({
     catalogo: cofres.catalogo(),
     cofres: credenciais.listaDeCofres().map(cofrePublico),
@@ -315,6 +317,9 @@ app.get('/api/cofres', (req, res) => {
     // pergunta abre o Keychain, e desenhar tela não é motivo para isso.
     protecao: segredosDeCofre.estadoDaProtecao(),
     usarSistema: (store.get().settings || {}).cofreChavesNoSistema !== false,
+    // Clientes e horários de atendimento já conhecidos, para a tela mostrar sem
+    // ir ao ERP. Pode vir vazio na primeira abertura: a busca é assíncrona.
+    janelas: janelasDeCofre.estado(),
   });
 });
 
@@ -380,6 +385,10 @@ app.post('/api/cofres', (req, res) => {
     Object.assign(alvo, { apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config });
     if (mudouApelido) {
       segredosDeCofre.renomear(anterior, apelido);
+      // O cache de janelas é indexado por apelido; sem esquecer o antigo, ele
+      // vira lixo permanente na memória e os hosts reapontados ficam sem
+      // horário até a próxima renovação.
+      janelasDeCofre.esquecer(anterior);
       // Renomear reaponta todo host que usava o apelido antigo. Sem isto eles
       // ficariam órfãos silenciosamente, com o erro só aparecendo na conexão.
       let reapontados = 0;
@@ -405,6 +414,7 @@ app.delete('/api/cofres/:apelido', (req, res) => {
   d.cofres.splice(i, 1);
   store.save();
   segredosDeCofre.remover(apelido);
+  janelasDeCofre.esquecer(apelido);
   // Os hosts NÃO são apagados junto: eles continuam lá, apontando para um cofre
   // que não existe mais, e a tela mostra isso. Apagar host por causa de uma
   // configuração removida seria destruir dado que o usuário não mandou destruir.
@@ -412,8 +422,12 @@ app.delete('/api/cofres/:apelido', (req, res) => {
 });
 
 app.post('/api/cofres/:apelido/testar', async (req, res) => {
+  const apelido = String(req.params.apelido || '');
   try {
-    const info = await credenciais.ping(String(req.params.apelido || ''));
+    const info = await credenciais.ping(apelido);
+    // O teste já falou com o cofre; aproveitar a resposta evita o usuário salvar
+    // e ficar até cinco minutos sem ver o horário de atendimento aparecer.
+    janelasDeCofre.renovarAgora(apelido).catch(() => {});
     res.json({ ok: true, info });
   } catch (e) {
     res.status(200).json({ ok: false, codigo: e.codigo || 'indisponivel', mensagem: e.message });
@@ -432,6 +446,10 @@ app.get('/api/cofres/:apelido/segredos', async (req, res) => {
   try {
     const r = await credenciais.listarSegredos(String(req.params.apelido || ''), {
       busca: req.query.busca, cursor: req.query.cursor, limite: req.query.limite,
+      // O adaptador chama de "cofre" o que a tela chama de "cliente" — é o mesmo
+      // id. A tradução acontece AQUI, num lugar só, para a tela não precisar
+      // aprender o vocabulário de cada produto.
+      cofre: req.query.cliente,
     });
     res.set('Cache-Control', 'no-store');
     res.json(r);
@@ -744,7 +762,9 @@ app.post('/api/quick-connect', (req, res) => {
     const apelido = String(b2.cofre || '').trim();
     const idSegredo = String(b2.id || '').trim().slice(0, 200);
     if (!apelido || !idSegredo) return fail(res, 400, 'Escolha o cofre e o segredo.');
-    segredoRapido = { cofre: apelido, id: idSegredo, rotulo: String(b2.rotulo || '').slice(0, 200) };
+    segredoRapido = { cofre: apelido, id: idSegredo,
+      cliente: String(b2.cliente || '').trim().slice(0, 200),
+      rotulo: String(b2.rotulo || '').slice(0, 200) };
   }
   const id = quickhosts.add({ name, host: endereco, port, username: protocol === 'web' ? '' : username, protocol, url, auth: credencial, segredo: segredoRapido });
   res.json({ hostId: id, name, protocol, url });
@@ -806,6 +826,11 @@ function publicHost(h) {
     // Referência, não segredo: sem ela a tela não consegue mostrar de qual cofre
     // o host depende nem avisar quando esse cofre não está configurado.
     segredo: h.segredo || null,
+    // O horário de atendimento do cliente, resolvido AQUI (o navegador não tem a
+    // chave da API). Vale como agenda quando o host não tem uma própria: o cofre
+    // recusa a credencial fora do horário, então manter aberto fora dele só
+    // produziria um laço de conexões negadas.
+    janelaDoCofre: janelasDeCofre.janelaDoHost(h),
     vars: h.vars || {},
     fingerprint: h.fingerprint || null,
     webCert: h.webCert || null,
@@ -878,7 +903,14 @@ function parseHostBody(body, res) {
     const idSegredo = String(b2.id || '').trim().slice(0, 200);
     if (!apelido) return fail(res, 400, 'Escolha o cofre de credenciais deste host.');
     if (!idSegredo) return fail(res, 400, 'Escolha (ou informe) o segredo dentro do cofre.');
-    segredo = { cofre: apelido, id: idSegredo, rotulo: String(b2.rotulo || '').trim().slice(0, 200) };
+    // `cliente` é o id do cliente dentro do cofre. A API de segredos NÃO diz a
+    // qual cliente cada segredo pertence (só a de sistemas diz), então é no
+    // momento da escolha — quando a tela sabe por qual cliente filtrou — que
+    // essa ligação se guarda. Sem ela não há como saber o horário de
+    // atendimento deste host.
+    const cliente = String(b2.cliente || '').trim().slice(0, 200);
+    segredo = { cofre: apelido, id: idSegredo, cliente,
+      rotulo: String(b2.rotulo || '').trim().slice(0, 200) };
   }
   return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, segredo, auth, vars };
 }
@@ -1028,7 +1060,9 @@ app.post('/api/import', (req, res) => {
         const cofre = String((v && v.cofre) || '').trim().slice(0, 40);
         const idSeg = String((v && v.id) || '').trim().slice(0, 200);
         if (!cofre || !idSeg) return null;
-        return { cofre, id: idSeg, rotulo: String((v && v.rotulo) || '').trim().slice(0, 200) };
+        return { cofre, id: idSeg,
+          cliente: String((v && v.cliente) || '').trim().slice(0, 200),
+          rotulo: String((v && v.rotulo) || '').trim().slice(0, 200) };
       });
       // Agenda mal formada no arquivo não pode derrubar a importação inteira: o
       // XML é entrada de terceiro e as outras 800 entradas não têm culpa. Cai
@@ -1213,6 +1247,9 @@ app.post('/api/import', (req, res) => {
 // ---------- estado geral ----------
 app.get('/api/state', (req, res) => {
   const d = store.get();
+  // Dispara a releitura do que venceu e SEGUE — o carregamento da tela não pode
+  // ficar preso esperando o ERP responder.
+  janelasDeCofre.renovarSeVencido();
   res.json({
     hosts: d.hosts.map(publicHost),
     playbooks: d.playbooks,

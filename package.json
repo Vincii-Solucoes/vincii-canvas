@@ -1,7 +1,7 @@
 {
   "name": "vincii-canvas",
   "productName": "Vincii Canvas",
-  "version": "1.28.1",
+  "version": "1.29.0",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
   "author": "Vincii <contato@vincii.com.br>",
@@ -11,6 +11,7 @@
   },
   "main": "desktop/main.js",
   "scripts": {
+    "test": "node test/rodar.js",
     "start": "node server.js",
     "desktop": "electron .",
     "dist": "electron-builder",

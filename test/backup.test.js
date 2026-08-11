@@ -60,7 +60,7 @@ const HOST_REF = {
   color: 'azul',
   vars: { PAPEL: 'dc' },
   agenda: { inicio: '22:00', fim: '02:00' },
-  segredo: { cofre: 'vitruviano-prod', id: 'sec_01HZX8Q3', rotulo: 'root@web-01' },
+  segredo: { cofre: 'vitruviano-prod', id: 'sec_01HZX8Q3', cliente: 'cli_velonic', rotulo: 'root@web-01' },
   rdpLegado: true,
   rdpLegadoOk: true,
 };
@@ -147,6 +147,35 @@ const HOST_REF = {
   // por fora das três.
   for (const f of campos.HOST_FILHOS) {
     ok(xml.includes(`<${f}`), `o export perdeu o elemento filho "${f}"`);
+  }
+
+  // Dentro do filho, campo a campo — a partir do HOST DE REFERÊNCIA, não do
+  // export.
+  //
+  // O teste 3 confere que o parser lê todo atributo que o EXPORT escreve. Isso
+  // deixa um buraco exato: parar de exportar um campo apaga o guarda junto, e a
+  // suíte passa verde com uma verificação a menos. Medido: tirar `cliente` do
+  // export deixava 145 checagens OK em vez de 146, sem um único erro — e todo
+  // host restaurado perdia o horário de atendimento do cliente.
+  //
+  // Aqui a expectativa vem do objeto de referência, que é o que descreve um
+  // host completo. Acrescentar um campo a ele obriga o export a levá-lo, e o
+  // teste 3 obriga o parser a lê-lo.
+  const NOME_NO_ARQUIVO = {
+    // `id` no arquivo é o id do HOST (que fica fora do backup). O id do item de
+    // cofre sai como `item`, de propósito.
+    'segredo.id': 'item',
+  };
+  for (const f of campos.HOST_FILHOS) {
+    const valor = HOST_REF[f];
+    if (f === 'vars' || !valor || typeof valor !== 'object') continue;
+    const linhaFilho = xml.split('\n').find((l) => l.trim().startsWith(`<${f}`)) || '';
+    for (const chave of Object.keys(valor)) {
+      const atributo = NOME_NO_ARQUIVO[`${f}.${chave}`] || chave;
+      ok(new RegExp(`\\b${atributo}="`).test(linhaFilho),
+        `o host de referência tem ${f}.${chave} e o export NÃO o grava — o campo `
+        + 'some da restauração, e o guarda derivado do export some junto com ele');
+    }
   }
 }
 
@@ -250,6 +279,20 @@ const HOST_REF = {
     ok(new RegExp(`\\b${f}\\b`).test(atualiza), `o import não aplica "${f}" ao atualizar um host`);
     ok(new RegExp(`\\b${f}\\b`).test(cria), `o import não grava "${f}" ao criar um host`);
   }
+  // A terceira perna, dentro do filho: o import monta a referência de cofre
+  // CAMPO A CAMPO (para um XML de terceiro não injetar chave extra num objeto
+  // que o app usa). O preço disso é que um campo esquecido ali some em silêncio
+  // — o host restaura, conecta, e só não abre mais sozinho no horário.
+  {
+    const i2 = rota.indexOf('const segredo = opcional(h.segredo');
+    ok(i2 > 0, 'achei o trecho que monta a referência de cofre na importação');
+    const bloco = rota.slice(i2, i2 + 700);
+    for (const chave of Object.keys(HOST_REF.segredo)) {
+      ok(new RegExp(`\\b${chave}\\b`).test(bloco),
+        `o import não copia "segredo.${chave}" do arquivo — a referência entra incompleta`);
+    }
+  }
+
   // O invariante é sobre a LEITURA, não sobre a escrita: `fingerprint: null` no
   // caminho de criação é o app zerando o campo de propósito. O que não pode
   // acontecer é o import tirar esses valores do objeto vindo do arquivo (`h`).

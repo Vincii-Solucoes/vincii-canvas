@@ -259,11 +259,15 @@ function hostCard(h) {
   // A agenda muda o comportamento do host sem aparecer em lugar nenhum fora do
   // formulário de edição. Sem esta etiqueta, "por que este host abriu sozinho?"
   // não teria resposta na tela.
-  if (h.agenda) {
-    const dentro = estaNaJanela(h.agenda, new Date());
+  if (temHorario(h)) {
+    const dentro = noHorario(h, new Date());
+    const doCofre = fonteDeHorario(h).tipo === 'cofre';
     const t = el(meta, 'span', 'tag' + (dentro ? ' tag-ativa' : ''),
-      `⏱ ${descreverAgenda(h.agenda)}${dentro ? ' — aberto agora' : ''}`);
-    t.title = 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
+      `⏱ ${descreverHorario(h)}${dentro ? ' — aberto agora' : ''}`);
+    t.title = doCofre
+      ? 'Horário de atendimento do cliente, vindo do cofre. Nele o app mantém este host '
+        + 'conectado e a aba não pode ser fechada — fora dele o cofre recusa a credencial.'
+      : 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
   }
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
@@ -534,7 +538,8 @@ let segredoEscolhido = null;
 function lerSegredoDoForm() {
   const sel = $('#f_cofreApelido');
   if (!sel || !segredoEscolhido) return null;
-  return { cofre: sel.value, id: segredoEscolhido.id, rotulo: segredoEscolhido.rotulo || '' };
+  return { cofre: sel.value, id: segredoEscolhido.id, cliente: segredoEscolhido.cliente || '',
+    rotulo: segredoEscolhido.rotulo || '' };
 }
 
 function montarEscolhaDeCofre(existing) {
@@ -542,7 +547,8 @@ function montarEscolhaDeCofre(existing) {
   if (!sel) return;
   sel.innerHTML = '';
   segredoEscolhido = (existing && existing.segredo)
-    ? { id: existing.segredo.id, rotulo: existing.segredo.rotulo || '' } : null;
+    ? { id: existing.segredo.id, rotulo: existing.segredo.rotulo || '',
+        cliente: existing.segredo.cliente || '' } : null;
 
   if (!cofresEmCache.cofres.length) {
     const o = el(sel, 'option', null, '(nenhum cofre configurado)');
@@ -577,10 +583,15 @@ async function desenharEscolhaDeSegredo() {
   const a = cofre ? adaptadorDe(cofre.tipo) : null;
 
   const mostrarEscolhido = () => {
-    nota.textContent = segredoEscolhido
-      ? `Segredo: ${segredoEscolhido.rotulo || segredoEscolhido.id}`
-      : 'Nenhum segredo escolhido — o host não vai conectar.';
-    nota.classList.toggle('warn-hint', !segredoEscolhido);
+    if (!segredoEscolhido) {
+      nota.textContent = 'Nenhum segredo escolhido — o host não vai conectar.';
+      nota.classList.add('warn-hint');
+      return;
+    }
+    const semCliente = a && a.capacidades.clientes && !segredoEscolhido.cliente;
+    nota.textContent = `Segredo: ${segredoEscolhido.rotulo || segredoEscolhido.id}`
+      + (semCliente ? ' — sem cliente, este host não segue horário de atendimento.' : '');
+    nota.classList.toggle('warn-hint', semCliente);
   };
 
   // Produto que NÃO lista (ou cofre ausente): caminho digitado. Um seletor
@@ -599,6 +610,38 @@ async function desenharEscolhaDeSegredo() {
     return;
   }
 
+  // Cliente (quando o produto tem esse conceito). Duas coisas dependem dele:
+  // filtrar a lista, e saber o HORÁRIO DE ATENDIMENTO deste host — a API de
+  // segredos não diz de qual cliente cada segredo é, então a ligação só existe
+  // se for guardada aqui, no momento da escolha.
+  let clienteSel = null;
+  if (a.capacidades.clientes) {
+    const clientes = ((cofresEmCache.janelas || {})[apelido] || {}).clientes || [];
+    const lab = el(box, 'label', null, 'Cliente');
+    clienteSel = el(lab, 'select');
+    clienteSel.id = 'f_cofreCliente';
+    const vazio = el(clienteSel, 'option', null, 'Todos os clientes');
+    vazio.value = '';
+    for (const c of clientes) {
+      const o = el(clienteSel, 'option', null,
+        c.janela ? `${c.nome} — ${descreverJanela(c.janela)}` : `${c.nome} — sem horário definido`);
+      o.value = c.id;
+    }
+    // Cliente gravado que não veio na lista (o analista deixou de atender, ou o
+    // ERP ainda não respondeu): aparece assim mesmo, senão o select se
+    // reposicionaria sozinho e apagaria a ligação sem avisar.
+    const atual = segredoEscolhido && segredoEscolhido.cliente;
+    if (atual && !clientes.some((c) => c.id === atual)) {
+      const o = el(clienteSel, 'option', null, `${atual} — não está na sua lista agora`);
+      o.value = atual;
+    }
+    clienteSel.value = atual || '';
+    if (!clientes.length) {
+      el(box, 'p', 'hint', 'A lista de clientes ainda não chegou do cofre. '
+        + 'Use "Testar" nas configurações do cofre para buscá-la agora.');
+    }
+  }
+
   const busca = el(box, 'input');
   busca.placeholder = 'Buscar segredo no cofre…';
   busca.id = 'f_segredoBusca';
@@ -610,7 +653,9 @@ async function desenharEscolhaDeSegredo() {
     el(lista, 'p', 'hint', 'Buscando…');
     let r;
     try {
-      r = await api(`/api/cofres/${encodeURIComponent(apelido)}/segredos?busca=${encodeURIComponent(busca.value)}`);
+      const cliente = clienteSel ? clienteSel.value : '';
+      r = await api(`/api/cofres/${encodeURIComponent(apelido)}/segredos`
+        + `?busca=${encodeURIComponent(busca.value)}&cliente=${encodeURIComponent(cliente)}`);
     } catch (e) { lista.innerHTML = ''; el(lista, 'p', 'hint warn-hint', e.message); return; }
     lista.innerHTML = '';
     if (r.erro) { el(lista, 'p', 'hint warn-hint', `${r.erro.mensagem} (${r.erro.codigo})`); return; }
@@ -630,7 +675,11 @@ async function desenharEscolhaDeSegredo() {
       el(linha, 'span', 'muted small', det);
       if (it.host && it.host === enderecoDoHost) el(linha, 'span', 'tag tag-ativa', 'mesmo endereço');
       linha.addEventListener('click', () => {
-        segredoEscolhido = { id: it.id, rotulo: it.nome };
+        // O cliente vem do FILTRO, não do item: a API de segredos não devolve
+        // esse campo. Sem cliente escolhido não há horário de atendimento — e a
+        // nota abaixo diz isso, em vez de o host abrir sem explicação.
+        segredoEscolhido = { id: it.id, rotulo: it.nome,
+          cliente: clienteSel ? clienteSel.value : '' };
         mostrarEscolhido();
         $$('.cofre-item').forEach((x) => x.classList.remove('on'));
         linha.classList.add('on');
@@ -639,6 +688,7 @@ async function desenharEscolhaDeSegredo() {
   };
   let t = null;
   busca.addEventListener('input', () => { clearTimeout(t); t = setTimeout(buscar, 250); });
+  if (clienteSel) clienteSel.addEventListener('change', buscar);
   buscar();
 }
 
@@ -2588,6 +2638,7 @@ function xmlToConfig(text) {
           segredo: sg ? {
             cofre: sg.getAttribute('cofre') || '',
             id: sg.getAttribute('item') || '',
+            cliente: sg.getAttribute('cliente') || '',
             rotulo: sg.getAttribute('rotulo') || '',
           } : undefined,
           vars: varsOf(h.querySelector(':scope > vars')),
@@ -4036,20 +4087,13 @@ function hostDaSessao(s) {
 // no render seguinte, então nunca fica host agendado sem aba travada.
 function sessaoTravada(s) {
   const h = hostDaSessao(s);
-  if (!h || !h.agenda || !estaNaJanela(h.agenda, new Date())) return false;
+  if (!h || !noHorario(h, new Date())) return false;
   const guardia = sessions.find((x) => x.hostId === h.id && !sessaoMorta(x));
   return !!guardia && guardia.id === s.id;
 }
 
 function motivoDaTrava(s) {
-  const h = hostDaSessao(s);
-  if (!h || !h.agenda) return '';
-  const fim = fimDaJanelaAtual(h.agenda, new Date());
-  const ate = fim
-    ? ` até ${fim.toLocaleString('pt-BR', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`
-    : '';
-  return `Aberto pela agenda deste host (${descreverAgenda(h.agenda)})${ate}.`
-    + ' Não dá para fechar agora.';
+  return motivoDoHorario(hostDaSessao(s), new Date());
 }
 
 // Uma aba está MORTA quando não há mais nada vivo por trás dela.
@@ -4113,9 +4157,9 @@ async function cicloDaAgenda() {
   // FTP fica de fora: ele não abre sessão nenhuma (PROTOCOLOS_SESSAO o exclui), e
   // openSession cairia no ramo de terminal — uma tentativa de SSH na porta 21 a
   // cada minuto, pela faixa inteira, com o erro aparecendo numa aba nova.
-  const agendados = state.hosts.filter((h) => h.agenda
+  const agendados = state.hosts.filter((h) => temHorario(h)
     && PROTOCOLOS_SESSAO.includes(h.protocol || 'ssh')
-    && estaNaJanela(h.agenda, agora));
+    && noHorario(h, agora));
 
   // A trava entra e sai sozinha com o relógio. Sem redesenhar, o "×" continuaria
   // na tela depois de entrar na faixa (e continuaria sumido depois de sair).
@@ -4181,7 +4225,7 @@ async function cicloDaAgenda() {
     // Só a PRIMEIRA tentativa desta entrada na faixa avisa na tela: um servidor
     // fora do ar numa faixa de 8 horas geraria 480 avisos, e o estado da aba já
     // conta a história a partir do primeiro.
-    if (d.primeira) toast(`${h.name} abriu pela agenda: ${descreverAgenda(h.agenda)}.`);
+    if (d.primeira) toast(`${h.name} abriu pelo horário: ${descreverHorario(h)}.`);
   }
 }
 
