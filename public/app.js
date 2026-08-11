@@ -427,6 +427,7 @@ function renderCofres() {
     const estado = el(card, 'p', 'hint');
 
     const acoes = el(card, 'div', 'actions');
+    const adapt = adaptadorDe(c.tipo);
     const bTestar = el(acoes, 'button', 'btn small primary', 'Testar');
     bTestar.addEventListener('click', async () => {
       estado.textContent = 'Falando com o cofre…';
@@ -439,6 +440,21 @@ function renderCofres() {
           estado.textContent = `✅ ${i.produto} v${i.versao} · chave "${i.rotuloDaChave}"`
             + ` · permissões: ${i.permissoes.join(', ') || '—'}`
             + ` · cofres: ${i.cofres.map((x) => x.nome).join(', ') || '—'}${venc}`;
+          // O teste passa, e mesmo assim o cofre pode estar entregando menos do
+          // que existe do outro lado: um endereço do Homem Vitruviano lido pelo
+          // adaptador do contrato aberto responde ao ping, aceita a chave, lista
+          // segredos — e não traz cliente, horário de atendimento nem mesa de
+          // trabalho, porque esses campos não existem naquele contrato. É um
+          // sucesso que esconde uma perda, e sem este aviso não há nada na tela
+          // apontando para o campo "Tipo".
+          const melhor = (cofresEmCache.catalogo || []).find((a) => a.tipo !== c.tipo
+            && a.produtoEsperado && a.produtoEsperado === i.produto);
+          if (melhor) {
+            estado.textContent += ` — ⚠️ este endereço é um "${i.produto}", mas o tipo `
+              + `configurado é "${adapt ? adapt.nome : c.tipo}". Troque para "${melhor.nome}" `
+              + 'em Editar para ver clientes, horário de atendimento e sistemas.';
+            estado.classList.add('warn-hint');
+          }
         } else {
           estado.textContent = `❌ ${r.mensagem} (${r.codigo})`;
           estado.classList.add('warn-hint');
@@ -449,7 +465,6 @@ function renderCofres() {
     });
     // Mesa de trabalho: só aparece para produto que TEM esse conceito. O
     // adaptador anuncia a capacidade; a tela pergunta antes de oferecer.
-    const adapt = adaptadorDe(c.tipo);
     if (adapt && adapt.capacidades && adapt.capacidades.sistemas) {
       const bSis = el(acoes, 'button', 'btn small', 'Sistemas do cliente');
       bSis.addEventListener('click', () => abrirMesaDeTrabalho(c));
@@ -556,7 +571,19 @@ function abrirModalDeCofre(existente) {
   cat.forEach((c) => { const o = el(sel, 'option', null, c.nome); o.value = c.tipo; });
   $('#cf_apelido').value = existente ? existente.apelido : '';
   sel.value = existente ? existente.tipo : cat[0].tipo;
-  sel.disabled = !!existente; // trocar o tipo de um cofre existente é criar outro
+  // O tipo PODE ser trocado num cofre existente.
+  //
+  // Era bloqueado com a justificativa "trocar o tipo é criar outro cofre". A
+  // justificativa não sobreviveu ao primeiro caso real: um cofre cadastrado como
+  // "Contrato aberto" antes de o adaptador do Homem Vitruviano existir. A chave
+  // estava certa, o endereço estava certo, e nada aparecia — porque o contrato
+  // aberto não tem clientes nem mesa de trabalho. Sem poder trocar, a única
+  // saída era remover o cofre (e órfãos todos os hosts apontados para ele) e
+  // recadastrar.
+  //
+  // O apelido é o que liga hosts e chave ao cofre, e ele não muda aqui. Trocar
+  // o tipo troca só o adaptador e os campos de configuração.
+  sel.disabled = false;
 
   const desenharCampos = () => {
     const a = adaptadorDe(sel.value);
