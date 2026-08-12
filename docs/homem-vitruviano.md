@@ -124,6 +124,71 @@ em `/v1/secrets` — é o caminho de reserva do seletor de cliente.
 
 ---
 
+## Parte 1b — o 502 intermitente (12/08/2026)
+
+Sintoma relatado: "hora conecta, hora não". A causa é do ERP, e o time de lá já
+achou o mecanismo e corrigiu — mas o episódio deixa duas lições que valem ficar
+escritas.
+
+### O mecanismo
+
+O backend sobe com `alembic upgrade head && exec uvicorn`: a porta fica fechada
+enquanto as migrations rodam. `postgres` e `redis` tinham healthcheck; o backend
+não — então nada distinguia "subindo" de "no ar", e o gateway roteava para uma
+porta fechada. Com deploy automático a cada push (18 em 48 h, 8 num dia só),
+isso dá várias janelas de 502 por dia, de poucos segundos, com recuperação
+sozinha. Foi exatamente o padrão medido.
+
+Correções do lado deles: healthcheck em `/health` com `start_period` de 60 s;
+`last_used_at` deixou de fazer `UPDATE + COMMIT` em toda request autenticada
+(agora no máximo 1×/min); e `served_provider_ids` parou de carregar o `Employee`
+inteiro com todos os relacionamentos para ler duas colunas.
+
+### A medição que apontou para o lugar errado — minha
+
+Eu medi 30 chamadas com token **inválido** (30/30 em 0,2 s) contra o caminho
+autenticado (0,11 s) e concluí que "o 401 não chega ao app, então o problema está
+atrás da autenticação". **As duas metades estavam erradas.**
+
+O 401 é gerado pelo app, depois de consultar `vault_api_keys`. A prova está no
+corpo: sem cabeçalho ele responde *"Falta o cabeçalho Authorization: Bearer."*;
+com token errado, *"Chave de API inválida."* Distinguir os dois exige a consulta
+— nenhum proxy genérico produz isso. Logo, 30/30 respostas boas com token
+inválido são prova de que **o app estava vivo** naquelas 30 chamadas: eu apenas
+não amostrei durante um blip.
+
+E a diferença de tempo era artefato do meu método. Medido depois, mesmo endpoint,
+mesmo token inválido, mudando só a conexão:
+
+| | média |
+|---|---|
+| conexão nova a cada chamada (o que meu laço de `curl` fazia) | 222 ms |
+| conexão reaproveitada (o que o Canvas faz) | 99 ms |
+
+Os 123 ms de diferença são handshake TLS. Os 99 ms do caminho inválido e os
+110 ms do autenticado são, na prática, o mesmo número — não havia sinal nenhum de
+"o caminho autenticado é mais lento".
+
+**A lição:** comparar latência entre dois clientes com política de conexão
+diferente não mede o servidor, mede o cliente. Para acusar um caminho de lento,
+os dois lados precisam reusar conexão — ou nenhum.
+
+### O que o Canvas faz a respeito
+
+As mitigações continuam valendo mesmo com o healthcheck no ar, porque deploy
+ainda reinicia o processo:
+
+- **502/504/408 sem envelope são transitórios** e o app retenta. O `indisponivel`
+  do contrato (que traz envelope) continua definitivo.
+- **3xx é erro, não sucesso.** Um redirecionamento tinha corpo vazio e virava
+  "cofre com zero clientes", calado. É o que um proxy faz ao mandar para uma
+  página de login.
+- **Carência progressiva** de 5 s, 15 s e 60 s, zerando no primeiro sucesso.
+- **Falha com cache cheio não apaga nada**; falha com cache vazio aparece na tela,
+  com motivo e prazo.
+
+---
+
 ## Parte 2 — o que já foi respondido, e o que continua em aberto
 
 O time do ERP respondeu tudo, verificado contra o código deles. Os dois pedidos
