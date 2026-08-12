@@ -4437,7 +4437,21 @@ function iniciarAgenda() {
   // assíncrona, de propósito, para a tela não abrir esperando ele responder).
   // Sem este tique eles só apareciam quando alguma outra coisa recarregasse o
   // estado — na prática, quando a pessoa criasse ou editasse um host.
-  setInterval(() => { loadState(true).catch(() => {}); }, INTERVALO_AGENDA_MS);
+  //
+  // Os primeiros segundos são apertados de propósito. O servidor já busca o
+  // cofre quando sobe, então quase sempre o primeiro /api/state vem completo;
+  // mas se o ERP estiver lento, esperar dez segundos com a tela na cara do
+  // usuário é lento de um jeito que ele sente. Um segundo por vinte tentativas
+  // cobre um ERP demorado sem virar tráfego eterno — e como `loadState(true)`
+  // sai calado quando nada mudou, tique à toa não redesenha nem pisca.
+  let apressados = 20;
+  const tique = setInterval(() => {
+    loadState(true).catch(() => {});
+    if (--apressados <= 0) {
+      clearInterval(tique);
+      setInterval(() => { loadState(true).catch(() => {}); }, INTERVALO_AGENDA_MS);
+    }
+  }, 1000);
   if (MODO_SOLO) {
     // Uma janela solta nunca recarregava o cadastro: `state.hosts` congelava no
     // instante da abertura. Isso decide errado a coisa mais cara que ela faz —

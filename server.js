@@ -405,6 +405,13 @@ app.post('/api/cofres', (req, res) => {
   }
   if (Object.keys(segredos).length) segredosDeCofre.definir(apelido, segredos);
   store.save();
+  // Busca AGORA o que este cofre sabe.
+  //
+  // Sem isto, quem acabou de cadastrar o cofre ficava olhando para uma lista de
+  // hosts sem os sistemas do cliente até o ciclo seguinte — e o momento em que a
+  // pessoa mais quer ver o resultado é justamente o segundo depois de salvar.
+  // Segue sem esperar: a resposta do formulário não fica presa no tempo do ERP.
+  dadosDeCofre.renovarAgora(apelido).catch(() => {});
   res.json({ cofre: cofrePublico(credenciais.cofrePorApelido(apelido)) });
 });
 
@@ -1876,6 +1883,22 @@ function start(port = PORT, host = HOST) {
     const server = app.listen(port, host, () => {
       // só agora sabemos a porta real (o desktop usa porta 0 = automática)
       setAllowedOrigins(server.address().port);
+      // Busca o que o cofre sabe JÁ, sem esperar a primeira tela pedir.
+      //
+      // A janela leva cerca de um segundo para aparecer (splash) e o ERP responde
+      // em ~500 ms. Puxando aqui, o primeiro /api/state que o navegador fizer já
+      // vem com os sistemas do cliente dentro. Antes, esse primeiro pedido pegava
+      // o cache frio, e os hosts espelhados só surgiam no tique seguinte — dez
+      // segundos depois de a tela estar na cara do usuário.
+      //
+      // Continua sem bloquear nada: é disparo e segue, como todas as outras.
+      // Protegido porque roda DENTRO do callback de listen: uma exceção aqui
+      // sobe sem dono e derruba o processo antes de a janela existir — o app
+      // simplesmente não abre, sem mensagem. O aquecimento é um luxo; a
+      // aplicação subir, não.
+      try { dadosDeCofre.renovarSeVencido(); } catch (e) {
+        console.error('[cofres] não deu para aquecer o cache na partida:', e && e.message);
+      }
       resolve(server);
     });
     // Roteia o upgrade de WebSocket por caminho para o WSS certo (um único
