@@ -1320,6 +1320,9 @@ app.get('/api/state', (req, res) => {
   const jaCadastrados = d.hosts.filter((h) => h.url).map((h) => h.url);
   res.json({
     hosts: [...d.hosts, ...dadosDeCofre.hostsEspelhados(jaCadastrados)].map(publicHost),
+    // Cofre que falhou e não tem nada em cache para mostrar. Sem isto, o blip do
+    // ERP tirava os sistemas do cliente da lista sem uma palavra na tela.
+    avisosDeCofre: dadosDeCofre.avisos(),
     playbooks: d.playbooks,
     profiles: d.profiles,
     favorites: d.favorites || [],

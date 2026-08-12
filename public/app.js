@@ -236,6 +236,16 @@ function closeModal() {
 function renderHosts() {
   const wrap = $('#hostsList');
   wrap.innerHTML = '';
+  // O cofre falhou e não há nada em cache: os sistemas daquele cliente NÃO estão
+  // na lista abaixo. Dizer isso é a diferença entre "o app está com problema" e
+  // "às vezes aparece, às vezes não" — que foi como o usuário descreveu quando
+  // isto era invisível.
+  for (const a of (state.avisosDeCofre || [])) {
+    const box = el(wrap, 'div', 'card item warn-hint');
+    el(box, 'strong', null, `Os sistemas do cofre "${a.cofre}" não estão na lista`);
+    el(box, 'p', 'hint', a.mensagem
+      + (a.tentandoDeNovo ? ` Tentando de novo em ${a.emSegundos}s.` : ' Tentando de novo já.'));
+  }
   if (!state.hosts.length) {
     el(wrap, 'p', 'empty', 'Nenhum host cadastrado. Clique em "Novo host".');
     return;
