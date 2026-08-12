@@ -120,7 +120,7 @@ const janelaComercial = { fuso: '-03:00', turnos: [
 (async () => {
   const store = require('../lib/store');
   const segredosDeCofre = require('../lib/cofresegredos');
-  const janelasDeCofre = require('../lib/janelasdecofre');
+  const dadosDeCofre = require('../lib/dadosdecofre');
 
   const servidor = fake.criar({});
   await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
@@ -142,38 +142,38 @@ const janelaComercial = { fuso: '-03:00', turnos: [
   const hostDoCliente = { segredo: { cofre: 'erp', id: 'x', cliente: fake.VELONIC } };
 
   // Antes de qualquer busca: sem janela, e sem travar nada.
-  igual(janelasDeCofre.janelaDoHost(hostDoCliente), null,
+  igual(dadosDeCofre.janelaDoHost(hostDoCliente), null,
     'antes da primeira busca o host não tem janela — e a tela abre na mesma hora, '
     + 'em vez de esperar o ERP responder');
 
   // Dispara e SEGUE: a função não pode ser aguardável, senão a rota de estado
   // fica presa no tempo de resposta do ERP.
   const antes = Date.now();
-  janelasDeCofre.renovarSeVencido();
+  dadosDeCofre.renovarSeVencido();
   ok(Date.now() - antes < 50,
     'renovarSeVencido devolve na hora — é chamada no carregamento da tela');
 
-  await janelasDeCofre.renovarAgora('erp');
+  await dadosDeCofre.renovarAgora('erp');
 
-  const j = janelasDeCofre.janelaDoHost(hostDoCliente);
+  const j = dadosDeCofre.janelaDoHost(hostDoCliente);
   ok(j && j.janela, 'depois da busca, o host do cliente tem janela');
   igual(j.cliente, 'Velonic', 'com o nome do cliente, para a etiqueta');
   ok(horario.noHorario({ janelaDoCofre: j }, SEGUNDA_MEIO_DIA),
     'e ela alimenta a decisão de horário de ponta a ponta');
 
   // Só o cofre que declara ter clientes é consultado.
-  const estado = janelasDeCofre.estado();
+  const estado = dadosDeCofre.estado();
   ok(estado.erp && estado.erp.clientes.length === 2, 'o cofre com clientes foi lido');
-  igual(await janelasDeCofre.renovarAgora('aberto'), null,
+  igual(await dadosDeCofre.renovarAgora('aberto'), null,
     'o cofre do contrato aberto NÃO é consultado por causa de janela: ele não tem '
     + 'esse conceito, e a requisição só gastaria o limite de taxa');
 
   // Host que aponta para cliente desconhecido, ou sem cliente nenhum.
-  igual(janelasDeCofre.janelaDoHost({ segredo: { cofre: 'erp', id: 'x', cliente: 'sumiu' } }), null,
+  igual(dadosDeCofre.janelaDoHost({ segredo: { cofre: 'erp', id: 'x', cliente: 'sumiu' } }), null,
     'cliente que não está mais na lista do analista não tem janela');
-  igual(janelasDeCofre.janelaDoHost({ segredo: { cofre: 'erp', id: 'x' } }), null,
+  igual(dadosDeCofre.janelaDoHost({ segredo: { cofre: 'erp', id: 'x' } }), null,
     'segredo sem cliente também não — é o host antigo, de antes deste campo existir');
-  igual(janelasDeCofre.janelaDoHost({ auth: { type: 'password' } }), null,
+  igual(dadosDeCofre.janelaDoHost({ auth: { type: 'password' } }), null,
     'host sem cofre nenhum passa longe disso');
 
   // ---------- falha do ERP NÃO apaga o que já se sabe ----------
@@ -182,36 +182,36 @@ const janelaComercial = { fuso: '-03:00', turnos: [
   const caido = fake.criar({ indisponivel: true });
   await new Promise((r) => caido.listen(porta, '127.0.0.1', r));
 
-  await janelasDeCofre.renovarAgora('erp');
-  const depois = janelasDeCofre.janelaDoHost(hostDoCliente);
+  await dadosDeCofre.renovarAgora('erp');
+  const depois = dadosDeCofre.janelaDoHost(hostDoCliente);
   ok(depois && depois.janela,
     'com o ERP fora do ar, a janela conhecida CONTINUA valendo — apagá-la '
     + 'destravaria todas as abas de uma vez, e o horário do cliente não mudou');
-  ok(janelasDeCofre.estado().erp.erro,
+  ok(dadosDeCofre.estado().erp.erro,
     'mas o erro fica registrado, para a tela poder dizer que o dado está velho');
 
   await new Promise((r) => caido.close(r));
 
   // ---------- esquecer ----------
 
-  janelasDeCofre.esquecer('erp');
-  igual(janelasDeCofre.janelaDoHost(hostDoCliente), null,
+  dadosDeCofre.esquecer('erp');
+  igual(dadosDeCofre.janelaDoHost(hostDoCliente), null,
     'apagar o cofre apaga as janelas dele — senão o cache vira lixo permanente');
 
   // ---------- lista vazia: "não perguntei" x "você não atende ninguém" ----------
 
   {
-    const jc2 = require('../lib/janelasdecofre');
-    jc2.esquecer('erp');
-    igual(jc2.estado().erp, undefined, 'cofre esquecido some do estado');
+    const dc2 = require('../lib/dadosdecofre');
+    dc2.esquecer('erp');
+    igual(dc2.estado().erp, undefined, 'cofre esquecido some do estado');
 
     // Cofre que responde 200 com ZERO clientes — é o que um analista desligado
     // recebe, idêntico a quem acabou de abrir o app.
     const vazio = fake.criar({});
     const original = fake.CLIENTES.splice(0, fake.CLIENTES.length);
     await new Promise((r) => vazio.listen(porta, '127.0.0.1', r));
-    await jc2.renovarAgora('erp');
-    const e = jc2.estado().erp;
+    await dc2.renovarAgora('erp');
+    const e = dc2.estado().erp;
     igual(e.clientes, [], 'a lista vem vazia');
     ok(e.jaBuscou,
       'mas o app SABE que perguntou — sem essa marca a tela diz "ainda não chegou" '

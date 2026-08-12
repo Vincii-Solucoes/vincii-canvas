@@ -217,6 +217,32 @@ Os outros quatro (chave privada fora da lista de redação, `Retry-After` cortad
 em 5 s, credencial de Telnet/FTP nunca devolvida, e turno de duração zero virando
 24/7 permanente) são internos e já estão corrigidos.
 
+### Os sistemas do cliente viram hosts sozinhos
+
+`/v1/sistemas` deixou de ser uma tela de consulta: os sistemas de cada cliente
+aparecem na lista de hosts do Canvas, agrupados pelo nome do cliente, e abrem
+como página web. Quem manda é o ERP — renomeou lá, muda aqui; tirou de lá, some
+daqui.
+
+Eles **nunca entram no `data.json`**, e é isso que faz o espelho ser espelho:
+gravados, sobreviveriam à remoção no ERP e virariam host fantasma; iriam no
+backup, e restaurar noutra máquina traria a mesa de trabalho de quem exportou;
+e um campo editado à mão seria apagado na renovação seguinte, em silêncio. Por
+isso o Canvas também recusa editar e excluir esses hosts, com mensagem dizendo
+onde mexer.
+
+Duas consequências que vocês podem querer saber:
+
+- **Sistema sem `url` não vira host.** Ele continua na lista de sistemas, mas
+  não há o que abrir. Hoje é o caso de "Rede interna" no exemplo.
+- **O horário de atendimento do cliente vale para eles.** Um sistema da Velonic
+  abre sozinho e trava a aba durante o expediente da Velonic, sem ninguém
+  digitar horário no Canvas. É o encontro das duas rotas de vocês.
+
+Custo em requisição: `/v1/sistemas` entra na MESMA renovação do `/v1/ping`, sem
+relógio próprio — duas requisições por cofre a cada 5 minutos, e não duas
+contagens independentes que se cruzam.
+
 ### Uma coisa que notei lendo o contrato de novo
 
 `/v1/secrets` promete que `cursor` inválido **degrada para a primeira página com

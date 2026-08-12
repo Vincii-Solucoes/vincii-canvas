@@ -26,7 +26,7 @@ const presenca = require('./lib/presenca');
 const credenciais = require('./lib/credenciais');
 const cofres = require('./lib/cofres');
 const segredosDeCofre = require('./lib/cofresegredos');
-const janelasDeCofre = require('./lib/janelasdecofre');
+const dadosDeCofre = require('./lib/dadosdecofre');
 const termsessions = require('./lib/termsessions');
 const pkg = require('./package.json');
 
@@ -301,6 +301,7 @@ function cofrePublico(c) {
     config: { ...(c.config || {}) },       // só os campos NÃO secretos moram aqui
     // Nunca o valor: só se existe. É o que a tela precisa para mostrar
     // "(preenchido — deixe em branco para manter)".
+    espelharSistemas: c.espelharSistemas !== false,
     preenchidos: (adapt ? adapt.config.filter((f) => f.segredo).map((f) => f.chave) : [])
       .filter((k) => !!guardados[k]),
     certificadoFixado: c.certificadoFixado || null,
@@ -309,7 +310,7 @@ function cofrePublico(c) {
 }
 
 app.get('/api/cofres', (req, res) => {
-  janelasDeCofre.renovarSeVencido();
+  dadosDeCofre.renovarSeVencido();
   res.json({
     catalogo: cofres.catalogo(),
     cofres: credenciais.listaDeCofres().map(cofrePublico),
@@ -319,7 +320,7 @@ app.get('/api/cofres', (req, res) => {
     usarSistema: (store.get().settings || {}).cofreChavesNoSistema !== false,
     // Clientes e horários de atendimento já conhecidos, para a tela mostrar sem
     // ir ao ERP. Pode vir vazio na primeira abertura: a busca é assíncrona.
-    janelas: janelasDeCofre.estado(),
+    janelas: dadosDeCofre.estado(),
   });
 });
 
@@ -382,13 +383,14 @@ app.post('/api/cofres', (req, res) => {
   if (alvo) {
     const mudouApelido = alvo.apelido !== apelido;
     const anterior = alvo.apelido;
-    Object.assign(alvo, { apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config });
+    Object.assign(alvo, { apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config,
+      espelharSistemas: b.espelharSistemas !== false });
     if (mudouApelido) {
       segredosDeCofre.renomear(anterior, apelido);
       // O cache de janelas é indexado por apelido; sem esquecer o antigo, ele
       // vira lixo permanente na memória e os hosts reapontados ficam sem
       // horário até a próxima renovação.
-      janelasDeCofre.esquecer(anterior);
+      dadosDeCofre.esquecer(anterior);
       // Renomear reaponta todo host que usava o apelido antigo. Sem isto eles
       // ficariam órfãos silenciosamente, com o erro só aparecendo na conexão.
       let reapontados = 0;
@@ -398,7 +400,8 @@ app.post('/api/cofres', (req, res) => {
       if (reapontados) console.error(`[cofres] ${reapontados} host(s) reapontados de "${anterior}" para "${apelido}"`);
     }
   } else {
-    d.cofres.push({ apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config });
+    d.cofres.push({ apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config,
+      espelharSistemas: b.espelharSistemas !== false });
   }
   if (Object.keys(segredos).length) segredosDeCofre.definir(apelido, segredos);
   store.save();
@@ -414,7 +417,7 @@ app.delete('/api/cofres/:apelido', (req, res) => {
   d.cofres.splice(i, 1);
   store.save();
   segredosDeCofre.remover(apelido);
-  janelasDeCofre.esquecer(apelido);
+  dadosDeCofre.esquecer(apelido);
   // Os hosts NÃO são apagados junto: eles continuam lá, apontando para um cofre
   // que não existe mais, e a tela mostra isso. Apagar host por causa de uma
   // configuração removida seria destruir dado que o usuário não mandou destruir.
@@ -427,7 +430,7 @@ app.post('/api/cofres/:apelido/testar', async (req, res) => {
     const info = await credenciais.ping(apelido);
     // O teste já falou com o cofre; aproveitar a resposta evita o usuário salvar
     // e ficar até cinco minutos sem ver o horário de atendimento aparecer.
-    janelasDeCofre.renovarAgora(apelido).catch(() => {});
+    dadosDeCofre.renovarAgora(apelido).catch(() => {});
     res.json({ ok: true, info });
   } catch (e) {
     res.status(200).json({ ok: false, codigo: e.codigo || 'indisponivel', mensagem: e.message });
@@ -835,6 +838,24 @@ function cleanVars(obj, res) {
   return out;
 }
 
+// Resolve um host por id, olhando as TRÊS origens.
+//
+// Um host pode vir do cadastro (data.json), da conexão rápida (memória, TTL de
+// 24 h) ou do espelho do cofre. Quem só quer LER um host usa esta função.
+//
+// Quem ESCREVE (editar, remover, fixar certificado, gravar fingerprint) continua
+// procurando só no cadastro, de propósito: as outras duas origens não são
+// graváveis, e uma escrita que "funciona" e some na renovação seguinte é pior
+// que um erro claro. As rotas de escrita recusam explicitamente um id de
+// espelho, em vez de devolver "não encontrado" — a diferença é o usuário saber
+// se errou o host ou se aquilo não é editável.
+function acharHost(id) {
+  return store.get().hosts.find((h) => h.id === id)
+    || quickhosts.get(id)
+    || dadosDeCofre.pegarHost(id)
+    || null;
+}
+
 // Nunca devolver senha/passphrase para o navegador
 function publicHost(h) {
   const auth = h.auth || {};
@@ -860,7 +881,10 @@ function publicHost(h) {
     // chave da API). Vale como agenda quando o host não tem uma própria: o cofre
     // recusa a credencial fora do horário, então manter aberto fora dele só
     // produziria um laço de conexões negadas.
-    janelaDoCofre: janelasDeCofre.janelaDoHost(h),
+    janelaDoCofre: dadosDeCofre.janelaDoHost(h),
+    // Marca de origem: a tela usa para dizer de onde o host veio e para NÃO
+    // oferecer editar nem remover. Ausente em host cadastrado à mão.
+    espelho: h.espelho || null,
     vars: h.vars || {},
     fingerprint: h.fingerprint || null,
     webCert: h.webCert || null,
@@ -1279,9 +1303,16 @@ app.get('/api/state', (req, res) => {
   const d = store.get();
   // Dispara a releitura do que venceu e SEGUE — o carregamento da tela não pode
   // ficar preso esperando o ERP responder.
-  janelasDeCofre.renovarSeVencido();
+  dadosDeCofre.renovarSeVencido();
+  // Os sistemas dos clientes entram como hosts ESPELHADOS, na mesma lista.
+  //
+  // Eles não estão no data.json e nunca estarão: quem manda é o ERP. Entram
+  // aqui, na leitura, para a tela não precisar saber que existem dois tipos de
+  // host — e para tudo que já funciona (grupos, busca, favoritos, a trava por
+  // horário de atendimento) funcionar neles sem uma linha a mais.
+  const jaCadastrados = d.hosts.filter((h) => h.url).map((h) => h.url);
   res.json({
-    hosts: d.hosts.map(publicHost),
+    hosts: [...d.hosts, ...dadosDeCofre.hostsEspelhados(jaCadastrados)].map(publicHost),
     playbooks: d.playbooks,
     profiles: d.profiles,
     favorites: d.favorites || [],
@@ -1300,6 +1331,11 @@ app.post('/api/hosts', (req, res) => {
 });
 
 app.put('/api/hosts/:id', (req, res) => {
+  if (dadosDeCofre.ehEspelhado(req.params.id)) {
+    return fail(res, 409, 'Este host é um espelho do cofre: quem manda nele é o ERP. '
+      + 'Mude o sistema lá, ou desligue o espelho nas configurações do cofre e cadastre '
+      + 'um host próprio.');
+  }
   const host = store.get().hosts.find((h) => h.id === req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   const v = parseHostBody(req.body, res);
@@ -1341,6 +1377,11 @@ function limparParticaoWeb(hostId) {
 }
 
 app.delete('/api/hosts/:id', (req, res) => {
+  if (dadosDeCofre.ehEspelhado(req.params.id)) {
+    return fail(res, 409, 'Este host é um espelho do cofre e volta na próxima leitura. '
+      + 'Para sumir com ele, tire o sistema do cliente no ERP — ou desligue o espelho '
+      + 'nas configurações do cofre.');
+  }
   const d = store.get();
   const idx = d.hosts.findIndex((h) => h.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Host não encontrado.');
@@ -1707,7 +1748,7 @@ app.put('/api/settings', (req, res) => {
 // ---------- chat com a IA (streaming SSE) ----------
 app.post('/api/ai/chat', async (req, res) => {
   const body = req.body || {};
-  const host = body.hostId ? store.get().hosts.find((h) => h.id === body.hostId) : null;
+  const host = body.hostId ? acharHost(body.hostId) : null;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',

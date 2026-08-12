@@ -254,6 +254,14 @@ function hostCard(h) {
       ? `A senha vem do cofre "${ref.cofre}" na hora de conectar; nada é gravado aqui.`
       : `Este host aponta para o cofre "${ref.cofre}", que não está configurado nesta máquina.`;
   }
+  // De onde o host veio. Sem esta etiqueta, um host que aparece sozinho na
+  // lista e não deixa editar é um mistério.
+  if (h.espelho) {
+    const t = el(meta, 'span', 'tag tag-ativa', `↺ do cofre "${h.espelho.cofre}"`);
+    t.title = `Este host é um espelho do sistema "${h.espelho.sistema}" do cliente `
+      + `${h.espelho.cliente}, no ERP. Ele aparece e some conforme o cadastro de lá, `
+      + 'e por isso não é editável aqui.';
+  }
   if (h.fingerprint) el(meta, 'span', 'tag', 'fingerprint fixado');
   if (h.webCert) el(meta, 'span', 'tag', 'certificado autoassinado fixado');
   // A agenda muda o comportamento do host sem aparecer em lugar nenhum fora do
@@ -274,17 +282,27 @@ function hostCard(h) {
   btnConn.addEventListener('click', () => connectFromHosts(h.id));
   const btnTest = el(actions, 'button', 'btn small', 'Testar');
   btnTest.addEventListener('click', () => testHost(h, btnTest));
-  const btnEdit = el(actions, 'button', 'btn small', 'Editar');
-  btnEdit.addEventListener('click', () => openHostModal(h));
-  const btnDel = el(actions, 'button', 'btn small danger', 'Excluir');
-  btnDel.addEventListener('click', async () => {
-    if (!confirm(`Excluir o host "${h.name}"?`)) return;
-    try {
-      await api(`/api/hosts/${h.id}`, { method: 'DELETE' });
-      toast('Host excluído.');
-      await loadState();
-    } catch (e) { toast(e.message, 'erro'); }
-  });
+  // Host espelhado não tem Editar nem Excluir: quem manda nele é o ERP, e uma
+  // edição local seria apagada na renovação seguinte, em silêncio. O servidor
+  // também recusa — o botão sumir aqui é só para não oferecer o que não existe.
+  if (!h.espelho) {
+    const btnEdit = el(actions, 'button', 'btn small', 'Editar');
+    btnEdit.addEventListener('click', () => openHostModal(h));
+    const btnDel = el(actions, 'button', 'btn small danger', 'Excluir');
+    btnDel.addEventListener('click', async () => {
+      if (!confirm(`Excluir o host "${h.name}"?`)) return;
+      try {
+        await api(`/api/hosts/${h.id}`, { method: 'DELETE' });
+        toast('Host excluído.');
+        await loadState();
+      } catch (e) { toast(e.message, 'erro'); }
+    });
+  } else {
+    const b = el(actions, 'button', 'btn small', 'No ERP');
+    b.title = 'Este host vem do cadastro do cliente no Homem Vitruviano. '
+      + 'Para mudar nome ou endereço, mude o sistema lá.';
+    b.disabled = true;
+  }
   return card;
 }
 
@@ -566,6 +584,13 @@ function abrirModalDeCofre(existente) {
     <label>Tipo <select id="cf_tipo"></select></label>
     <p id="cf_desc" class="hint"></p>
     <div id="cf_campos"></div>
+    <label id="cf_espelhoBox" hidden>
+      <input type="checkbox" id="cf_espelho">
+      Mostrar os sistemas dos clientes como hosts
+    </label>
+    <p id="cf_espelhoNota" class="hint" hidden>Eles aparecem na lista junto dos seus hosts,
+      agrupados por cliente, e abrem sozinhos no horário de atendimento. Quem manda é o ERP:
+      não dá para editar nem excluir aqui, e some daqui quando sair de lá.</p>
   `);
   const sel = $('#cf_tipo');
   cat.forEach((c) => { const o = el(sel, 'option', null, c.nome); o.value = c.tipo; });
@@ -604,8 +629,18 @@ function abrirModalDeCofre(existente) {
       if (campo.dica && !campo.segredo) el(box, 'p', 'hint', campo.dica);
     }
   };
-  sel.addEventListener('change', desenharCampos);
+  const mostrarEspelho = () => {
+    const a = cat.find((x) => x.tipo === sel.value);
+    const tem = !!(a && a.capacidades && a.capacidades.sistemas);
+    $('#cf_espelhoBox').hidden = !tem;
+    $('#cf_espelhoNota').hidden = !tem;
+    // Padrão LIGADO: foi o pedido — os sistemas do cliente devem aparecer sem
+    // ninguém pedir. Cofre já existente mantém o que estava escolhido.
+    $('#cf_espelho').checked = existente ? existente.espelharSistemas !== false : true;
+  };
+  sel.addEventListener('change', () => { desenharCampos(); mostrarEspelho(); });
   desenharCampos();
+  mostrarEspelho();
 
   $('#modalForm').onsubmit = async (ev) => {
     ev.preventDefault();
@@ -617,6 +652,7 @@ function abrirModalDeCofre(existente) {
         apelido: $('#cf_apelido').value.trim().toLowerCase(),
         apelidoAtual: existente ? existente.apelido : '',
         tipo: sel.value, nome: a.nome, config,
+        espelharSistemas: $('#cf_espelho').checked,
       } });
       closeModal();
       toast('Cofre salvo.');
