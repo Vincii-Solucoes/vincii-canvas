@@ -15,12 +15,13 @@ let currentRun = null;
 const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
+  abrirLocalSozinho: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
   theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
-  recentHosts: 'vc-recent-hosts',
+  recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
 };
 
 function lsGet(key) {
@@ -4134,6 +4135,13 @@ function ensureLocalTerminal() {
   // Numa janela solta isto abriria um shell local que ninguém pediu — e ele
   // ainda chegaria ANTES da sessão que a janela veio mostrar, virando a aba 1.
   if (MODO_SOLO) return;
+  // Abrir sozinho é OPCIONAL, e nasce desligado.
+  //
+  // O terminal local aparecia toda vez que a aba Terminal ficava vazia — e
+  // "vazia" inclui trocar de aba e voltar. Quem usa o Canvas para falar com
+  // servidores acabava com um shell da própria máquina no caminho o tempo todo,
+  // sem ter pedido. Ele continua a um clique, fixo no topo da barra lateral.
+  if (!prefBool('abrirLocalSozinho')) return;
   if (!xtermReady() || !terminalTabActive() || localDismissed) return;
   if (sessions.length === 0) openLocalSession();
 }
@@ -5446,6 +5454,10 @@ async function loadConfigTab() {
   if (![...fontSel.options].some((o) => o.value === termFont)) fontSel.selectedIndex = 0;
   else fontSel.value = termFont;
   $('#cfgTermSize').value = termFontSize;
+  // A preferência do terminal local não vem do /api/config (que é do servidor):
+  // ela mora nas prefs de interface, como o tema e a barra recolhida.
+  const cxLocal = $('#cfgAbrirLocal');
+  if (cxLocal) cxLocal.checked = prefBool('abrirLocalSozinho');
   updateFontPreview();
 }
 
@@ -5648,6 +5660,19 @@ function init() {
   }
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
+  const cxLocal = $('#cfgAbrirLocal');
+  if (cxLocal) {
+    cxLocal.checked = prefBool('abrirLocalSozinho');
+    cxLocal.addEventListener('change', () => {
+      prefSet('abrirLocalSozinho', cxLocal.checked);
+      // Ligando pela tela de configurações, a pessoa espera ver o efeito na
+      // próxima vez que abrir o Terminal — e não só no reinício seguinte.
+      if (cxLocal.checked) localDismissed = false;
+      toast(cxLocal.checked
+        ? 'O terminal da sua máquina volta a abrir sozinho quando não houver conexão.'
+        : 'O terminal da sua máquina não abre mais sozinho — ele fica no topo da barra lateral.');
+    });
+  }
   $('#cfgTermFont').addEventListener('change', updateFontPreview);
   $('#cfgTermSize').addEventListener('input', updateFontPreview);
   $('#cfgSaveTerm').addEventListener('click', saveTermAppearance);

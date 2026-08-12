@@ -167,7 +167,7 @@ try {
         </div>
         <div class="term-pane">
           <div id="termContainers"></div>
-          <div id="termEmpty" class="term-empty">Clique em um host na barra lateral para abrir uma conexão. Você pode abrir várias — inclusive ao mesmo host.</div>
+          <div id="termEmpty" class="term-empty">Clique em um host na barra lateral para abrir uma conexão — ou em <strong>Meu computador</strong>, no topo dela, para um terminal desta máquina. Você pode abrir várias, inclusive ao mesmo host.</div>
         </div>
       </div>
       <div class="ai-pane" hidden>
@@ -366,6 +366,10 @@ try {
         <button type="button" data-theme-choice="dark">Escuro</button>
       </div>
       <div class="sub">Terminal</div>
+      <label class="inline"><input type="checkbox" id="cfgAbrirLocal">
+        Abrir o terminal da minha máquina quando não houver nenhuma conexão</label>
+      <p class="hint">Desligado, a aba Terminal fica vazia até você escolher um host —
+        e "Meu computador" continua a um clique, fixo no topo da barra lateral.</p>
       <p class="hint">A fonte e o tamanho valem para o terminal interativo. Veja a prévia abaixo e clique em <strong>Salvar</strong> para aplicar.</p>
       <div class="grid2">
         <label>Fonte
