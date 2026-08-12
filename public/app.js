@@ -3810,7 +3810,7 @@ async function avisarSeLegado(session) {
 // existir (ver desktop/main.js, will-attach-webview), então nada aqui concede
 // privilégio à página remota — o que se define abaixo é só a aparência e a
 // separação de sessão entre hosts.
-function createWebSession({ hostId, hostName, url }) {
+function createWebSession({ hostId, hostName, url, remontagem = 0 }) {
   const endereco = window.normalizarUrl ? window.normalizarUrl(url) : url;
   if (!endereco) { toast('URL inválida neste host. Edite o cadastro.', 'erro'); return; }
   const id = ++sessionSeq;
@@ -3842,6 +3842,12 @@ function createWebSession({ hostId, hostName, url }) {
   aviso.hidden = true;
 
   const view = document.createElement('webview');
+  // O `src` vai ANTES do appendChild, e isso foi MEDIDO, não escolhido.
+  //
+  // Pondo depois — que é a recomendação que se lê por aí — a coisa piora muito:
+  // 9 travamentos em 12 aberturas, contra 1 em 5 com o src antes. O guest do
+  // <webview> nasce assíncrono, e um `src` posto depois do attach nem sempre é
+  // relido. Quem resolve o resto é o vigia lá embaixo.
   view.setAttribute('src', endereco);
   // Sessão separada por host: o cookie do roteador da filial A não vale na B,
   // e nada disso encosta na sessão da própria interface do app.
@@ -3849,6 +3855,9 @@ function createWebSession({ hostId, hostName, url }) {
   // recarga). Host avulso NÃO: o id é novo a cada conexão, então cada uso
   // deixaria um diretório de ~2 MB para sempre no perfil, com cookie de sessão
   // do equipamento em texto claro — e sem nem servir para reaproveitar login.
+  //
+  // A partição TEM de estar posta antes da primeira navegação: a sessão de um
+  // renderer ativo não muda depois.
   view.setAttribute('partition', String(hostId).startsWith('qc_')
     ? `web-${hostId}` : `persist:web-${hostId}`);
   // NÃO acrescentar allowpopups: é atributo booleano, lido com hasAttribute().
@@ -3857,6 +3866,8 @@ function createWebSession({ hostId, hostName, url }) {
   // web-contents-created (desktop/main.js).
   view.className = 'web-view';
   container.appendChild(view);
+
+
 
   const mostrarAviso = (texto, tipo) => {
     aviso.textContent = texto;
@@ -3867,7 +3878,109 @@ function createWebSession({ hostId, hostName, url }) {
   // `did-fail-load` chega ANTES de `did-stop-loading`. Sem esta marca, a falha
   // era sobrescrita e a aba mostrava "conectado" com a página em branco — que é
   // o pior dos dois mundos: nada funciona e nada avisa.
+  //
+  // Declarado AQUI, antes do vigia, porque o vigia o lê. Funcionaria depois (o
+  // corpo do timeout só roda segundos adiante), mas "funciona por acidente de
+  // cronometragem" é exatamente como este projeto já derrubou o servidor inteiro
+  // uma vez, com um `send` usado antes da declaração.
   let falhou = null;
+
+  // VIGIA DA PRIMEIRA CARGA.
+  //
+  // De vez em quando o <webview> nasce e não navega. Medido: em 1 de cada 5
+  // aberturas o guest existia (webContentsId presente, isLoading() dizendo
+  // true), `getURL()` vinha VAZIO e NENHUM evento chegava — nem did-attach, nem
+  // did-fail-load. Nada quebrava e nada avisava: a página só não vinha, e o
+  // usuário aprendeu a clicar em ⟳. Um `reload()` destrava sempre.
+  //
+  // Então o app faz sozinho o que a pessoa fazia à mão. Isso NÃO é gambiarra
+  // disfarçando erro de rede: erro de rede chega em `did-fail-load`, é tratado
+  // logo abaixo e o vigia sai de cena. O vigia só age no silêncio total.
+  // Seis segundos, e o ÚNICO sinal aceito é a URL ter comprometido de verdade.
+  //
+  // Tentei duas vezes ser mais esperto, e as duas pioraram — medido, não achado:
+  //
+  //   `did-attach`/`dom-ready` como sinal   -> 3 travadas em 20, 0 resgatadas
+  //   `did-start-navigation` http           -> 1 travada em 20, 0 resgatadas,
+  //                                            e três aberturas de 20 s+
+  //   só `getURL()` comprometida, 6 s       -> 0 travadas em 20, 2 resgatadas
+  //
+  // O motivo é o mesmo nos dois fracassos: no caso TRAVADO esses eventos também
+  // chegam. O <webview> faz uma carga inicial de `about:blank`, e a navegação
+  // para o site "começa" sem nunca comprometer. Qualquer sinal que não seja a
+  // chegada de fato cancela o vigia exatamente quando ele era necessário.
+  //
+  // O preço é ficar 6 s sem agir num site que demora a responder. Aceito: o
+  // remédio é um reload, não uma queda, e a alternativa medida é a aba presa
+  // até o usuário clicar.
+  const PRAZO_DA_CARGA_MS = 6000;
+  const MAX_TENTATIVAS_DE_CARGA = 3;
+  let tentativasDeCarga = 0;
+  let vigia = null;
+
+  const chegou = () => {
+    try { return /^https?:/i.test(view.getURL() || ''); } catch { return false; }
+  };
+  const pararVigia = () => { clearTimeout(vigia); vigia = null; };
+  const armarVigia = () => {
+    clearTimeout(vigia);
+    vigia = setTimeout(() => {
+      if (chegou() || falhou) return pararVigia();
+      if (tentativasDeCarga >= MAX_TENTATIVAS_DE_CARGA) {
+        pararVigia();
+        session.status = 'encerrado';
+        mostrarAviso('A página não começou a carregar. Clique em ⟳ para tentar de novo.', 'erro');
+        renderTermTabs();
+        return;
+      }
+      tentativasDeCarga += 1;
+      // Exposto na sessão para poder MEDIR quantas vezes o vigia salvou uma
+      // abertura. Sem isso, "0 travamentos em 12" não distingue "o problema
+      // sumiu" de "o vigia está trabalhando calado" — e as duas conclusões
+      // levam a decisões diferentes.
+      session.resgatesDeCarga = tentativasDeCarga;
+
+      // O remédio ESCALA, porque um só não dá conta.
+      //
+      // `reload()` é o que o usuário fazia à mão, e resgata a maioria — mas num
+      // guest que nunca navegou não há o que recarregar, e ele vira um comando
+      // vazio. Medido: com só reload, 6 resgates em 20 e 2 abas ainda presas
+      // depois de três tentativas.
+      //
+      // Então: recarrega, depois manda navegar de novo, e por fim troca o
+      // <webview> por um novo. O último é caro (perde a sessão daquela aba) e
+      // por isso é o último.
+      try {
+        if (tentativasDeCarga === 1) view.reload();
+        else if (tentativasDeCarga === 2) view.loadURL(endereco);
+        else if (remontagem < 1) {
+          // Último recurso: remonta a aba do zero, que é o que o usuário faria
+          // fechando e abrindo — só que sozinho.
+          //
+          // `remontagem` é CONTADA e limitada a uma. Sem esse teto, uma
+          // remontagem que também travasse chamaria outra, e outra: cada uma
+          // nasce com o contador de tentativas zerado, então o laço não teria
+          // fim — abas se fechando e abrindo para sempre, muito pior do que a
+          // aba parada que estamos consertando.
+          pararVigia();
+          closeSession(session.id, { forcar: true });
+          createWebSession({ hostId, hostName, url: endereco, remontagem: remontagem + 1 });
+          return;
+        } else {
+          pararVigia();
+          session.status = 'encerrado';
+          mostrarAviso('A página não começou a carregar depois de várias tentativas. '
+            + 'Clique em ⟳, ou abra no navegador do sistema.', 'erro');
+          renderTermTabs();
+          return;
+        }
+      } catch { /* guest nasceu morto: a próxima volta troca o elemento */ }
+      armarVigia();
+    }, PRAZO_DA_CARGA_MS);
+  };
+  armarVigia();
+
+
   view.addEventListener('did-start-loading', () => {
     falhou = null;
     aviso.hidden = true;
@@ -3875,6 +3988,9 @@ function createWebSession({ hostId, hostName, url }) {
     renderTermTabs();
   });
   view.addEventListener('did-stop-loading', () => {
+    // Chegou de verdade (URL http(s) real, e não o about:blank inicial): o vigia
+    // cumpriu o papel e sai.
+    if (chegou() || falhou) pararVigia();
     session.status = falhou ? 'encerrado' : 'conectado';
     try { campo.value = view.getURL() || endereco; } catch {}
     try { voltar.disabled = !view.canGoBack(); avancar.disabled = !view.canGoForward(); } catch {}
