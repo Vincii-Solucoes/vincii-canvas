@@ -187,8 +187,25 @@ function initTabs() {
 }
 
 // ---------- estado ----------
-async function loadState() {
-  state = await api('/api/state');
+// Assinatura do último estado desenhado.
+//
+// Parte da lista de hosts vem de FORA (os sistemas espelhados do cofre) e chega
+// depois — segundos depois da abertura, e de novo a cada renovação. Isso obriga
+// a janela a reler o estado de tempos em tempos, e reler de tempos em tempos
+// obriga a NÃO redesenhar quando nada mudou: `renderHosts()` refaz a lista
+// inteira, e fazer isso a cada dez segundos por nada pisca a tela na cara de
+// quem está usando.
+let assinaturaDoEstado = null;
+
+async function loadState(sePrecisar) {
+  const novo = await api('/api/state');
+  const assinatura = JSON.stringify(novo);
+  // `sePrecisar` é o modo do tique periódico: sai calado quando nada mudou.
+  // Quem chama depois de salvar alguma coisa NÃO passa a flag, e redesenha
+  // sempre — mesmo que a assinatura por acaso não tenha mudado.
+  if (sePrecisar && assinatura === assinaturaDoEstado) { state = novo; return; }
+  assinaturaDoEstado = assinatura;
+  state = novo;
   renderHosts();
   renderPlaybooks();
   renderFavoritesTab();
@@ -4415,15 +4432,20 @@ async function cicloDaAgenda() {
 function iniciarAgenda() {
   baterPonto();
   setInterval(baterPonto, INTERVALO_PONTO_MS);
+  // A lista de hosts deixou de ser só o cadastro local: os sistemas dos clientes
+  // vêm do cofre, e chegam depois da primeira leitura (a busca ao ERP é
+  // assíncrona, de propósito, para a tela não abrir esperando ele responder).
+  // Sem este tique eles só apareciam quando alguma outra coisa recarregasse o
+  // estado — na prática, quando a pessoa criasse ou editasse um host.
+  setInterval(() => { loadState(true).catch(() => {}); }, INTERVALO_AGENDA_MS);
   if (MODO_SOLO) {
     // Uma janela solta nunca recarregava o cadastro: `state.hosts` congelava no
     // instante da abertura. Isso decide errado a coisa mais cara que ela faz —
     // se manda ou não `{t:'fim'}` ao fechar. Agenda criada depois de soltar e a
     // janela mataria um shell que devia voltar; agenda removida depois e ela
     // deixaria uma conexão viva sem tela, até o TTL.
-    setInterval(() => { loadState().catch(() => {}); }, 30 * 1000);
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) { baterPonto(); loadState().catch(() => {}); }
+      if (!document.hidden) { baterPonto(); loadState(true).catch(() => {}); }
     });
     return;
   }
