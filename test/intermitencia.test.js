@@ -170,9 +170,35 @@ const baixar = (s) => new Promise((r) => { if (s.closeAllConnections) s.closeAll
       + 'estavam lá, sem uma palavra — e a pessoa descreve como "às vezes aparece, '
       + 'às vezes não", que foi literalmente o que aconteceu');
     igual(av[0].cofre, 'erp', 'o aviso diz de qual cofre');
-    ok(av[0].tentandoDeNovo && av[0].emSegundos > 0,
-      'e que já vai tentar de novo, com quantos segundos — a diferença entre '
-      + '"quebrou" e "aguarde"');
+    ok(av[0].tentarEm > Date.now(),
+      'e QUANDO vai tentar de novo — a diferença entre "quebrou" e "aguarde". Vai '
+      + 'como instante absoluto; a contagem regressiva é feita na tela');
+  }
+
+  // ---------- 6b. o aviso não pode MUDAR a cada leitura ----------
+
+  // A mensagem que existe para explicar a intermitência estava causando
+  // intermitência.
+  //
+  // O aviso trazia `emSegundos`, calculado na hora. Isso fazia o corpo de
+  // /api/state mudar a CADA leitura; a tela compara assinaturas para não
+  // redesenhar à toa, a assinatura nunca se repetia, e a lista de hosts era
+  // refeita a cada tique. Enquanto o cofre falha o tique é de 1 segundo — o card
+  // que a pessoa ia clicar era destruído e recriado debaixo do dedo.
+  {
+    const a = JSON.stringify(dados.avisos());
+    await new Promise((r) => setTimeout(r, 1100));
+    const b = JSON.stringify(dados.avisos());
+    igual(a, b,
+      'duas leituras seguidas do aviso são IDÊNTICAS. Se mudarem, a lista de hosts '
+      + 'se redesenha inteira a cada tique e o clique do usuário se perde no meio');
+
+    const av = dados.avisos()[0];
+    ok(typeof av.tentarEm === 'number' && av.tentarEm > 0,
+      'o prazo vai como instante ABSOLUTO; quem conta os segundos é o navegador');
+    igual(av.emSegundos, undefined,
+      'e a contagem regressiva não volta ao payload: é ela que faz a assinatura '
+      + 'do estado mudar sem nada ter mudado de verdade');
   }
 
   // ---------- 7. o aviso some quando o espelho está desligado ----------

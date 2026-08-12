@@ -200,25 +200,25 @@
   function faixaDoTurno(t) {
     const ini = t.diaInicio * MIN_POR_DIA + emMinutos(t.inicio);
     const fim = t.diaFim * MIN_POR_DIA + emMinutos(t.fim);
-    // `davolta` só quando o fim é MENOR que o início, como o contrato descreve
-    // ("diaFim/fim menores que o início"). Igual é duração ZERO, e é tratado
-    // separadamente — ver abaixo.
-    return { ini, fim, davolta: fim < ini, vazio: fim === ini };
+    // `fim === ini` é 24 HORAS, e não duração zero.
+    //
+    // O contrato diz "diaFim/fim MENORES que o início" ao descrever a volta, e
+    // eu li isso como "igual não dá a volta" — fechando o turno. Errado, e caro:
+    // o Homem Vitruviano codifica 24/7 exatamente assim, e com esse nome:
+    //
+    //   { diaInicio: 0, inicio: "00:00", diaFim: 0, fim: "00:00", rotulo: "24h" }
+    //
+    // Com `fim < ini`, esse turno passava a não abrir em NENHUM instante da
+    // semana — o cliente 24 h do Ygor ficou sem horário nenhum, calado. Quem
+    // define o significado do dado é quem o produz, não a minha leitura da prosa.
+    return { ini, fim, davolta: fim <= ini };
   }
 
   function dentroDoTurno(t, minutosDaSemana) {
-    const { ini, fim, davolta, vazio } = faixaDoTurno(t);
-    // Turno de duração zero (09:00 → 09:00, mesmo dia) NÃO é 24/7.
-    //
-    // O código tratava `fim <= ini` como "dá a volta na semana", e um turno assim
-    // passava a valer os sete dias inteiros: a aba do host ficava travada PARA
-    // SEMPRE, com o cofre recusando a credencial fora do expediente de verdade —
-    // o laço de conexões negadas que este módulo existe para evitar.
-    //
-    // O contrato não define esse caso. Na dúvida, este módulo fecha: um turno que
-    // não descreve período nenhum não abre nada, e o pior que acontece é o
-    // analista clicar para conectar.
-    if (vazio) return false;
+    const { ini, fim, davolta } = faixaDoTurno(t);
+    // `davolta` cobre os dois casos que dão a volta: o plantão que atravessa
+    // (dom 22:00 → seg 06:00) e o 24 h que fecha o círculo (fim === ini). Nos
+    // dois, "dentro" é estar depois do início OU antes do fim.
     if (davolta) return minutosDaSemana >= ini || minutosDaSemana < fim;
     return minutosDaSemana >= ini && minutosDaSemana < fim;
   }
@@ -238,10 +238,10 @@
     const ini = emMinutos(exc.inicio);
     const fim = emMinutos(exc.fim);
     if (ini === null || fim === null) return false;
-    // Duração zero não abre nada, pela mesma razão do turno.
-    if (fim === ini) return false;
-    // `fim < ini`: as duas pontas do MESMO dia, sem atravessar para o seguinte.
-    if (fim < ini) return minutosDoDia >= ini || minutosDoDia < fim;
+    // `fim <= ini`: as duas pontas do MESMO dia, sem atravessar para o seguinte.
+    // Igual é o dia inteiro, pela mesma razão do turno — quem produz o dado usa
+    // essa forma para dizer "sem interrupção".
+    if (fim <= ini) return minutosDoDia >= ini || minutosDoDia < fim;
     return minutosDoDia >= ini && minutosDoDia < fim;
   }
 

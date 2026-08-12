@@ -44,8 +44,22 @@ function modosDaLinhaDeComando(args) {
 const VELONIC = '5c323807-0000-4000-8000-000000000001';
 const MAYLINK = '3b70f4d8-0000-4000-8000-000000000002';
 
-// Janela 24 h — o exemplo literal da especificação.
+// Janela 24 h — COMO O ERP DE VERDADE MANDA, e não como o exemplo do documento.
+//
+// A especificação ilustra 24/7 com `diaInicio 0 → diaFim 6, fim 23:59`. O
+// produtor real manda outra coisa: um turno que FECHA O CÍRCULO no mesmo dia.
+//
+//   { diaInicio: 0, inicio: "00:00", diaFim: 0, fim: "00:00", rotulo: "24h" }
+//
+// Enquanto este arquivo copiava o exemplo do documento, ele validava uma forma
+// que a produção não produz — e uma mudança que quebrou o 24/7 real passou por
+// 1306 verificações verdes. Fake que diverge do produtor testa a si mesmo.
+//
+// A forma do documento vai junto, num terceiro cliente, porque as duas precisam
+// funcionar: é o mesmo significado escrito de dois jeitos.
 const JANELA_24H = { fuso: '-03:00', turnos: [
+  { diaInicio: 0, inicio: '00:00', diaFim: 0, fim: '00:00', rotulo: '24h' }] };
+const JANELA_24H_DO_DOCUMENTO = { fuso: '-03:00', turnos: [
   { diaInicio: 0, inicio: '00:00', diaFim: 6, fim: '23:59', rotulo: '24h' }] };
 // Comercial com feriado e véspera reduzida.
 const JANELA_COMERCIAL = { fuso: '-03:00',
@@ -55,9 +69,13 @@ const JANELA_COMERCIAL = { fuso: '-03:00',
     { data: '2026-12-24', fechado: false, inicio: '09:00', fim: '13:00' },
   ] };
 
+const PLANTAO = '7d10aa22-0000-4000-8000-000000000003';
+
 const CLIENTES = [
   { id: VELONIC, nome: 'Velonic', janela: JANELA_24H },
   { id: MAYLINK, nome: 'Maylink', janela: JANELA_COMERCIAL },
+  // Terceiro cliente só para a OUTRA escrita de 24 h ficar exercitada.
+  { id: PLANTAO, nome: 'Plantão', janela: JANELA_24H_DO_DOCUMENTO },
 ];
 
 const SISTEMAS = [
@@ -266,5 +284,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { criar, CLIENTES, SISTEMAS, SEGREDOS, TOKEN, PORTA, VELONIC, MAYLINK,
-  JANELA_24H, JANELA_COMERCIAL };
+module.exports = { criar, CLIENTES, SISTEMAS, SEGREDOS, TOKEN, PORTA, VELONIC, MAYLINK, PLANTAO,
+  JANELA_24H, JANELA_24H_DO_DOCUMENTO, JANELA_COMERCIAL };

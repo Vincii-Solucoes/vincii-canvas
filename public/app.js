@@ -243,8 +243,12 @@ function renderHosts() {
   for (const a of (state.avisosDeCofre || [])) {
     const box = el(wrap, 'div', 'card item warn-hint');
     el(box, 'strong', null, `Os sistemas do cofre "${a.cofre}" não estão na lista`);
+    // A contagem é feita AQUI, a partir do instante que o servidor mandou. Se
+    // ela viesse pronta, o corpo de /api/state mudaria a cada leitura e a lista
+    // se redesenharia sem parar — foi exatamente o que aconteceu.
+    const faltam = Math.max(0, Math.round((a.tentarEm - Date.now()) / 1000));
     el(box, 'p', 'hint', a.mensagem
-      + (a.tentandoDeNovo ? ` Tentando de novo em ${a.emSegundos}s.` : ' Tentando de novo já.'));
+      + (faltam > 0 ? ` Tentando de novo em ${faltam}s.` : ' Tentando de novo já.'));
   }
   if (!state.hosts.length) {
     el(wrap, 'p', 'empty', 'Nenhum host cadastrado. Clique em "Novo host".');

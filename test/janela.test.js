@@ -281,41 +281,62 @@ const { fimDoAtendimento } = require('../public/janela');
 }
 
 {
-  // TURNO DE DURAÇÃO ZERO (início == fim) NÃO É 24/7.
+    // TURNO QUE FECHA O CÍRCULO (início == fim) É 24 HORAS.
   //
-  // Este teste afirmava o contrário, e afirmava errado: o código tratava
-  // `fim <= inicio` como "dá a volta na semana", então 09:00→09:00 passava a
-  // valer os SETE DIAS INTEIROS. Efeito na tela: a aba daquele host travava
-  // para sempre, com o cofre recusando a credencial fora do expediente de
-  // verdade — o laço de conexões negadas que este módulo existe para evitar.
+  // Este bloco afirmava o CONTRÁRIO, e a afirmação custou caro. Li no contrato
+  // que a volta acontece quando o fim é "MENOR que o início" e concluí que igual
+  // não dá a volta — fechando o turno. Só que o Homem Vitruviano codifica 24/7
+  // exatamente assim:
   //
-  // O contrato só descreve a volta quando o fim é MENOR que o início. Igual não
-  // está definido, e na dúvida este módulo fecha.
-  const j = { fuso: '-03:00', turnos: [
-    { diaInicio: 1, inicio: '09:00', diaFim: 1, fim: '09:00' }] };
+  //   { diaInicio: 0, inicio: "00:00", diaFim: 0, fim: "00:00", rotulo: "24h" }
+  //
+  // O cliente 24 h em produção passou a não abrir em instante NENHUM da semana,
+  // sem erro em lugar nenhum. E não foi pego porque o ERP de mentira copiava o
+  // EXEMPLO do documento (`diaFim 6, fim 23:59`) em vez do que o produtor manda.
+  //
+  // Quem define o significado do dado é quem o produz.
+  const circulo = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '00:00', diaFim: 0, fim: '00:00', rotulo: '24h' }] };
   let abertos = 0;
+  const instantes = [];
   for (let d = 0; d < 7; d += 1) {
     for (const h of [0, 6, 9, 12, 18, 23]) {
-      if (estaEmAtendimento(j, new Date(Date.UTC(2026, 7, 10 + d, h + 3)))) abertos += 1;
+      instantes.push(new Date(Date.UTC(2026, 7, 10 + d, h + 3)));
     }
   }
-  igual(abertos, 0,
-    'turno de duração zero não abre em instante nenhum da semana — tratá-lo como '
-    + 'volta completa travava a aba do host para sempre');
-  igual(fimDoAtendimento(j, em('2026-08-11T15:00:00Z')), null,
-    'e não há "aberto até", porque não há nada aberto');
+  for (const t of instantes) if (estaEmAtendimento(circulo, t)) abertos += 1;
+  igual(abertos, instantes.length,
+    'a janela 24 h do ERP abre em TODOS os instantes da semana — é a forma que a '
+    + 'produção usa, e tratá-la como duração zero deixou o cliente sem horário');
 
-  // O que É volta de verdade continua funcionando.
+  // A outra escrita da mesma coisa, a do exemplo do documento, também vale.
+  const doDocumento = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '00:00', diaFim: 6, fim: '23:59' }] };
+  ok(estaEmAtendimento(doDocumento, em('2026-08-12T15:00:00Z')),
+    'e a forma do documento (diaFim 6, fim 23:59) continua valendo: o mesmo '
+    + 'significado escrito de dois jeitos, e os dois precisam funcionar');
+
+  // Um turno de meio-dia continua sendo meio-dia, não a semana toda.
+  const meioDia = { fuso: '-03:00', turnos: [
+    { diaInicio: 2, inicio: '08:00', diaFim: 2, fim: '12:00' }] };
+  ok(estaEmAtendimento(meioDia, em('2026-08-12T13:00:00Z')), 'quarta 10:00 dentro');
+  naoOk(estaEmAtendimento(meioDia, em('2026-08-12T18:00:00Z')), 'quarta 15:00 fora');
+  naoOk(estaEmAtendimento(meioDia, em('2026-08-13T13:00:00Z')), 'quinta 10:00 fora');
+
   const volta = { fuso: '-03:00', turnos: [
     { diaInicio: 6, inicio: '22:00', diaFim: 0, fim: '06:00' }] };
   ok(estaEmAtendimento(volta, em('2026-08-17T02:00:00Z')),
-    'o plantão que atravessa a semana (fim MENOR que o início) segue valendo');
+    'o plantão que atravessa a semana segue valendo');
+  naoOk(estaEmAtendimento(volta, em('2026-08-12T15:00:00Z')),
+    'e não vaza para a quarta ao meio-dia');
 
-  // Exceção de duração zero, mesma regra.
-  const excZero = { fuso: '-03:00', turnos: [],
+  // Exceção que fecha o círculo: o dia inteiro daquela data.
+  const excCirculo = { fuso: '-03:00', turnos: [],
     excecoes: [{ data: '2026-12-24', fechado: false, inicio: '09:00', fim: '09:00' }] };
-  naoOk(estaEmAtendimento(excZero, new Date(Date.UTC(2026, 11, 24, 15))),
-    'exceção de duração zero também não abre o dia inteiro');
+  ok(estaEmAtendimento(excCirculo, new Date(Date.UTC(2026, 11, 24, 15))),
+    'exceção com fim igual ao início vale o dia inteiro daquela data');
+  naoOk(estaEmAtendimento(excCirculo, new Date(Date.UTC(2026, 11, 25, 15))),
+    'e só naquela data');
 }
 
 

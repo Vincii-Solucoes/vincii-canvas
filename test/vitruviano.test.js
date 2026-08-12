@@ -55,12 +55,19 @@ async function comServidor(modos, corpo) {
     igual(r.produto, 'Homem Vitruviano', 'o ping identifica o produto');
     igual(r.permissoes, ['ler'], 'e as permissões da chave');
     igual(r.rotuloDaChave, 'Canvas — laboratório', 'e o rótulo, para a tela dizer qual token é');
-    igual(r.cofres.length, 2, 'dois clientes atendidos');
+    igual(r.cofres.length, 3, 'três clientes atendidos');
     igual(r.cofres[0].nome, 'Velonic', 'com nome para a tela');
     ok(r.cofres[0].janela && r.cofres[0].janela.turnos.length === 1,
       'a janela de atendimento vem junto do cliente, normalizada');
     igual(r.cofres[1].janela.excecoes.length, 2,
       'inclusive as exceções (feriado e véspera reduzida)');
+    // As DUAS escritas de 24 h: a que a produção manda (fecha o círculo) e a do
+    // exemplo do documento. Enquanto o fake só tinha a segunda, uma mudança que
+    // quebrou a primeira passou por toda a suíte sem acusar nada.
+    igual(r.cofres[0].janela.turnos[0].fim, '00:00',
+      'a janela 24 h da Velonic fecha o círculo, como a produção manda');
+    igual(r.cofres[2].janela.turnos[0].fim, '23:59',
+      'e o terceiro cliente usa a escrita do documento — as duas ficam exercitadas');
   });
 
   // Cliente sem janela é caso previsto — e é diferente de janela vazia.
