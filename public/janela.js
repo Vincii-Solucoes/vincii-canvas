@@ -336,15 +336,37 @@
     const j = normalizarJanela(janela);
     if (!j) return '';
     if (!j.turnos.length) return `Só nas datas de exceção (${j.excecoes.length})`;
-    const vinteQuatroSete = j.turnos.length === 1 && j.turnos[0].diaInicio === 0
-      && j.turnos[0].inicio === '00:00' && j.turnos[0].diaFim === 6 && j.turnos[0].fim === '23:59';
-    if (vinteQuatroSete) return '24 h, todos os dias';
+    // "24 h" é uma PROPRIEDADE da faixa, não um formato de escrita.
+    //
+    // A conta era literal — só reconhecia `Seg 00:00 → Dom 23:59`, a forma do
+    // exemplo do documento. A produção manda a outra (`Seg 00:00 → Seg 00:00`,
+    // fechando o círculo) e a etiqueta virava "Seg 00:00–00:00": um texto que não
+    // significa nada para quem lê, num host que abre sozinho e não deixa fechar.
+    //
+    // Agora a pergunta é sobre a COBERTURA: um turno só, cobrindo a semana toda.
+    if (j.turnos.length === 1) {
+      const { ini, fim, davolta } = faixaDoTurno(j.turnos[0]);
+      // Círculo fechado (fim === ini) cobre tudo. A forma do documento perde o
+      // último minuto do domingo, e sempre foi lida como 24 h.
+      const semanaInteira = (davolta && fim === ini)
+        || (ini === 0 && fim >= MIN_POR_SEMANA - 1);
+      if (semanaInteira) {
+        const feriados = j.excecoes.length ? ` · ${j.excecoes.length} exceção(ões)` : '';
+        return `24 h, todos os dias${feriados}`;
+      }
+    }
     const partes = j.turnos.map((t) => {
       const mesmoDia = t.diaInicio === t.diaFim;
       const quando = mesmoDia
         ? DIAS_CURTOS[t.diaInicio]
         : `${DIAS_CURTOS[t.diaInicio]} a ${DIAS_CURTOS[t.diaFim]}`;
-      return `${quando} ${t.inicio}–${t.fim}${t.rotulo ? ` (${t.rotulo})` : ''}`;
+      // Turno que atravessa mostra o dia do fim junto: "Dom 22:00 – Seg 06:00"
+      // se lê; "Dom a Seg 22:00–06:00" confunde quem tenta achar o começo.
+      const { davolta } = faixaDoTurno(t);
+      const texto = davolta && !mesmoDia
+        ? `${DIAS_CURTOS[t.diaInicio]} ${t.inicio} – ${DIAS_CURTOS[t.diaFim]} ${t.fim}`
+        : `${quando} ${t.inicio}–${t.fim}`;
+      return `${texto}${t.rotulo ? ` (${t.rotulo})` : ''}`;
     });
     const feriados = j.excecoes.length ? ` · ${j.excecoes.length} exceção(ões)` : '';
     return `${partes.join('; ')}${feriados}`;

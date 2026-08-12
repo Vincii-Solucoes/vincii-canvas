@@ -214,7 +214,9 @@ const em = (iso) => new Date(iso);
   'Seg a Sex 08:00–18:00 (Comercial)', 'faixa de dias com rótulo');
   igual(descreverJanela({ fuso: '-03:00', turnos: [
     { diaInicio: 6, inicio: '22:00', diaFim: 0, fim: '06:00' }] }),
-  'Dom a Seg 22:00–06:00', 'plantão que vira o dia');
+  'Dom 22:00 – Seg 06:00',
+  'plantão que vira o dia mostra o dia dos DOIS lados. Era "Dom a Seg 22:00–06:00", '
+  + 'que se lê como "das 22:00 às 06:00, de domingo a segunda" — o oposto do que é');
   igual(descreverJanela(null), '', 'sem janela, sem texto');
   ok(/exceção/.test(descreverJanela({ fuso: '-03:00',
     turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 0, fim: '18:00' }],
@@ -486,6 +488,47 @@ const { fimDoAtendimento } = require('../public/janela');
   igual(normalizarJanela({ fuso: '+05:30',
     turnos: [{ diaInicio: 0, inicio: '08:00', diaFim: 4, fim: '18:00' }] }).fuso, '+05:30',
     'e deslocamento fixo continua valendo, inclusive positivo e quebrado');
+}
+
+
+// ---------- a etiqueta: "24 h" é cobertura, não formato de escrita ----------
+
+// A conta era literal e só reconhecia a forma do EXEMPLO do documento. A
+// produção manda a outra, e a etiqueta virava "Seg 00:00–00:00" — um texto que
+// não significa nada, num host que abre sozinho e não deixa fechar. Quem lê
+// aquilo não tem como saber por que o "×" sumiu.
+{
+  const producao = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '00:00', diaFim: 0, fim: '00:00', rotulo: '24h' }] };
+  igual(descreverJanela(producao), '24 h, todos os dias',
+    'o 24 h que a PRODUÇÃO manda (círculo fechado) é reconhecido pela etiqueta');
+
+  const documento = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '00:00', diaFim: 6, fim: '23:59' }] };
+  igual(descreverJanela(documento), '24 h, todos os dias',
+    'e o do documento também — mesmo significado, mesma etiqueta');
+
+  igual(descreverJanela({ ...producao, excecoes: [{ data: '2026-09-07', fechado: true }] }),
+    '24 h, todos os dias · 1 exceção(ões)',
+    'com os feriados contados junto: 24 h COM exceção não é 24 h de verdade');
+
+  const plantao = { fuso: '-03:00', turnos: [
+    { diaInicio: 6, inicio: '22:00', diaFim: 0, fim: '06:00' }] };
+  igual(descreverJanela(plantao), 'Dom 22:00 – Seg 06:00',
+    'turno que ATRAVESSA mostra o dia dos dois lados. "Dom a Seg 22:00–06:00" '
+    + 'confunde quem tenta achar onde começa');
+
+  const comercial = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '08:00', diaFim: 4, fim: '18:00', rotulo: 'Comercial' }] };
+  igual(descreverJanela(comercial), 'Seg a Sex 08:00–18:00 (Comercial)',
+    'e a faixa normal continua lendo como antes');
+
+  // Quase 24 h NÃO pode virar "24 h": a diferença é justamente o que a pessoa
+  // precisa ver.
+  const quase = { fuso: '-03:00', turnos: [
+    { diaInicio: 0, inicio: '00:00', diaFim: 5, fim: '23:59' }] };
+  naoOk(descreverJanela(quase).includes('24 h'),
+    'seg a sáb NÃO é "24 h, todos os dias" — arredondar isso esconderia o domingo');
 }
 
 console.log(`\n${n} verificações passaram`);
