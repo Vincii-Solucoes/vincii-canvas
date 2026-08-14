@@ -852,6 +852,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .term-instance[hidden] { display: none; }
 .term-empty[hidden] { display: none; }
 .term-instance .xterm { height: 100%; }
+.term-empty-inner { max-width: 460px; display: grid; gap: 14px; justify-items: center; }
+.term-empty-inner p { margin: 0; }
 .term-empty {
   position: absolute;
   inset: 0;

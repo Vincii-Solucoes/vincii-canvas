@@ -5673,6 +5673,8 @@ function init() {
         : 'O terminal da sua máquina não abre mais sozinho — ele fica no topo da barra lateral.');
     });
   }
+  const btnVazio = $('#termEmptyLocal');
+  if (btnVazio) btnVazio.addEventListener('click', () => openLocalSession());
   $('#cfgTermFont').addEventListener('change', updateFontPreview);
   $('#cfgTermSize').addEventListener('input', updateFontPreview);
   $('#cfgSaveTerm').addEventListener('click', saveTermAppearance);

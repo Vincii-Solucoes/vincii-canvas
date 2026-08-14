@@ -75,14 +75,38 @@ const srv = fs.readFileSync(path.join(raiz, 'server.js'), 'utf8');
     + 'rótulo teria empilhado embaixo da caixa');
   ok(/cfgAbrirLocal[\s\S]{0,400}prefSet\('abrirLocalSozinho'/.test(app),
     'e mexer nela grava a preferência');
-  // Ancorado NO ESTADO VAZIO, e não no arquivo inteiro: a primeira versão
-  // procurava "Meu computador</strong>" em qualquer lugar do HTML e casava com
-  // outro trecho da interface — passava verde com a dica apagada.
-  const vazio = (html.match(/<div id="termEmpty"[^>]*>([\s\S]*?)<\/div>/) || [])[1] || '';
-  ok(vazio.length > 40, 'achei o texto da aba Terminal vazia');
-  ok(/Meu computador/.test(vazio),
-    'a tela vazia aponta para o "Meu computador" da barra lateral — sem isso, '
-    + 'tirar a abertura automática deixaria a aba parecendo quebrada');
+  // ---- a tela vazia precisa OFERECER, não só explicar ----
+  //
+  // Primeiro ela era só uma frase, e ficou nua: uma faixa de texto no meio de um
+  // retângulo preto enorme. Agora tem o botão que abre o terminal da máquina —
+  // a coisa que a pessoa mais provavelmente quer ali.
+  const iVazio = html.indexOf('id="termEmpty"');
+  ok(iVazio > 0, 'achei a área de aba Terminal vazia');
+  const vazio = html.slice(iVazio, html.indexOf('</div>', html.indexOf('term-empty-inner')) + 6);
+  ok(/id="termEmptyLocal"/.test(vazio),
+    'a tela vazia tem um BOTÃO para abrir o terminal desta máquina');
+  ok(/termEmptyLocal[\s\S]{0,160}openLocalSession\(\)/.test(app),
+    'e o botão está ligado no openLocalSession');
+
+  // ---- UM filho só dentro do .term-empty ----
+  //
+  // `.term-empty` é `display: flex` para centralizar. Flex trata CADA nó de
+  // texto e cada <strong> como item próprio — com o texto solto lá dentro, a
+  // frase se partiu em colunas separadas por buracos enormes, e a tela ficou com
+  // cara de quebrada. O conteúdo tem de vir dentro de um invólucro só.
+  ok(/<div class="term-empty-inner">/.test(vazio),
+    'o conteúdo vive dentro de `.term-empty-inner`');
+
+  // Comentário NÃO conta — e essa primeira versão do teste caiu na própria
+  // armadilha: o comentário que explica o problema cita "<strong>", e a
+  // verificação ingênua acusou o comentário em vez do markup.
+  const semComentarios = vazio.replace(/<!--[\s\S]*?-->/g, '');
+  const antesDoInvolucro = semComentarios.slice(
+    semComentarios.indexOf('>') + 1, semComentarios.indexOf('<div class="term-empty-inner">'));
+  ok(antesDoInvolucro.trim() === '',
+    'entre o `.term-empty` e o invólucro não há NADA — nem texto solto, nem tag. '
+    + 'Flex trata cada nó de texto como item próprio, e foi assim que a frase se '
+    + 'partiu em colunas separadas por buracos enormes');
 }
 
 console.log(`\n${n} verificações passaram`);

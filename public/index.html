@@ -167,7 +167,18 @@ try {
         </div>
         <div class="term-pane">
           <div id="termContainers"></div>
-          <div id="termEmpty" class="term-empty">Clique em um host na barra lateral para abrir uma conexão — ou em <strong>Meu computador</strong>, no topo dela, para um terminal desta máquina. Você pode abrir várias, inclusive ao mesmo host.</div>
+          <div id="termEmpty" class="term-empty">
+            <!-- UM filho só. O `.term-empty` é `display:flex` para centralizar, e
+                 flex trata cada nó de texto e cada <strong> como item próprio:
+                 com o texto solto aqui dentro, a frase se partia em colunas
+                 separadas por buracos enormes. -->
+            <div class="term-empty-inner">
+              <p>Escolha um host na barra lateral para abrir uma conexão.
+                Você pode abrir várias, inclusive ao mesmo host.</p>
+              <button type="button" id="termEmptyLocal" class="btn">💻 Abrir terminal desta máquina</button>
+              <p class="hint">Ele também fica sempre no topo da barra lateral.</p>
+            </div>
+          </div>
         </div>
       </div>
       <div class="ai-pane" hidden>
