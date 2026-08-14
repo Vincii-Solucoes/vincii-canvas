@@ -4353,6 +4353,51 @@ const INTERVALO_PONTO_MS = 5 * 1000;
 
 const ultimaTentativaAgenda = new Map();
 
+// Quem estava DENTRO do horário no ciclo anterior.
+//
+// `null` quer dizer "ainda não sei" — e a diferença importa: no primeiro ciclo
+// depois de abrir o app, todo mundo que está fora do horário estaria "saindo
+// agora" se comparássemos com um conjunto vazio. O usuário levaria uma enxurrada
+// de avisos de atendimentos que terminaram ontem.
+let dentroNoCicloAnterior = null;
+
+// Avisa que o atendimento de um cliente acabou.
+//
+// Quando a faixa termina, o app não derruba nada: a aba continua aberta e volta
+// a ser fechável (o "×" reaparece). Isso é de propósito — interromper um comando
+// em execução seria pior. Só que a mudança acontecia em silêncio absoluto, e
+// quem estava trabalhando não tinha como saber que o expediente daquele cliente
+// virou.
+//
+// Agrupado por CLIENTE, e não por host: um cliente com seis sistemas produziria
+// seis avisos idênticos no mesmo segundo.
+function avisarFimDoHorario(hosts) {
+  const porGrupo = new Map();
+  for (const h of hosts) {
+    // Sem aba viva não há o que avisar: ninguém está olhando para aquele host, e
+    // "você já pode fechar" não descreve nada. O aviso existe para dizer que a
+    // trava saiu, e trava só existe onde há aba.
+    const abas = sessions.filter((s) => s.hostId === h.id && !sessaoMorta(s));
+    if (!abas.length) continue;
+    const f = fonteDeHorario(h);
+    const chave = f && f.tipo === 'cofre' ? `cliente:${f.cliente}` : `host:${h.id}`;
+    const atual = porGrupo.get(chave) || { fonte: f, hosts: [], abas: 0 };
+    atual.hosts.push(h);
+    atual.abas += abas.length;
+    porGrupo.set(chave, atual);
+  }
+
+  for (const g of porGrupo.values()) {
+    const quem = g.fonte && g.fonte.tipo === 'cofre'
+      ? `O atendimento de ${g.fonte.cliente} terminou`
+      : `A agenda de "${g.hosts[0].name}" terminou`;
+    const oQue = g.abas === 1
+      ? 'A aba continua aberta e já pode ser fechada.'
+      : `${g.abas} abas continuam abertas e já podem ser fechadas.`;
+    toast(`${quem}. ${oQue}`);
+  }
+}
+
 // Hosts cujo COFRE recusou de um jeito que não melhora com insistência.
 //
 // A agenda reabre o host a cada minuto enquanto ele está na faixa. Quando o
@@ -4506,6 +4551,14 @@ async function cicloDaAgenda() {
   // Host que SAIU da faixa esquece a última tentativa. Isso faz o aviso na tela
   // voltar a aparecer quando ele entrar na faixa de novo — e só então.
   const dentro = new Set(agendados.map((h) => h.id));
+
+  // Quem estava dentro e não está mais: o expediente virou agora.
+  if (dentroNoCicloAnterior) {
+    const sairam = state.hosts.filter((h) => dentroNoCicloAnterior.has(h.id) && !dentro.has(h.id));
+    if (sairam.length) avisarFimDoHorario(sairam);
+  }
+  dentroNoCicloAnterior = dentro;
+
   for (const id of [...ultimaTentativaAgenda.keys()]) if (!dentro.has(id)) ultimaTentativaAgenda.delete(id);
   // A recusa do cofre também é esquecida ao sair da faixa: entrar de novo é
   // motivo legítimo para tentar mais uma vez.

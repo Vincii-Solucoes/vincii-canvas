@@ -48,7 +48,10 @@ parede.
 **3. A janela de atendimento vira comportamento.** O horário que vem no `ping`
 faz o Canvas **abrir sozinho** os hosts daquele cliente e **travar a aba** (o "×"
 some) durante o período. Fora dele a aba volta a fechar normalmente. Nada é
-derrubado no fim do horário — interromper um comando em execução seria pior.
+derrubado no fim do horário — interromper um comando em execução seria pior —
+mas o app **avisa** quando o período termina: *"O atendimento de Velonic
+terminou. 2 abas continuam abertas e já podem ser fechadas."* Um aviso por
+cliente, e só quando há aba aberta.
 Arquivo: [`public/janela.js`](../public/janela.js), 102 verificações em
 [`test/janela.test.js`](../test/janela.test.js).
 
