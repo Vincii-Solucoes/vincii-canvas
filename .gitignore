@@ -1,11 +1,12 @@
 node_modules/
 data.json
-data.json.tmp
+data.json.tmp*
 data.json.corrompido-*
 history.json
-history.json.tmp
+history.json.tmp*
+history.json.corrompido-*
 cofres-chaves.json
-cofres-chaves.json.tmp
+cofres-chaves.json.tmp*
 test/.host_key
 test/.host_key.pub
 dist/

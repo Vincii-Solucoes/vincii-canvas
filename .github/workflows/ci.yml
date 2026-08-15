@@ -1,0 +1,30 @@
+name: CI
+
+# Roda a suíte de testes a cada push e pull request. Antes, os testes só
+# existiam localmente: a release (release.yml) publicava instaladores para 3
+# sistemas sem nenhum portão de qualidade. Agora um push que quebre a suíte
+# aparece aqui, e a release passou a depender deste mesmo passo.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Rodar a suíte de testes
+        run: npm test

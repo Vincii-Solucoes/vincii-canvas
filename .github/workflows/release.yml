@@ -14,7 +14,24 @@ permissions:
   contents: write # necessário para criar o Release
 
 jobs:
+  # Portão de qualidade: nenhum instalador é compilado se a suíte quebrar.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Instalar dependências
+        run: npm ci
+      - name: Rodar a suíte de testes
+        run: npm test
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -68,7 +85,25 @@ jobs:
           files=(artifacts/*.dmg artifacts/*.zip artifacts/*.exe artifacts/*.AppImage artifacts/*.deb artifacts/*.blockmap artifacts/latest*.yml)
           echo "Instaladores encontrados (${#files[@]}):"
           printf ' - %s\n' "${files[@]}"
-          if [ ${#files[@]} -eq 0 ]; then echo "Nenhum instalador — abortando"; exit 1; fi
+          # NÃO recriar um Release incompleto. fail-fast:false deixa as pernas
+          # boas subirem mesmo que uma falhe, e if-no-files-found:ignore deixa
+          # uma perna "passar" sem produzir artefato. Sem esta checagem, o
+          # gh release delete abaixo apagaria o Release bom e o recriaria sem,
+          # por exemplo, o instalador Windows e o latest.yml — quebrando o
+          # auto-update de quem já está instalado, com o workflow verde. Exige o
+          # conjunto mínimo das três plataformas ANTES de tocar no Release.
+          faltando=()
+          compgen -G "artifacts/*.dmg"           > /dev/null || faltando+=("macOS .dmg")
+          compgen -G "artifacts/*.exe"           > /dev/null || faltando+=("Windows .exe")
+          compgen -G "artifacts/latest.yml"      > /dev/null || faltando+=("latest.yml (auto-update Windows)")
+          { compgen -G "artifacts/*.AppImage" > /dev/null || compgen -G "artifacts/*.deb" > /dev/null; } \
+            || faltando+=("Linux .AppImage/.deb")
+          compgen -G "artifacts/latest-linux.yml" > /dev/null || faltando+=("latest-linux.yml (auto-update Linux)")
+          if [ ${#faltando[@]} -ne 0 ]; then
+            echo "Release INCOMPLETO — abortando sem tocar no Release existente. Faltam:"
+            printf ' - %s\n' "${faltando[@]}"
+            exit 1
+          fi
           # recria o Release do zero (idempotente em re-execuções; mantém a tag)
           gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
           printf '%s\n' \

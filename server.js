@@ -1910,6 +1910,29 @@ app.post('/api/agent/:id/stop', (req, res) => {
   res.json({ ok: true });
 });
 
+// Tratador de erro do Express: uma rota async que rejeite (ex.: POST
+// /api/hosts/:id/test, sem try/catch em volta do await) caía no handler padrão
+// do Express — resposta de stack em vez de JSON. Devolve JSON como o resto da
+// API e deixa rastro. Precisa vir DEPOIS de todas as rotas.
+app.use((err, req, res, next) => {
+  console.error('[erro] rota', req.method, req.originalUrl, '-', (err && err.message) || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Erro interno.' });
+});
+
+// Rede de segurança do processo. O app segura sessões de terminal vivas: uma
+// promessa rejeitada sem dono ou uma exceção solta não devem sumir sem log nem
+// derrubar tudo com elas. Registramos para DEIXAR RASTRO — antes, uma rejeição
+// não tratada some, e uma exceção mata o processo com um stack cru. Mantém o
+// processo de pé de propósito: é a mesma escolha do catch protetor do listen
+// (matá-lo perderia as sessões que o app existe para preservar).
+process.on('unhandledRejection', (motivo) => {
+  console.error('[erro] promessa rejeitada sem tratamento:', motivo);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[erro] exceção não capturada:', err);
+});
+
 // Sobe o servidor HTTP; port 0 = porta aleatória livre (usado pelo app desktop)
 function start(port = PORT, host = HOST) {
   return new Promise((resolve, reject) => {
