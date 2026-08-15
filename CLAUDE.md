@@ -4,6 +4,12 @@ Este arquivo orienta o Claude (e qualquer pessoa) a mexer no **Vincii Canvas**
 sem quebrar o que existe. Ele **descreve o projeto como ele é** e define padrões
 para o que for novo — sem impor uma arquitetura nova sobre o código atual.
 
+O projeto está no **Marco Zero** (ver [docs/MARCO-ZERO.md](docs/MARCO-ZERO.md)):
+o estado atual está mapeado, os críticos corrigidos, e há processo para evoluir.
+A partir daqui, **nenhuma feature grande começa direto no código** — todo trabalho
+entra por um dos três fluxos (feature / bug / refactor), conduzidos pelas
+[skills](.claude/README.md).
+
 ## Diretriz principal
 
 > **Respeite o projeto que existe. Evolução, não revolução.**

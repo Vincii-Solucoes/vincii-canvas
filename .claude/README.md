@@ -29,6 +29,16 @@ BUG → debugging → CAUSA RAIZ → CORREÇÃO → testing → review → DONE
 - **debugging** — reproduzir, achar a causa raiz (não o sintoma), corrigir com o
   menor diff e travar com teste de regressão.
 
+## Fluxo de refactor
+
+```
+REFACTOR → refactor → (rede de testes → passos pequenos → comportamento idêntico) → testing → review → DONE
+```
+
+- **refactor** — mudar a forma sem mudar o comportamento. Opcional e oportunista;
+  refactor estrutural grande exige `architecture` + aprovação. Um padrão novo
+  nunca obriga a refatorar o legado.
+
 ## Transversal
 
 - **security** — checklist para qualquer coisa que toque credenciais, execução,

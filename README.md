@@ -143,6 +143,8 @@ Sobe um SSH local em `127.0.0.1:2222` (usuário `demo`, senha `segredo123`) que 
 
 ## Documentação
 
+O projeto está no **Marco Zero** — [docs/MARCO-ZERO.md](docs/MARCO-ZERO.md): estado mapeado, críticos corrigidos, processo definido. A partir daí, features entram pelos fluxos das [skills](.claude/README.md).
+
 Documentos do **estado atual** do projeto (o que ele é hoje, extraído do código):
 
 - [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) — o que é, objetivo, módulos e fluxos.
