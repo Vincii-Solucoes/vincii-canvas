@@ -403,7 +403,14 @@ app.post('/api/cofres', (req, res) => {
     d.cofres.push({ apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config,
       espelharSistemas: b.espelharSistemas !== false });
   }
-  if (Object.keys(segredos).length) segredosDeCofre.definir(apelido, segredos);
+  if (Object.keys(segredos).length) {
+    // definir() pode recusar quando as chaves estão protegidas pelo sistema e
+    // este processo não alcança o Keychain — gravar ali apagaria as cifradas.
+    // Melhor devolver o motivo do que um 500 cru (e sem gravar o data.json,
+    // para o cadastro não ficar meio-salvo).
+    try { segredosDeCofre.definir(apelido, segredos); }
+    catch (e) { return fail(res, 503, (e && e.message) || 'Não foi possível salvar a chave do cofre.'); }
+  }
   store.save();
   // Busca AGORA o que este cofre sabe.
   //

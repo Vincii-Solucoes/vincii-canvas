@@ -284,6 +284,66 @@ const servidor = http.createServer((req, res) => {
     try { fs.rmSync(dir3, { recursive: true, force: true }); } catch {}
   }
 
+  // ---------- Keychain inalcançável NÃO apaga as chaves protegidas ----------
+  //
+  // O arquivo está cifrado pelo sistema, mas este processo não alcança o
+  // Keychain (Linux sem libsecret/keyring travado; macOS logo após atualização
+  // com a pergunta cancelada; `npm start` apontado ao perfil do desktop). Nesse
+  // estado `ler()` devolve vazio de propósito — e a versão anterior deixava a
+  // gravação seguinte rebaixar o arquivo para texto claro com o mapa vazio,
+  // APAGANDO em silêncio TODAS as chaves de TODOS os cofres. Agora `gravar()`
+  // recusa em vez de destruir, e as chaves cifradas continuam intactas.
+  {
+    const os2 = require('os');
+    const antes = process.env.SSHC_DATA_DIR;
+    const dir = fs.mkdtempSync(path.join(os2.tmpdir(), 'vc-kc3-'));
+    process.env.SSHC_DATA_DIR = dir;
+
+    // Este bloco provoca de propósito o aviso de "Keychain inalcançável". Silencia
+    // durante ele para o aviso não virar a última linha da saída — o runner
+    // (test/rodar.js) lê a contagem da última linha de stdout+stderr.
+    const warnOrig = console.warn;
+    console.warn = () => {};
+
+    const cifrar = (t) => Buffer.from('C:' + t);
+    const decifrar = (b) => b.toString().replace(/^C:/, '');
+
+    // 1) Com o Keychain disponível, guarda duas chaves protegidas.
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    const seg = require('../lib/cofresegredos');
+    seg.usarCofreDoSistema({ disponivel: () => true, cifrar, decifrar });
+    seg.definir('cofre-a', { chave: 'CHAVE-A' });
+    seg.definir('cofre-b', { chave: 'CHAVE-B' });
+    const envProtegido = JSON.parse(fs.readFileSync(path.join(dir, 'cofres-chaves.json'), 'utf8'));
+    igual(envProtegido.formato, 'protegido', 'as duas chaves ficam cifradas pelo sistema');
+
+    // 2) Novo processo, mesmo arquivo, mas o Keychain agora é INALCANÇÁVEL.
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    const seg2 = require('../lib/cofresegredos');
+    seg2.usarCofreDoSistema({ disponivel: () => false, cifrar, decifrar });
+    igual(seg2.pegar('cofre-a'), {}, 'sem Keychain, ler devolve vazio — as chaves não são adivinhadas');
+
+    // 3) Uma gravação qualquer NÃO pode apagar as chaves cifradas: deve recusar.
+    assert.throws(() => seg2.definir('cofre-c', { chave: 'CHAVE-C' }),
+      /Keychain|protegidas/, 'definir recusa gravar quando apagaria as chaves cifradas');
+    n += 1;
+    const aindaProtegido = JSON.parse(fs.readFileSync(path.join(dir, 'cofres-chaves.json'), 'utf8'));
+    igual(aindaProtegido.formato, 'protegido', 'o arquivo continua protegido — nada foi rebaixado');
+    igual(aindaProtegido.dados, envProtegido.dados, 'e o conteúdo cifrado está intacto, byte a byte');
+
+    // 4) De volta com o Keychain, as duas chaves originais continuam lá.
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    const seg3 = require('../lib/cofresegredos');
+    seg3.usarCofreDoSistema({ disponivel: () => true, cifrar, decifrar });
+    igual(seg3.pegar('cofre-a'), { chave: 'CHAVE-A' }, 'a chave A sobreviveu ao episódio');
+    igual(seg3.pegar('cofre-b'), { chave: 'CHAVE-B' }, 'e a chave B também');
+
+    console.warn = warnOrig;
+    process.env.SSHC_DATA_DIR = antes;
+    delete require.cache[require.resolve('../lib/cofresegredos')];
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+
   {
     const bruto = fs.readFileSync(path.join(DIR, 'data.json'), 'utf8');
     naoOk(bruto.includes('a-chave'),
