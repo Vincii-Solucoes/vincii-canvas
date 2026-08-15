@@ -32,6 +32,15 @@ Referência completa: [CLAUDE.md](../../../CLAUDE.md) §3 e §4.
 - **Nada de mudança arquitetural** não aprovada (§10). Se surgir a necessidade no
   meio, pare e volte à skill architecture.
 
+## Disciplina de escopo
+
+Altere **só o necessário** para o requisito. Ao topar com um problema **não
+relacionado** ([CLAUDE.md](../../../CLAUDE.md) → *Disciplina de escopo*): **não
+conserte de carona** — registre em [docs/ACHADOS.md](../../../docs/ACHADOS.md)
+com `arquivo:linha` e severidade (🔴/🟠/🟡/🟢), mencione no resumo, e **continue a
+tarefa quando for seguro**. Se o achado bloqueia a tarefa ou é 🔴 que você está
+tornando alcançável, **pare e alinhe**.
+
 ## Ao terminar
 
 Não considere "pronto" sem passar por **testing** e **review**. Rode `npm test` e

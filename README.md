@@ -156,7 +156,7 @@ Aprofundamentos:
 - [docs/homem-vitruviano.md](docs/homem-vitruviano.md) — o adaptador do ERP Vincii.
 - [docs/tipos-de-conexao.md](docs/tipos-de-conexao.md) — os protocolos e as formas de autenticação.
 
-Para contribuir, veja [CONTRIBUTING.md](CONTRIBUTING.md); para segurança, [SECURITY.md](SECURITY.md).
+Para contribuir, veja [CONTRIBUTING.md](CONTRIBUTING.md); para segurança, [SECURITY.md](SECURITY.md). Convenções para o Claude/contribuintes: [CLAUDE.md](CLAUDE.md); achados fora de escopo: [docs/ACHADOS.md](docs/ACHADOS.md).
 
 ## Estrutura
 

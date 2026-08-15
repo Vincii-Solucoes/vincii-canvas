@@ -12,7 +12,10 @@ declarar concluído. Referência: [CLAUDE.md](../../../CLAUDE.md).
 
 **Escopo e reutilização**
 - [ ] O diff é o **menor** que resolve? Nada de refatoração ou renomeação "de
-      carona"?
+      carona"? Nenhum módulo **não relacionado** foi tocado?
+- [ ] Problemas fora de escopo encontrados no caminho foram **registrados** em
+      [docs/ACHADOS.md](../../../docs/ACHADOS.md) com severidade — e **não**
+      corrigidos de carona?
 - [ ] Reutilizou os pontos únicos (§2) em vez de reimplementar? **Nenhuma
       duplicação nova** (função/rota/componente/lista repetida)?
 - [ ] Código legado não foi alterado só por causa de um padrão novo?

@@ -25,11 +25,39 @@ Três níveis aparecem ao longo deste guia, e a diferença entre eles é obrigat
 > TARGET STANDARD não é licença para reescrever o que funciona. Código legado que
 > não segue o padrão novo **não é bug**.
 
+## Disciplina de escopo (vale para toda tarefa)
+
+**Altere somente o necessário para cumprir o requisito.** Nada de mudar módulos
+não relacionados, nem de refatoração oportunista de carona.
+
+**Ao encontrar um problema fora do escopo da tarefa atual:**
+
+1. **Não corrija automaticamente.** Resistir é a regra, mesmo que o conserto
+   pareça trivial — um diff que cresce por fora do pedido é dívida de revisão e
+   risco escondido.
+2. **Registre o problema** em [docs/ACHADOS.md](docs/ACHADOS.md) (arquivo →
+   linha, o que é, evidência) e mencione no seu resumo ao usuário.
+3. **Informe a severidade** pela mesma escala da auditoria:
+   🔴 CRÍTICO (perda de dados / vulnerabilidade / indisponibilidade) ·
+   🟠 ALTO (bug importante ou trava a evolução) ·
+   🟡 MÉDIO (dívida técnica a tratar) ·
+   🟢 BAIXO (melhoria não urgente).
+4. **Continue a tarefa atual quando for seguro.** Se o problema encontrado
+   **bloqueia** a tarefa ou torna arriscado continuar (ex.: está no caminho que
+   você precisa usar, ou é 🔴), **pare e alinhe** com o usuário antes de seguir.
+
+Exceção única: se o problema fora de escopo for **crítico e você o está tornando
+alcançável** com a sua mudança, trate-o como parte da tarefa (não dá para
+introduzir/expor uma falha grave e "registrar para depois").
+
+---
+
 Documentação de apoio (leia antes de mexer na área correspondente):
 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md),
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 [docs/DATABASE.md](docs/DATABASE.md),
 [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md),
+[docs/ACHADOS.md](docs/ACHADOS.md) (registro de achados fora de escopo),
 [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md).
 
 ---

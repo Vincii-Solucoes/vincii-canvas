@@ -36,3 +36,11 @@ um remendo. Siga o fluxo (ver [CLAUDE.md](../../../CLAUDE.md) §5).
 Se o conserto real exigir mudar formato de dados, contrato de API ou uma fronteira
 (§10 do CLAUDE.md), **pare e alinhe** antes — não faça a mudança estrutural
 disfarçada de correção de bug.
+
+## Escopo ao corrigir
+
+Conserte **só** a causa deste bug. Se encontrar **outro** problema pelo caminho
+(não relacionado), **não corrija junto** — registre em
+[docs/ACHADOS.md](../../../docs/ACHADOS.md) com severidade e siga
+([CLAUDE.md](../../../CLAUDE.md) → *Disciplina de escopo*). Um fix não é desculpa
+para arrastar mudanças em módulos vizinhos.
