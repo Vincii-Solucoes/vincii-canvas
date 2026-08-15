@@ -549,6 +549,16 @@ function ladoDe(body, res) {
   return s.client;
 }
 
+// Todas as rotas de arquivo leem e escrevem no disco — e o painel local não
+// restringe caminho, por design. Além da guarda de origem, exigem o token do
+// processo (um só ponto para as 10 rotas): um processo local qualquer não pode
+// ler ~/.ssh nem gravar ~/.bashrc pela API. express.json() já rodou, então o
+// corpo está disponível aqui.
+app.use('/api/files', (req, res, next) => {
+  if (!tokenValido((req.body || {}).token)) return fail(res, 403, 'Token inválido.');
+  next();
+});
+
 app.post('/api/files/open', async (req, res) => {
   limpaFileSessions();
   const b = req.body || {};
@@ -996,6 +1006,14 @@ function slug(v) {
 // guarda de origem barra. O front-end já baixa via fetch + Blob.
 app.post('/api/export.xml', (req, res) => {
   const includeSecrets = req.query.secrets === '1' || req.query.secrets === 'true';
+  // Export COM segredos é a via mais direta de exfiltrar senhas, passphrases e a
+  // chave da API de uma só vez. Além da guarda de origem, exige o token do
+  // processo — as mesmas barreiras das outras rotas que entregam segredo
+  // (/api/desktop/credencial, /api/hosts/:id/segredo). O export SEM segredos só
+  // leva marcadores (hasPassword…), então segue livre: não há o que proteger.
+  if (includeSecrets && !tokenValido((req.body || {}).token)) {
+    return fail(res, 403, 'Token inválido.');
+  }
   const xml = buildXml(store.get(), { exportedAt: new Date().toISOString(), includeSecrets });
   const fname = includeSecrets ? 'ssh-commander-config-com-segredos.xml' : 'ssh-commander-config.xml';
   res.setHeader('Content-Type', 'application/xml; charset=utf-8');
@@ -1815,6 +1833,11 @@ app.post('/api/ai/playbook', async (req, res) => {
 // ---------- agente autônomo (IA age sozinha, analista acompanha) ----------
 app.post('/api/agent/start', (req, res) => {
   const body = req.body || {};
+  // O agente executa comandos por conta própria — no modo 'nunca' sem pedir
+  // nada, e mesmo no supervisionado a aprovação passa pela mesma API (o runId
+  // volta ao chamador). Exige o token do processo, como as rotas que entregam
+  // credencial: um processo local qualquer não dispara agente nos seus hosts.
+  if (!tokenValido(body.token)) return fail(res, 403, 'Token inválido.');
   let host;
   if (body.local === true) {
     // agente na própria máquina: comandos rodam via shell local, sem SSH

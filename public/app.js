@@ -1662,7 +1662,9 @@ function ehTexto(nome) {
 }
 
 function filesApi(rota, body) {
-  return api('/api/files/' + rota, { method: 'POST', body });
+  // As rotas de arquivo leem e escrevem no disco — o servidor exige o token do
+  // processo (ponto único: todas as chamadas passam por aqui).
+  return api('/api/files/' + rota, { method: 'POST', body: Object.assign({ token: window.VC_TOKEN }, body || {}) });
 }
 
 // corpo padrão com o lado e a sessão
@@ -2712,7 +2714,13 @@ async function exportXml() {
   const btn = $('#btnExportXml');
   btn.disabled = true;
   try {
-    const res = await fetch('/api/export.xml' + (secrets ? '?secrets=1' : ''), { method: 'POST' });
+    // Com segredos, o servidor exige o token do processo (mesma barreira do
+    // /api/hosts/:id/segredo). Sem segredos, o corpo é dispensável.
+    const res = await fetch('/api/export.xml' + (secrets ? '?secrets=1' : ''), secrets ? {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: window.VC_TOKEN }),
+    } : { method: 'POST' });
     if (!res.ok) throw new Error(`Erro ${res.status}`);
     const text = await res.text();
     const blob = new Blob([text], { type: 'application/xml' });
@@ -5299,8 +5307,8 @@ function agentStart(auto) {
     body: s.isLocal
       // 'escrita': roda sozinho o que for leitura reconhecida e pergunta em
       // tudo que altere o sistema. 'nunca': não pergunta nada (modo automático).
-      ? { local: true, goal, aprovacao: auto ? 'nunca' : 'escrita' }
-      : { hostId: s.hostId, goal, aprovacao: auto ? 'nunca' : 'escrita' },
+      ? { local: true, goal, aprovacao: auto ? 'nunca' : 'escrita', token: window.VC_TOKEN }
+      : { hostId: s.hostId, goal, aprovacao: auto ? 'nunca' : 'escrita', token: window.VC_TOKEN },
   })
     .then((r) => {
       if (!ai.agent) return; // cancelado antes de iniciar
