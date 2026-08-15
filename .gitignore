@@ -12,4 +12,9 @@ test/.host_key.pub
 dist/
 .DS_Store
 
-.claude/
+# Artefatos locais do Claude Code ficam de fora, MAS as skills do projeto são
+# versionadas (fazem parte do processo do repositório).
+.claude/*
+!.claude/skills/
+!.claude/README.md
+.claude/settings.local.json
