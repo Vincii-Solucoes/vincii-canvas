@@ -1,0 +1,20 @@
+# Atualizações automáticas de dependências. Semanal para não virar ruído; agrupa
+# atualizações menores num PR só. O CI (ci.yml) roda a suíte em cada PR do
+# Dependabot, então uma atualização que quebre algo aparece antes do merge.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-e-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

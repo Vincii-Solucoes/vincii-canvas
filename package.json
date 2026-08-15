@@ -12,6 +12,7 @@
   "main": "desktop/main.js",
   "scripts": {
     "test": "node test/rodar.js",
+    "lint": "eslint .",
     "start": "node server.js",
     "desktop": "electron .",
     "dist": "electron-builder",
@@ -80,6 +81,7 @@
   },
   "devDependencies": {
     "electron": "^41.7.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5"
   }
 }

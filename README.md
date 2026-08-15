@@ -9,7 +9,7 @@ Aplicação **local** (web e desktop) para executar sequências de comandos em v
 ## Instalação e uso
 
 ```bash
-cd ssh-commander
+cd vincii-canvas
 npm install
 npm start
 ```
@@ -26,7 +26,7 @@ npm run dist        # gera o instalador do sistema atual (pasta dist/)
 npm run dist:dir    # gera só o app desempacotado (mais rápido, para testar)
 ```
 
-- **Dados**: no modo desktop, o `data.json` fica no perfil do usuário — `~/Library/Application Support/ssh-commander` (macOS), `%APPDATA%/ssh-commander` (Windows), `~/.config/ssh-commander` (Linux). Na primeira execução, um `data.json` existente da pasta do projeto é migrado automaticamente.
+- **Dados**: no modo desktop, o `data.json` fica no perfil do usuário — `~/Library/Application Support/Vincii Canvas` (macOS), `%APPDATA%/Vincii Canvas` (Windows), `~/.config/Vincii Canvas` (Linux). Na primeira execução, um `data.json` existente da pasta do projeto é migrado automaticamente.
 - **Instaladores**: macOS gera `.dmg`/`.zip`, Windows `NSIS`/`.zip`, Linux `AppImage`/`.deb` (alvos no bloco `build` do `package.json`). O ideal é gerar cada instalador no próprio sistema operacional (ou em CI): `npx electron-builder --mac`, `--win`, `--linux`.
 - **Assinatura**: sem certificado de desenvolvedor o app sai sem assinatura — roda normalmente, mas macOS/Windows podem exibir aviso de segurança na primeira abertura ao distribuir para outras máquinas.
 - **Modo web continua existindo**: `npm start` segue funcionando igual; os dois modos compartilham o mesmo código de servidor.
@@ -59,7 +59,7 @@ Para ligar:
 - **Hosts** — os servidores de destino, organizados em **grupos** (ex.: Produção, Laboratório), com visual inspirado no Termius: cards com avatar, endereço e etiquetas. Cada host pode receber um **ícone** de sistema/dispositivo (Linux, Ubuntu, Debian, Windows, macOS, roteador, switch, firewall, banco de dados, container, Docker, Kubernetes, nuvem, storage…) e uma **cor** à escolha — para bater o olho e reconhecer o host na hora. Se nenhum ícone for escolhido, o avatar mostra a inicial do nome; a cor pode ser automática (derivada do nome) ou fixa da paleta. Ícone e cor aparecem em todos os lugares (aba Hosts, barra lateral do Terminal e seletor da aba Executar) e vão no backup `.xml`. Autenticação por **agente SSH**, **chave privada** ou **senha**, com botão de teste de conexão. O fingerprint do servidor é fixado na primeira conexão (TOFU); se mudar depois, a conexão é bloqueada até você usar "esquecer fingerprint" no cadastro do host. Na aba **Terminal**, a **barra lateral** mostra o **terminal da própria máquina** ("Meu computador") no topo e os **hosts acessados recentemente** logo abaixo (cada um com um "×" para tirar da lista); a **busca** lista todos os hosts para conectar a qualquer um. Clicar conecta na hora, com indicador verde quando conectado.
 - **Páginas web** — um host pode ser uma **URL** em vez de um servidor de terminal: gerência web de roteador, switch, firewall, painel de serviço. Abre como mais uma aba, ao lado dos terminais e das áreas de trabalho, com barra de endereço, voltar/avançar/recarregar e um botão para jogar a página no navegador do sistema. Só `http://` e `https://` são aceitos, e cada host tem **sessão separada** (o cookie do roteador de uma filial não vale na outra). Certificado autoassinado — o caso normal em equipamento — é **fixado na primeira visita** e conferido nas seguintes: se mudar, a conexão é recusada, porque ou trocaram o equipamento ou alguém está no meio do caminho; quando a troca foi você, o botão **"esquecer certificado"** no cadastro do host faz o app aprender o novo. Endereço sem `http://` ou `https://` é aberto como **https**; se o equipamento só falar http, o erro diz isso e mostra o endereço alternativo. Em conexão rápida o certificado é fixado só enquanto o app estiver aberto. Nesta aba a IA só tira dúvida; o agente autônomo fica indisponível, porque não há terminal.
 - **Colar variáveis do host** — o botão **{ } Variáveis**, na barra de abas do Terminal, lista as variáveis do host da aba ativa, os campos do cadastro (`host.host`, `host.port`, `host.user`…) e, num grupo **🔑 Segredos**, a **senha** (e a passphrase da chave) prontas para colar — útil num prompt de `sudo`, no login de um switch por Telnet ou num painel web. O valor do segredo **não é carregado junto com o menu**: a lista mostra `••••••••` e ele é buscado só no clique, por uma rota que exige o token do processo. Funciona igual para senha salva no host e para senha vinda de um **cofre externo** — nesse caso ela é lida do cofre naquele instante e não fica em lugar nenhum. O caminho muda conforme a aba: num **terminal** o valor é escrito sem executar (você revisa e dá Enter); numa **área de trabalho** (RDP/VNC) ele vai para a área de transferência da máquina remota, e você cola com `Ctrl+V` lá dentro; numa **página web** ele é inserido no campo em foco. Serve para senha, IP de loopback, chave de ativação — qualquer valor longo que você não quer digitar à mão nem deixar no bloco de notas.
-- **Cofres de credenciais** — em vez de guardar a senha do host no `data.json`, o app pode buscá-la num **cofre externo** na hora de conectar. A senha então **nunca é gravada neste computador**: vive em memória pelo tempo da conexão e some. O host guarda só a **referência** (qual cofre, qual segredo). Configure em **Configurações → Cofres de credenciais**; no cadastro do host, escolha **Cofre de credenciais** na autenticação e selecione o segredo numa lista com busca. A integração é **geral**: vários cofres ao mesmo tempo, de produtos diferentes, cada um com seu adaptador ([lib/cofres/](ssh-commander/lib/cofres/)). O que já vem pronto é o adaptador do **contrato aberto** — qualquer cofre que implemente as três rotas de [docs/cofres-de-credenciais.md](ssh-commander/docs/cofres-de-credenciais.md) funciona sem código novo. Para experimentar sem cofre nenhum no ar: `node test/cofre-local.js`.
+- **Cofres de credenciais** — em vez de guardar a senha do host no `data.json`, o app pode buscá-la num **cofre externo** na hora de conectar. A senha então **nunca é gravada neste computador**: vive em memória pelo tempo da conexão e some. O host guarda só a **referência** (qual cofre, qual segredo). Configure em **Configurações → Cofres de credenciais**; no cadastro do host, escolha **Cofre de credenciais** na autenticação e selecione o segredo numa lista com busca. A integração é **geral**: vários cofres ao mesmo tempo, de produtos diferentes, cada um com seu adaptador ([lib/cofres/](lib/cofres/)). O que já vem pronto é o adaptador do **contrato aberto** — qualquer cofre que implemente as três rotas de [docs/cofres-de-credenciais.md](docs/cofres-de-credenciais.md) funciona sem código novo. Para experimentar sem cofre nenhum no ar: `node test/cofre-local.js`.
   - A **chave de API** do cofre fica no armazenamento protegido do sistema (Keychain no macOS, DPAPI no Windows, libsecret no Linux) e **nunca vai para o backup** — nem com "incluir segredos" marcado: um `.xml` vazado com ela dentro entregaria o cofre inteiro, e não uma senha. Fora do app desktop (`npm start`) não há Keychain, e a tela diz que ali é texto claro. O app **só toca no armazenamento do sistema quando há chave de cofre para ler ou gravar** — sem cofre configurado, ele nunca é consultado. Como o app não tem certificado de desenvolvedor (a assinatura muda a cada versão), o macOS pede sua senha de login na primeira vez que uma chave é usada **depois de cada atualização**; em **Configurações → Cofres** dá para desligar o armazenamento do sistema e guardar as chaves no mesmo regime das outras credenciais (arquivo com permissão 600).
   - **RDP e VNC** são a exceção conhecida: esses clientes rodam no navegador (WebAssembly e noVNC), então a senha passa por lá — como já passava antes do cofre. O que muda é que ela deixa de existir em disco.
   - Se o cofre não responder, a conexão falha **dizendo o motivo e o código**, e não com um "falha ao autenticar" genérico. Host restaurado apontando para um cofre que não existe nesta máquina aparece marcado no cadastro.
@@ -140,6 +140,23 @@ npm run test-server
 ```
 
 Sobe um SSH local em `127.0.0.1:2222` (usuário `demo`, senha `segredo123`) que executa os comandos **na sua própria máquina**. Cadastre-o como host no app e teste playbooks à vontade.
+
+## Documentação
+
+Documentos do **estado atual** do projeto (o que ele é hoje, extraído do código):
+
+- [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) — o que é, objetivo, módulos e fluxos.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitetura, onde vivem auth/erros/logs, modelo de ameaça.
+- [docs/DATABASE.md](docs/DATABASE.md) — a persistência em JSON (sem banco): entidades, chaves e enums.
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) — Anthropic, GitHub, cofres, protocolos e variáveis de ambiente.
+
+Aprofundamentos:
+
+- [docs/cofres-de-credenciais.md](docs/cofres-de-credenciais.md) — o contrato aberto de cofre.
+- [docs/homem-vitruviano.md](docs/homem-vitruviano.md) — o adaptador do ERP Vincii.
+- [docs/tipos-de-conexao.md](docs/tipos-de-conexao.md) — os protocolos e as formas de autenticação.
+
+Para contribuir, veja [CONTRIBUTING.md](CONTRIBUTING.md); para segurança, [SECURITY.md](SECURITY.md).
 
 ## Estrutura
 

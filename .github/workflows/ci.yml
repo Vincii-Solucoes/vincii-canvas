@@ -26,5 +26,8 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Lint (caça-bugs; avisos não bloqueiam)
+        run: npm run lint
+
       - name: Rodar a suíte de testes
         run: npm test

@@ -336,11 +336,18 @@ leitura do XML e gravação na importação.
 
 A chave do cofre tem alcance muito maior que uma senha de host: abre **todas**.
 
-- **App desktop:** `safeStorage` do Electron (Keychain no macOS, DPAPI no Windows,
-  libsecret no Linux). O app ainda não usa `safeStorage` em lugar nenhum; este é
-  o caso que justifica.
-- **Modo web (`npm start`):** `safeStorage` não existe. Grava em `data.json`,
-  **com aviso explícito na tela** de que ali é texto claro.
+A chave mora em **arquivo próprio** (`cofres-chaves.json`), fora do `data.json` —
+garantia estrutural de que ela nunca vai para o backup XML (o exportador só
+enxerga o objeto do `data.json`). Ver `lib/cofresegredos.js`.
+
+- **App desktop:** cifrada com o `safeStorage` do Electron (Keychain no macOS,
+  DPAPI no Windows, libsecret no Linux). O sistema só é consultado quando há uma
+  chave para ler ou gravar — nunca no arranque. Se o processo não alcançar o
+  Keychain, o app **recusa** sobrescrever o arquivo cifrado em vez de rebaixá-lo
+  para texto claro (as chaves continuam intactas).
+- **Modo web (`npm start`):** `safeStorage` não existe. Grava em
+  `cofres-chaves.json` em **texto claro** (permissão `600`), **com aviso
+  explícito na tela** de que ali é texto claro.
 
 ### Interface
 

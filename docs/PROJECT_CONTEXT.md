@@ -90,7 +90,8 @@ automática. Ver [DATABASE.md](DATABASE.md).
 
 - O README menciona "até 20 agentes simultâneos"; `MAX_RUNS` em `lib/agent.js` é
   retenção de runs **encerrados**, não teto de concorrência.
-- Há resíduos do nome antigo do projeto (`ssh-commander`) em caminhos e comandos
-  do README e em `lib/agent-leitura.js`.
-- Trechos de `docs/cofres-de-credenciais.md` descrevem um estado anterior ao
-  código atual quanto ao uso de `safeStorage`.
+- Resta o nome antigo do projeto (`ssh-commander`) em dois lugares **de
+  propósito**: no nome do arquivo de backup exportado (`ssh-commander-config.xml`,
+  para não mudar um artefato visível ao usuário) e numa regex de segurança de
+  `lib/agent-leitura.js` (que detecta leitura dos dados do próprio app pelo nome
+  antigo, além do atual — remover reduziria cobertura).
