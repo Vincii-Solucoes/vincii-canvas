@@ -725,7 +725,10 @@ app.post('/api/desktop/credencial', async (req, res) => {
       protocolo: host.protocol,
       username: host.username || cred.usuario || '',
       password: cred.password || '',
-      domain: host.rdpDomain || '',
+      // O domínio digitado no host manda; o do cofre cobre quando vazio —
+      // mesma regra do usuário. Com ele, o RDP com Active Directory recebe
+      // usuário, senha e domínio da mesma fonte, sem digitar nada no cadastro.
+      domain: host.rdpDomain || cred.dominio || '',
       destino: `${host.host}:${host.port || padrao}`,
     });
   } finally {

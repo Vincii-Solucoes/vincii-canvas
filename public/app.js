@@ -705,6 +705,11 @@ function lerSegredoDoForm() {
     rotulo: segredoEscolhido.rotulo || '' };
 }
 
+// O "re-buscar" do desenho ATUAL do seletor de segredos. Os listeners nos
+// campos do formulário chamam por aqui, e cada redesenho troca o alvo — sem
+// esta indireção, o listener prendia o closure do primeiro cofre desenhado.
+let rebuscaDoSeletorDeSegredo = null;
+
 function montarEscolhaDeCofre(existing) {
   const sel = $('#f_cofreApelido');
   if (!sel) return;
@@ -834,10 +839,21 @@ async function desenharEscolhaDeSegredo() {
     if (r.erro) { el(lista, 'p', 'hint warn-hint', `${r.erro.mensagem} (${r.erro.codigo})`); return; }
     if (!r.itens.length) { el(lista, 'p', 'hint', 'Nenhum segredo encontrado.'); return; }
     // O segredo cujo endereço BATE com o do host aparece primeiro: apontar o
-    // host para o segredo do vizinho é o erro mais comum desta integração.
+    // host para o segredo do vizinho é o erro mais comum desta integração. O
+    // desempate é o protocolo (14/ago): entre dois segredos do mesmo endereço,
+    // o que declara o protocolo deste host vem antes.
     const enderecoDoHost = ($('#f_host') && $('#f_host').value.trim()) || '';
-    const ordenados = [...r.itens].sort((x, y) =>
-      (y.host === enderecoDoHost ? 1 : 0) - (x.host === enderecoDoHost ? 1 : 0));
+    const protocoloDoForm = ($('#f_protocol') && $('#f_protocol').value) || '';
+    // O host vazio não pode casar com segredo sem host: com o formulário ainda
+    // em branco, isso promovia justamente notas e certificados (que não têm
+    // endereço) para o topo, sem selo nenhum que explicasse a posição.
+    const pontos = (s) => (s.host && s.host === enderecoDoHost ? 2 : 0)
+      + (s.protocolo && s.protocolo === protocoloDoForm ? 1 : 0);
+    const ordenados = [...r.itens].sort((x, y) => pontos(y) - pontos(x));
+    // O rótulo diz O QUE o segredo é — um "nota" apontado num host SSH conecta
+    // com o texto da nota como senha, e sem o selo ninguém descobre por quê.
+    const ROTULOS_DE_TIPO = { senha: '', 'chave-ssh': 'chave SSH', token: 'token de API',
+      banco: 'senha de banco', nota: 'nota secreta', certificado: 'certificado' };
     for (const it of ordenados) {
       const linha = el(lista, 'button', 'cofre-item'
         + (segredoEscolhido && segredoEscolhido.id === it.id ? ' on' : ''));
@@ -846,7 +862,17 @@ async function desenharEscolhaDeSegredo() {
       const det = [it.clienteNome, it.caminho, it.usuario && `usuário ${it.usuario}`,
         it.host && `${it.host}${it.porta ? ':' + it.porta : ''}`].filter(Boolean).join(' · ');
       el(linha, 'span', 'muted small', det);
+      // hasOwnProperty: um tipo chamado "constructor" acharia a função herdada
+      // de Object.prototype e o selo viraria "function Object() { … }".
+      const rotuloTipo = Object.prototype.hasOwnProperty.call(ROTULOS_DE_TIPO, it.tipo)
+        ? ROTULOS_DE_TIPO[it.tipo] : it.tipo;
+      if (rotuloTipo) el(linha, 'span', 'tag', rotuloTipo);
       if (it.host && it.host === enderecoDoHost) el(linha, 'span', 'tag tag-ativa', 'mesmo endereço');
+      // O selo de protocolo avisa o descasamento ANTES de salvar: segredo de
+      // telnet num host SSH falha na conexão com cara de senha errada.
+      if (it.protocolo && protocoloDoForm && it.protocolo !== protocoloDoForm) {
+        el(linha, 'span', 'tag tag-warn', `segredo de ${it.protocolo.toUpperCase()}`);
+      }
       linha.addEventListener('click', () => {
         // O cliente vem do ITEM. Ele passou a vir na listagem do cofre, o que
         // resolve o caso que antes ficava sem horário: escolher um segredo sem
@@ -863,7 +889,45 @@ async function desenharEscolhaDeSegredo() {
   let t = null;
   busca.addEventListener('input', () => { clearTimeout(t); t = setTimeout(buscar, 250); });
   if (clienteSel) clienteSel.addEventListener('change', buscar);
-  buscar();
+  // A ordenação e os selos dependem do endereço e do protocolo do FORMULÁRIO —
+  // que a pessoa continua editando depois de abrir esta seção. Re-busca quando
+  // mudarem, mas por um TRAMPOLIM que sempre aponta para o desenho ATUAL:
+  // guardar o `buscar` direto no listener prendia o closure do PRIMEIRO cofre
+  // (trocar o cofre no select consultava o apelido antigo e renderizava numa
+  // lista já fora do DOM — achado da revisão, por execução). E o trampolim só
+  // age com o rádio "cofre" marcado: sem isso, digitar o endereço num host de
+  // agente/senha disparava buscas paginadas ao ERP por uma lista invisível,
+  // contra o limite de 120 req/min do ERP inteiro.
+  rebuscaDoSeletorDeSegredo = () => { clearTimeout(t); t = setTimeout(buscar, 250); };
+  for (const idCampo of ['f_host', 'f_protocol']) {
+    const campo = $('#' + idCampo);
+    if (campo && !campo.dataset.cofreObserva) {
+      campo.dataset.cofreObserva = '1';
+      const trampolim = () => {
+        const marcado = $$('input[name="authType"]').find((r) => r.checked);
+        if (!marcado || marcado.value !== 'cofre') return;
+        if (rebuscaDoSeletorDeSegredo) rebuscaDoSeletorDeSegredo();
+      };
+      campo.addEventListener('input', trampolim);
+      campo.addEventListener('change', trampolim);
+    }
+  }
+  // A busca inicial espera o modal terminar de marcar os rádios (isso acontece
+  // DEPOIS desta função) e só roda com a seção visível — abrir o cadastro de
+  // um host de agente não gasta o ERP com uma lista que ninguém vê. Quem marca
+  // o rádio "cofre" depois dispara a busca pelo listener abaixo.
+  setTimeout(() => {
+    const marcado = $$('input[name="authType"]').find((r) => r.checked);
+    if (marcado && marcado.value === 'cofre') buscar();
+  }, 0);
+  $$('input[name="authType"]').forEach((r) => {
+    if (!r.dataset.cofreObserva) {
+      r.dataset.cofreObserva = '1';
+      r.addEventListener('change', () => {
+        if (r.value === 'cofre' && r.checked && rebuscaDoSeletorDeSegredo) rebuscaDoSeletorDeSegredo();
+      });
+    }
+  });
 }
 
 function openHostModal(existing) {
@@ -1023,17 +1087,28 @@ function openHostModal(existing) {
     // Telnet e FTP autenticam por usuário e senha; chave/agente SSH não se aplicam.
     // No Telnet a senha é opcional: se preenchida, o app responde sozinho aos
     // prompts do equipamento; se vazia, você digita no terminal como antes.
+    //
+    // O COFRE vale em todos eles: a senha do equipamento pode (e deve) morar no
+    // ERP. Esta linha escondia o cofre junto com agente/chave, e o resultado era
+    // o fluxo inteiro de "domínio do cofre no RDP" existindo no servidor sem
+    // nenhum caminho na tela para criá-lo — achado da revisão, por execução.
     const soSenha = isFtp || isTelnet || isVnc || isRdp;
     $$('input[name="authType"]').forEach((r) => {
       const linha = r.closest('label');
-      if (linha) linha.hidden = soSenha && r.value !== 'password';
+      if (linha) linha.hidden = soSenha && r.value !== 'password' && r.value !== 'cofre';
     });
     const lblSenha = $('#f_passwordLabel');
     if (lblSenha) lblSenha.textContent = isTelnet ? 'Senha (opcional — login automático)'
       : isVnc ? 'Senha do VNC' : 'Senha';
     if (soSenha) {
-      const senha = $$('input[name="authType"]').find((r) => r.value === 'password');
-      if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
+      // Só força "senha" se o marcado ficou ESCONDIDO (agente/chave). Um host
+      // SSH com cofre trocado para RDP continua no cofre — forçar senha aqui
+      // descartava a referência ao segredo no salvamento, em silêncio.
+      const marcado = $$('input[name="authType"]').find((r) => r.checked);
+      if (!marcado || (marcado.value !== 'password' && marcado.value !== 'cofre')) {
+        const senha = $$('input[name="authType"]').find((r) => r.value === 'password');
+        if (senha && !senha.checked) { senha.checked = true; syncAuthFields(); }
+      }
     }
     const port = $('#f_port');
     // Só sobrescreve a porta se ela ainda for a padrão de algum protocolo —

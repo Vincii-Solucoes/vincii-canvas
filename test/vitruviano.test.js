@@ -107,9 +107,11 @@ async function comServidor(modos, corpo) {
   // ---------- listagem: a paginação vai até o fim ----------
 
   await comServidor({}, async (cfg, s) => {
-    // O fake devolve no máximo 2 por página; são 4 segredos.
+    // O fake devolve no máximo 2 por página; o total vem DELE, não de um número
+    // decorado aqui — o fake cresce junto com o contrato, e um teste que fixa
+    // "são 4" quebra a cada segredo novo sem apontar defeito nenhum.
     const r = await adaptador.listar(cfg, { limite: 50 });
-    igual(r.itens.length, 4,
+    igual(r.itens.length, fake.SEGREDOS.length,
       'seguiu o proximoCursor até o fim — parar na primeira página esconderia '
       + 'metade dos segredos sem nenhum erro na tela');
     igual(r.proximoCursor, null, 'e diz que acabou');
@@ -132,7 +134,8 @@ async function comServidor(modos, corpo) {
   // O filtro por cliente é o que faz a mesa de trabalho de um cliente só.
   await comServidor({}, async (cfg) => {
     const r = await adaptador.listar(cfg, { cofre: fake.MAYLINK });
-    igual(r.itens.length, 2, 'filtrando por cliente vêm só os segredos dele');
+    igual(r.itens.length, fake.SEGREDOS.filter((s) => s.cliente === fake.MAYLINK).length,
+      'filtrando por cliente vêm só os segredos dele');
     ok(r.itens.every((i) => i.nome !== 'root@web-01'), 'e nenhum do outro cliente');
   });
 
@@ -326,15 +329,38 @@ async function comServidor(modos, corpo) {
     igual(e.codigo, 'resposta_invalida', 'idem para chave SSH sem chave privada');
 
     // Tipo desconhecido cai para senha — e aí a senha precisa existir.
+    // Tipo desconhecido NÃO vira "senha": o contrato promete que tipo novo
+    // chega numa das duas formas existentes, então o nome fica (é rótulo) e a
+    // FORMA é decidida pelo campo que veio. A regra antiga — coagir para
+    // "senha" — fazia um "certificado" (forma PEM) cair no ramo do valor único
+    // e estourar com "o cofre não mandou a senha".
     a = responder({ id: 'x', tipo: 'certificado-quantico', senha: 'abc123' });
     const s = await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x');
-    igual(s.tipo, 'senha', 'tipo desconhecido cai para senha em vez de vazar o tipo cru');
+    igual(s.tipo, 'certificado-quantico',
+      'o tipo desconhecido fica, aparado — é o rótulo da tela');
+    igual(s.senha, 'abc123', 'e a forma veio do CAMPO: valor único');
+
+    a = responder({ id: 'x', tipo: 'certificado-quantico',
+      chavePrivada: '-----BEGIN X-----\nabc\n-----END X-----\n' });
+    const sPem = await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x');
+    ok(sPem.chavePrivada.includes('BEGIN'),
+      'o MESMO tipo desconhecido em forma PEM também funciona — é o payload que manda');
 
     // Campo a mais na resposta não entra no app.
     a = responder({ id: 'x', tipo: 'senha', senha: 'abc123', __proto__mal: 1, admin: true });
     const s2 = await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x');
-    igual(Object.keys(s2).sort(), ['expiraEm', 'janela', 'senha', 'tipo', 'usuario'],
+    igual(Object.keys(s2).sort(), ['dominio', 'expiraEm', 'janela', 'protocolo', 'senha', 'tipo', 'usuario'],
       'a credencial é montada campo a campo: o que a API mandar a mais fica de fora');
+
+    // "constructor" é propriedade HERDADA de todo objeto: um acesso direto a
+    // PROTOCOLOS[p] a aceitaria como protocolo válido e o selo da tela viraria
+    // "segredo de CONSTRUCTOR". Achado da revisão, demonstrado por execução.
+    a = responder({ id: 'x', tipo: 'senha', senha: 'abc', protocolo: 'constructor' });
+    igual((await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x')).protocolo, '',
+      'protocolo herdado do protótipo é descartado como qualquer valor estranho');
+    a = responder({ id: 'x', tipo: 'senha', senha: 'abc', protocolo: 'gopher' });
+    igual((await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x')).protocolo, '',
+      'protocolo fora dos seis é descartado');
 
     require.cache[require.resolve('../lib/cofres/http')].exports.pedir = original;
     delete require.cache[require.resolve('../lib/cofres/vitruviano')];
@@ -523,6 +549,114 @@ async function comServidor(modos, corpo) {
 
     require.cache[require.resolve('../lib/cofres/http')].exports.pedir = original;
     delete require.cache[require.resolve('../lib/cofres/vitruviano')];
+  }
+
+  // ---------- 14/ago: tipos novos, protocolo e domínio, de ponta a ponta ----------
+
+  // Não basta o adaptador entender: o resolver de credenciais é quem decide
+  // "isto autentica como chave ou como senha", e a rota do RDP é quem entrega o
+  // domínio. Este bloco atravessa as três camadas contra o fake em forma de
+  // produção.
+  {
+    const fs2 = require('fs');
+    const os2 = require('os');
+    const path2 = require('path');
+    process.env.SSHC_DATA_DIR = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'vc-hv14-'));
+    const store = require('../lib/store');
+    const segredosDeCofre = require('../lib/cofresegredos');
+    const credenciais = require('../lib/credenciais');
+
+    const servidor = fake.criar({});
+    await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+    const porta = servidor.address().port;
+
+    const d = store.get();
+    d.cofres = [{ apelido: 'erp', tipo: 'vitruviano', nome: 'HV',
+      config: { baseUrl: `http://127.0.0.1:${porta}/api/cofre/v1` } }];
+    const hostDe = (id, extra = {}) => ({ id: `h-${id.slice(-1)}`, name: id, host: '10.0.0.99',
+      port: 22, username: '', auth: { type: 'cofre' }, segredo: { cofre: 'erp', id }, ...extra });
+    d.hosts = [
+      hostDe('9a1f0000-0000-4000-8000-000000000007'), // nota
+      hostDe('9a1f0000-0000-4000-8000-000000000008'), // certificado (PEM)
+      hostDe('9a1f0000-0000-4000-8000-000000000009', { protocol: 'rdp', port: 3389 }), // AD
+    ];
+    store.save();
+    segredosDeCofre.definir('erp', { chave: fake.TOKEN });
+
+    // A listagem carrega os campos novos.
+    const cfg = { baseUrl: `http://127.0.0.1:${porta}/api/cofre/v1`, chave: fake.TOKEN };
+    const lista = (await adaptador.listar(cfg, { limite: 50 })).itens;
+    const ad = lista.find((s) => s.nome === 'administrador@ad-server');
+    igual(ad.protocolo, 'rdp', 'a listagem traz o protocolo (14/ago)');
+    igual(ad.dominio, 'VELONIC', 'e o domínio do Active Directory');
+    igual(lista.find((s) => s.nome === 'licença do mikrotik').tipo, 'nota',
+      'o tipo novo chega CRU na listagem — é o rótulo da tela');
+    const roteador = lista.find((s) => s.nome === 'admin@roteador');
+    igual(roteador.protocolo, 'telnet', 'o protocolo do equipamento legado vem junto');
+
+    // O certificado (forma PEM) autentica como CHAVE — era o que estourava
+    // com "o cofre não mandou a senha" quando a forma seguia o nome do tipo.
+    {
+      const c = await credenciais.resolver(store.get().hosts[1]);
+      igual(c.type, 'key', 'certificado resolve como chave');
+      ok(c.privateKey.includes('BEGIN'), 'com o PEM inteiro em memória');
+      igual(c.passphrase, 'senha-do-pem', 'e a passphrase que veio junto');
+      ok(credenciais.segredosVivos().length > 0, 'tudo registrado na redação enquanto vive');
+      c.dispose();
+    }
+
+    // A nota (valor único) resolve como senha — o texto é o valor.
+    {
+      const c = await credenciais.resolver(store.get().hosts[0]);
+      igual(c.type, 'password', 'nota resolve como senha');
+      ok(c.password.includes('ABCD-1234'), 'com o texto da nota como valor');
+      c.dispose();
+    }
+
+    // O domínio atravessa o resolver…
+    {
+      const c = await credenciais.resolver(store.get().hosts[2]);
+      igual(c.dominio, 'VELONIC',
+        'o domínio do cofre chega ao resolver — o RDP com Active Directory '
+        + 'recebe usuário, senha e domínio da mesma fonte');
+      igual(c.usuario, 'administrador', 'junto do usuário do segredo');
+      c.dispose();
+    }
+
+    // …e a rota do RDP o usa quando o host não define (guarda de fonte, como
+    // as do backup: a regra "host digitado manda, cofre cobre" tem que estar
+    // na linha que monta a resposta).
+    {
+      const src = fs2.readFileSync(path2.join(__dirname, '..', 'server.js'), 'utf8');
+      const i = src.indexOf("app.post('/api/desktop/credencial'");
+      ok(i > 0, 'achei a rota de credencial da área de trabalho');
+      ok(/domain: host\.rdpDomain \|\| cred\.dominio \|\| ''/.test(src.slice(i, i + 2200)),
+        'o domínio digitado no host manda; o do cofre cobre quando vazio');
+    }
+
+    // As guardas de TELA que a revisão provou faltarem — de fonte, como as do
+    // backup, porque app.js não roda em Node:
+    {
+      const app = fs2.readFileSync(path2.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+      ok(app.includes("r.value !== 'password' && r.value !== 'cofre'"),
+        'o rádio COFRE aparece em RDP/VNC/Telnet/FTP — escondido junto com '
+        + 'agente/chave, o domínio do cofre no RDP era inconfigurável pela tela: '
+        + 'o fluxo inteiro só existia para host gravado por fora');
+      ok(app.includes('hasOwnProperty.call(ROTULOS_DE_TIPO'),
+        'o rótulo do tipo usa hasOwnProperty — um tipo "constructor" exibia '
+        + '"function Object() { [native code] }" como selo');
+      ok(app.includes("marcado.value !== 'cofre') return;"),
+        'a re-busca só age com o rádio cofre marcado — sem a guarda, digitar o '
+        + 'endereço num host de agente gastava o limite do ERP com lista invisível');
+      ok(app.includes('rebuscaDoSeletorDeSegredo = () =>'),
+        'a re-busca aponta para o desenho ATUAL do seletor — o listener direto '
+        + 'prendia o closure do primeiro cofre e consultava o apelido errado');
+      ok(app.includes('s.host && s.host === enderecoDoHost'),
+        'segredo sem host não casa com formulário de host vazio — casava, e '
+        + 'notas e certificados subiam ao topo sem selo que explicasse');
+    }
+
+    await new Promise((r) => servidor.close(r));
   }
 
   console.log(`ok — ${n} verificações do adaptador do Homem Vitruviano`);

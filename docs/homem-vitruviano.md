@@ -319,3 +319,42 @@ meio e repetir segredos na lista, sem nada indicando que houve problema. O Canva
 agora ignora id repetido e encerra a varredura quando um cursor se repete — mas
 vale vocês saberem que "degrada em silêncio" é uma armadilha para qualquer
 cliente que pagine.
+
+---
+
+## Parte 3 — o contrato de 14/ago, consumido (16/08)
+
+A documentação reencaminhada trouxe as respostas às observações do nosso
+`docs/tipos-de-conexao.md`, e o Canvas já consome tudo:
+
+### `protocolo` e `dominio` nos segredos
+
+- **`dominio` fecha o RDP com Active Directory de ponta a ponta.** A regra no
+  Canvas é a mesma do usuário: o campo digitado no host manda; o do cofre cobre
+  quando vazio. Um segredo com `usuario`, `senha` e `dominio` entra no RDP sem
+  nada digitado no cadastro.
+- **`protocolo` vira selo e ordenação no seletor de segredos.** Entre dois
+  segredos do mesmo endereço, o que declara o protocolo do host vem primeiro; um
+  segredo cujo protocolo **não bate** com o do host ganha o aviso "segredo de
+  TELNET" antes de a pessoa salvar — o descasamento falhava na conexão com cara
+  de senha errada. Valor de `protocolo` fora dos seis é descartado na entrada.
+
+### Os tipos novos (`token`, `banco`, `nota`, `certificado`)
+
+A frase que importa do contrato é **"são só DUAS formas"** — e o Canvas agora
+decide a forma **pelo campo que veio**, não pelo nome do tipo: `chavePrivada`
+presente = forma PEM (autentica como chave, com `passphrase` se houver); senão,
+`senha` = valor único. O nome do tipo é só rótulo na tela ("token de API",
+"senha de banco", "nota secreta", "certificado"), e um tipo **desconhecido**
+mantém o nome e funciona na forma em que chegar — como o contrato promete que
+tipos futuros chegarão.
+
+Isso não é detalhe: decidindo pelo nome, `certificado` (que é PEM) caía no ramo
+do valor único e estourava com "o cofre não mandou a senha" — com o cofre tendo
+mandado tudo.
+
+### O que segue em aberto (das partes anteriores)
+
+Os dois itens oferecidos por vocês continuam valendo a pena: o código
+`funcionario_inativo` e o campo que distinga "sem turnos" de "encaminhamento
+desativado". Nada do 14/ago os substitui.

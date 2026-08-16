@@ -112,7 +112,37 @@ const SEGREDOS = [
     semNomeDeCliente: true,
     nome: 'admin@roteador', caminho: 'Filial Norte', tipo: 'senha',
     atualizadoEm: '2026-06-11T08:00:00Z', usuario: 'admin', host: '192.168.1.1', porta: 443,
+    // `protocolo` (14/ago): um dos seis do Canvas, quando o admin preencheu.
+    protocolo: 'telnet',
     valor: { senha: 'admin-do-roteador' } },
+  // Os tipos de 14/ago — na FORMA que o produto manda, não na do exemplo da
+  // documentação. "certificado" é PEM (campo chavePrivada), os outros três são
+  // valor único (campo senha). Foi um "tipo novo em forma velha" que provou que
+  // decidir a forma pelo NOME quebrava: o certificado caía no ramo da senha.
+  { id: '9a1f0000-0000-4000-8000-000000000005', cliente: VELONIC,
+    nome: 'API do provisionador', caminho: null, tipo: 'token',
+    atualizadoEm: '2026-08-14T10:00:00Z', host: 'https://api.velonic.com.br',
+    valor: { senha: 'tok_a1b2c3' } },
+  { id: '9a1f0000-0000-4000-8000-000000000006', cliente: VELONIC,
+    nome: 'postgres do IXC', caminho: 'ixcprovedor', tipo: 'banco',
+    atualizadoEm: '2026-08-14T10:05:00Z', usuario: 'ixc', host: '10.0.0.8', porta: 5432,
+    valor: { senha: 'senha-do-banco' } },
+  { id: '9a1f0000-0000-4000-8000-000000000007', cliente: MAYLINK,
+    nome: 'licença do mikrotik', caminho: null, tipo: 'nota',
+    atualizadoEm: '2026-08-14T10:10:00Z',
+    valor: { senha: 'SN: ABCD-1234 — chave de licença nível 6' } },
+  { id: '9a1f0000-0000-4000-8000-000000000008', cliente: MAYLINK,
+    nome: 'certificado do concentrador', caminho: 'VPN', tipo: 'certificado',
+    atualizadoEm: '2026-08-14T10:15:00Z',
+    valor: { chavePrivada: '-----BEGIN CERTIFICATE-----\nfaz-de-conta\n-----END CERTIFICATE-----\n'
+      + '-----BEGIN PRIVATE KEY-----\ntambem-nao\n-----END PRIVATE KEY-----\n',
+      passphrase: 'senha-do-pem' } },
+  // RDP com Active Directory: `dominio` e `protocolo` juntos (14/ago).
+  { id: '9a1f0000-0000-4000-8000-000000000009', cliente: VELONIC,
+    nome: 'administrador@ad-server', caminho: 'Datacenter', tipo: 'senha',
+    atualizadoEm: '2026-08-14T10:20:00Z', usuario: 'administrador',
+    host: '10.0.0.20', porta: 3389, protocolo: 'rdp', dominio: 'VELONIC',
+    valor: { senha: 'senha-do-ad' } },
 ];
 
 function responder(res, status, corpo, cab = {}) {
@@ -153,6 +183,9 @@ function referenciaDe(s, M) {
   if (s.usuario) r.usuario = s.usuario;
   if (s.host) r.host = s.host;
   if (s.porta) r.porta = s.porta;
+  // Novos de 14/ago — como tudo aqui, só aparecem quando preenchidos.
+  if (s.protocolo) r.protocolo = s.protocolo;
+  if (s.dominio) r.dominio = s.dominio;
   return r;
 }
 
@@ -265,6 +298,9 @@ function atender(req, res, M, token, diario) {
     const cliente = CLIENTES.find((c) => c.id === s.cliente);
     const corpo = { id: s.id, nome: s.nome, tipo: s.tipo, ...s.valor };
     if (s.usuario) corpo.usuario = s.usuario;
+    // `dominio` e `protocolo` (14/ago) vêm também na leitura, quando preenchidos.
+    if (s.dominio) corpo.dominio = s.dominio;
+    if (s.protocolo) corpo.protocolo = s.protocolo;
     if (cliente && cliente.janela && !M.semJanela) corpo.janela = cliente.janela;
     return responder(res, 200, corpo);
   }
