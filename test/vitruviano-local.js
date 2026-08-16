@@ -107,7 +107,9 @@ const SEGREDOS = [
     nome: 'demo@sshd-local', caminho: null, tipo: 'senha',
     atualizadoEm: '2026-08-05T09:30:00Z', usuario: 'demo', host: '127.0.0.1', porta: 2388,
     // Bate com test/sshd-local.js: dá para conectar de verdade no teste de ponta
-    // a ponta, com uma senha que o Canvas nunca gravou.
+    // a ponta, com uma senha que o Canvas nunca gravou. Com `protocolo`, ele
+    // vira host ESPELHADO — e o espelho conecta de verdade no teste.
+    protocolo: 'ssh',
     valor: { senha: 'segredo123' } },
   { id: '9a1f0000-0000-4000-8000-000000000003', cliente: MAYLINK,
     nome: 'deploy (chave)', caminho: 'CI', tipo: 'chave-ssh',

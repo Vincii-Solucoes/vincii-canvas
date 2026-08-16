@@ -545,12 +545,16 @@ function ladoDe(body, res) {
 app.post('/api/files/open', async (req, res) => {
   limpaFileSessions();
   const b = req.body || {};
-  const host = store.get().hosts.find((h) => h.id === b.hostId) || quickhosts.get(b.hostId);
+  const host = store.get().hosts.find((h) => h.id === b.hostId) || quickhosts.get(b.hostId) || dadosDeCofre.pegarHost(b.hostId);
   if (!host) return fail(res, 400, 'Host não encontrado.');
   if (fileSessions.size >= 20) return fail(res, 400, 'Muitos painéis de arquivo abertos.');
   try {
     const client = await files.openRemote(host, {
-      onSaveFingerprint: (fp) => { host.fingerprint = fp; store.save(); },
+      onSaveFingerprint: (fp) => {
+        host.fingerprint = fp;
+        // Espelhado: o pin vai para o cofre de confiança; o objeto renasce.
+        if (!dadosDeCofre.fixarFingerprint(host.id, fp, host)) store.save();
+      },
     });
     const id = 'fs_' + crypto.randomUUID();
     fileSessions.set(id, { client, host, usadaEm: Date.now() });
@@ -682,7 +686,7 @@ app.post('/api/rdp/consentir', (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
   const id = String(corpo.hostId || '');
-  const host = store.get().hosts.find((h) => h.id === id) || quickhosts.get(id);
+  const host = store.get().hosts.find((h) => h.id === id) || quickhosts.get(id) || dadosDeCofre.pegarHost(id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   if (host.protocol !== 'rdp') return fail(res, 400, 'Este host não é RDP.');
   rdp.consentir(id);
@@ -702,7 +706,7 @@ app.post('/api/rdp/consentir', (req, res) => {
 app.post('/api/desktop/credencial', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
-  const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId);
+  const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId) || dadosDeCofre.pegarHost(corpo.hostId);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   if (host.protocol !== 'rdp' && host.protocol !== 'vnc') {
     return fail(res, 400, 'Este host não é de área de trabalho remota.');
@@ -754,7 +758,7 @@ function historyMeta(hostId, local) {
       hostId: null,
     };
   }
-  const h = store.get().hosts.find((x) => x.id === hostId) || quickhosts.get(hostId);
+  const h = store.get().hosts.find((x) => x.id === hostId) || quickhosts.get(hostId) || dadosDeCofre.pegarHost(hostId);
   if (!h) return null;
   return { machine: h.name, ip: h.host, username: h.username, port: h.port || 22, local: false, hostId: h.id };
 }
@@ -1332,7 +1336,10 @@ app.get('/api/state', (req, res) => {
   // aqui, na leitura, para a tela não precisar saber que existem dois tipos de
   // host — e para tudo que já funciona (grupos, busca, favoritos, a trava por
   // horário de atendimento) funcionar neles sem uma linha a mais.
-  const jaCadastrados = d.hosts.filter((h) => h.url).map((h) => h.url);
+  // A lista INTEIRA de hosts manuais: o dedupe do espelho compara página (web)
+  // e destino (protocolo+endereço+porta) — um segredo do cofre para uma máquina
+  // que a pessoa já cadastrou à mão não duplica o host.
+  const jaCadastrados = d.hosts;
   res.json({
     hosts: [...d.hosts, ...dadosDeCofre.hostsEspelhados(jaCadastrados)].map(publicHost),
     // Cofre que falhou e não tem nada em cache para mostrar. Sem isto, o blip do
@@ -1436,7 +1443,7 @@ app.delete('/api/hosts/:id', (req, res) => {
 app.post('/api/hosts/:id/segredo', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
-  const host = store.get().hosts.find((h) => h.id === req.params.id) || quickhosts.get(req.params.id);
+  const host = store.get().hosts.find((h) => h.id === req.params.id) || quickhosts.get(req.params.id) || dadosDeCofre.pegarHost(req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   const campo = corpo.campo === 'passphrase' ? 'passphrase' : 'senha';
 
@@ -1465,6 +1472,13 @@ app.post('/api/hosts/:id/forget-cert', (req, res) => {
 });
 
 app.post('/api/hosts/:id/forget-fingerprint', (req, res) => {
+  // Espelhado também troca de chave um dia (servidor reinstalado). Sem esta
+  // porta, o pin errado era um beco: sem Editar na tela e 404 aqui, o host
+  // ficava inconectável até alguém editar o data.json à mão.
+  if (dadosDeCofre.ehEspelhado(req.params.id)) {
+    dadosDeCofre.esquecerFingerprint(req.params.id);
+    return res.json({ ok: true });
+  }
   const host = store.get().hosts.find((h) => h.id === req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   host.fingerprint = null;
@@ -1473,7 +1487,9 @@ app.post('/api/hosts/:id/forget-fingerprint', (req, res) => {
 });
 
 app.post('/api/hosts/:id/test', async (req, res) => {
-  const host = store.get().hosts.find((h) => h.id === req.params.id);
+  // O card do espelhado tem o botão Testar — a rota tem que conhecê-lo.
+  const host = store.get().hosts.find((h) => h.id === req.params.id)
+    || dadosDeCofre.pegarHost(req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   const result = await runner.testHost(host, { saveData: () => store.save() });
   res.json(result);
@@ -1524,7 +1540,12 @@ function parseFavoriteBody(body, res) {
   const label = String((body && body.label) || '').trim();
   let hostId = (body && body.hostId) || null;
   if (hostId) {
-    if (!store.get().hosts.find((h) => h.id === hostId)) return fail(res, 400, 'Host não encontrado.');
+    // Espelhado vale como escopo: o id é estável, o terminal dele oferece e
+    // PRÉ-SELECIONA este escopo — recusar aqui era a UI prometendo o que o
+    // servidor negava, com uma mensagem que acusava o host errado.
+    if (!store.get().hosts.find((h) => h.id === hostId) && !dadosDeCofre.pegarHost(hostId)) {
+      return fail(res, 400, 'Host não encontrado.');
+    }
   } else {
     hostId = null; // favorito global
   }
@@ -1633,7 +1654,9 @@ function resolveRequest(body, res) {
   if (!ids.length) return fail(res, 400, 'Selecione ao menos um host.');
   const hosts = [];
   for (const id of ids) {
-    const h = d.hosts.find((x) => x.id === id);
+    // O espelhado entra na execução em lote como qualquer host: ele aparece na
+    // lista de seleção, e recusá-lo aqui seria oferecer o que não existe.
+    const h = d.hosts.find((x) => x.id === id) || dadosDeCofre.pegarHost(id);
     if (!h) return fail(res, 400, 'Host não encontrado: ' + id);
     if (h.protocol && h.protocol !== 'ssh') return fail(res, 400, `"${h.name}" é ${h.protocol.toUpperCase()} — execução em lote exige SSH.`);
     hosts.push(h);
@@ -1836,7 +1859,7 @@ app.post('/api/agent/start', (req, res) => {
       platform: process.platform,
     };
   } else {
-    host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId);
+    host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId) || dadosDeCofre.pegarHost(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
     if (host.protocol && host.protocol !== 'ssh') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet, FTP, VNC, RDP ou de página web.');
   }

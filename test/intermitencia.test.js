@@ -136,8 +136,11 @@ const baixar = (s) => new Promise((r) => { if (s.closeAllConnections) s.closeAll
     store.save();
     segredosDeCofre.definir('erp', { chave: fake.TOKEN });
 
+    // O espelho hoje inclui sistemas com URL E segredos com protocolo+endereço.
+    const TOTAL = fake.SISTEMAS.filter((s) => s.url).length
+      + fake.SEGREDOS.filter((s) => s.protocolo && s.host).length;
     await dados.renovarAgora('erp');
-    igual(dados.hostsEspelhados().length, 2,
+    igual(dados.hostsEspelhados().length, TOTAL,
       'os dois 502 do gateway foram ABSORVIDOS pela retentativa: o usuário não vê '
       + 'nada. Era exatamente aqui que a mesa de trabalho sumia');
     igual(dados.avisos(), [], 'e não há aviso, porque não houve prejuízo');
@@ -150,8 +153,10 @@ const baixar = (s) => new Promise((r) => { if (s.closeAllConnections) s.closeAll
 
   {
     // O gateway morreu; a busca falha, mas o cache está cheio.
+    const TOTAL = fake.SISTEMAS.filter((s) => s.url).length
+      + fake.SEGREDOS.filter((s) => s.protocolo && s.host).length;
     await dados.renovarAgora('erp');
-    igual(dados.hostsEspelhados().length, 2,
+    igual(dados.hostsEspelhados().length, TOTAL,
       'com o ERP fora, os sistemas conhecidos CONTINUAM na lista — sumir com eles '
       + 'a cada tropeço de rede é a intermitência de novo, por outro caminho');
     igual(dados.avisos(), [],

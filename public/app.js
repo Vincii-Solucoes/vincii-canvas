@@ -306,8 +306,12 @@ function hostCard(h) {
     const t = el(meta, 'span', 'tag' + (dentro ? ' tag-ativa' : ''),
       `⏱ ${descreverHorario(h)}${dentro ? ' — aberto agora' : ''}`);
     t.title = doCofre
-      ? 'Horário de atendimento do cliente, vindo do cofre. Nele o app mantém este host '
-        + 'conectado e a aba não pode ser fechada — fora dele o cofre recusa a credencial.'
+      ? (h.espelho && h.protocol !== 'web'
+        ? 'Horário de atendimento do cliente, vindo do cofre. Dentro dele a credencial é '
+          + 'entregue; fora, o cofre recusa. Este host NÃO abre sozinho — conectar é por '
+          + 'clique. Para abrir sozinho no expediente, cadastre-o à mão (o cadastro vence o espelho).'
+        : 'Horário de atendimento do cliente, vindo do cofre. Nele o app mantém este host '
+          + 'conectado e a aba não pode ser fechada — fora dele o cofre recusa a credencial.')
       : 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
   } else if (h.janelaDoCofre && h.janelaDoCofre.semJanela) {
     // A janela não veio, mas o ERP agora DIZ por quê (16/08) — e os dois
@@ -352,6 +356,23 @@ function hostCard(h) {
     b.title = 'Este host vem do cadastro do cliente no Homem Vitruviano. '
       + 'Para mudar nome ou endereço, mude o sistema lá.';
     b.disabled = true;
+    // A única manutenção LOCAL de um espelhado: esquecer a identidade
+    // aprendida quando o servidor for legitimamente trocado. Sem este botão, o
+    // aviso "a identidade do servidor mudou" era um beco sem saída — espelhado
+    // não tem Editar, e era lá que o esquecimento morava.
+    if (h.fingerprint) {
+      const esq = el(actions, 'button', 'btn small', 'Esquecer fingerprint');
+      esq.title = 'Apaga a identidade aprendida deste servidor. Use quando ele '
+        + 'foi reinstalado de verdade — a próxima conexão aprende a nova.';
+      esq.addEventListener('click', async () => {
+        if (!confirm(`Esquecer o fingerprint de "${h.name}"? Só faça isso se o servidor foi trocado de verdade.`)) return;
+        try {
+          await api(`/api/hosts/${encodeURIComponent(h.id)}/forget-fingerprint`, { method: 'POST' });
+          toast('Fingerprint esquecido — será aprendido de novo na próxima conexão.');
+          await loadState();
+        } catch (e) { toast(e.message, 'erro'); }
+      });
+    }
   }
   return card;
 }
@@ -4573,6 +4594,11 @@ function hostDaSessao(s) {
 function sessaoTravada(s) {
   const h = hostDaSessao(s);
   if (!h || !noHorario(h, new Date())) return false;
+  // Espelhado de SEGREDO não trava: a trava existe para o que a agenda mantém
+  // aberto (mesa de trabalho web, host cadastrado com horário) — e a agenda
+  // não abre espelhado de segredo. Conectou por clique, fecha por clique; a
+  // janela do cliente aqui governa a CREDENCIAL, não a aba.
+  if (h.espelho && h.protocol !== 'web') return false;
   const guardia = sessions.find((x) => x.hostId === h.id && !sessaoMorta(x));
   return !!guardia && guardia.id === s.id;
 }
@@ -4642,8 +4668,14 @@ async function cicloDaAgenda() {
   // FTP fica de fora: ele não abre sessão nenhuma (PROTOCOLOS_SESSAO o exclui), e
   // openSession cairia no ramo de terminal — uma tentativa de SSH na porta 21 a
   // cada minuto, pela faixa inteira, com o erro aparecendo numa aba nova.
+  // Espelhado de SEGREDO não abre sozinho: mesa de trabalho web abrindo no
+  // expediente é o recurso; sessão SSH/RDP logando sozinha em equipamento do
+  // cliente, o dia inteiro, é outra coisa — a janela vale para a CREDENCIAL
+  // (fora dela o cofre recusa), não para conectar por conta própria. Quem
+  // quiser o abrir-sozinho cadastra o host à mão, que vence o espelho.
   const agendados = state.hosts.filter((h) => temHorario(h)
     && PROTOCOLOS_SESSAO.includes(h.protocol || 'ssh')
+    && !(h.espelho && h.protocol !== 'web')
     && noHorario(h, agora));
   // Fora da lista de "abrir agora", mas AINDA na faixa: continua travado e
   // continua contando como agendado para a limpeza abaixo.
