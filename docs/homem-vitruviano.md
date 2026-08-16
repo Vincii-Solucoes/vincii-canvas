@@ -364,11 +364,26 @@ mensagem "é cadastro no ERP".
 **`semJanela`** dá nome à ausência de janela, e o cartão do host na aba Hosts
 usa os dois nomes, porque os consertos são diferentes:
 
-- `sem_turnos` → selo "⏱ sem turnos no ERP": a credencial não abre em horário
-  nenhum até os turnos serem cadastrados lá;
-- `encaminhamento_desativado` → selo "⏱ horário não encaminhado": abre por
-  clique dentro do horário; o app só não sabe dizer quando.
+- `sem_turnos` → selo "⏱ sem turnos no ERP": nada do cliente abre sozinho até
+  os turnos serem cadastrados lá;
+- `encaminhamento_desativado` → selo "⏱ horário não encaminhado": nada abre
+  sozinho; conectar por clique funciona normalmente.
 
 Valor fora dos dois estados é descartado na entrada, como protocolo estranho.
-O aviso de vocês se confirmou aqui: os clientes reais sem turnos vão aparecer
-com o primeiro selo até os horários serem cadastrados no ERP.
+
+---
+
+## Parte 4 — decisão de produto: a janela governa automação, não credencial (16/08)
+
+Decisão do dono do produto, comunicada a vocês no mesmo dia: **a chave de
+emergência sai de cena e o `/v1/secrets/{id}` deixa de recusar fora do
+horário**. O papel da janela passa a ser um só — dizer QUANDO o Canvas abre
+sozinha a mesa de trabalho web do cliente. A trilha de controle fora do
+expediente é o **registro de leituras** (quem, quando, qual segredo), que não
+pode regredir.
+
+O Canvas já fala essa língua: os textos da tela descrevem a janela como
+automação ("abre sozinho no expediente") e nenhum promete recusa de
+credencial. O tratamento dos códigos de recusa continua existindo por baixo —
+se o ERP recusar durante a transição, a mensagem dele aparece como sempre; o
+código morre de inanição quando a mudança de vocês publicar.

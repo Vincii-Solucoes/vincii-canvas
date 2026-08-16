@@ -20,11 +20,12 @@
 //      diaFim 0, 06:00` é o plantão de domingo à noite que termina na segunda.
 //      A comparação ingênua `inicio <= agora < fim` é sempre falsa aí.
 //
-// E há a regra que o documento faz questão de repetir: esta janela é
-// INFORMATIVA. Quem trava de verdade é o cofre, que recusa a credencial fora do
-// horário com `sem_permissao`. Por isso, na dúvida, este módulo fecha — manter
-// aberto quando o cofre vai recusar produz um laço de falhas; fechar quando o
-// cofre aceitaria só faz o analista clicar.
+// E o PAPEL da janela (decisão de produto de 16/08): ela governa AUTOMAÇÃO —
+// quando a mesa de trabalho do cliente abre sozinha — e não credencial. O
+// cofre entrega o segredo a qualquer hora; a trilha fora do expediente é o
+// registro de leituras no ERP. Na dúvida, este módulo fecha mesmo assim:
+// errar abrindo cedo dispara sessão que ninguém pediu; errar fechando cedo só
+// faz o analista clicar.
 
 // ---------------------------------------------------------------------------
 // TUDO daqui para baixo vive DENTRO desta função, e não no escopo global.
@@ -70,8 +71,8 @@
   // passam a mandar a ZONA — porque deslocamento fixo não representa DST. Sem
   // isto, `America/Sao_Paulo` não casava com RE_FUSO e caía no padrão `-03:00`
   // CALADO: durante o horário de verão, uma hora errada todo dia, sem erro em
-  // lugar nenhum. Uma hora errada aqui é a tela travada fora do expediente com o
-  // cofre recusando a credencial em laço.
+  // lugar nenhum. Uma hora errada aqui é a mesa de trabalho abrindo (e a aba
+  // travando) uma hora fora do expediente combinado, todo dia.
   //
   // `Intl` existe nos dois lados (Node e navegador) e calcula o deslocamento PARA
   // O INSTANTE consultado — que é o único jeito certo com DST, já que ele muda ao
@@ -374,8 +375,8 @@
 
   // Uso duplo, como public/agenda.js: o servidor normaliza o que vem do ERP e o
   // navegador AVALIA a cada tique do relógio. Duas implementações da mesma regra
-  // de horário divergiriam — e a divergência aqui é a tela travada num horário em
-  // que o cofre já recusa a credencial.
+  // de horário divergiriam — e a divergência aqui é a mesa de trabalho abrindo
+  // num horário e travando a aba em outro.
   if (typeof window !== 'undefined') {
     window.normalizarJanela = normalizarJanela;
     window.estaEmAtendimento = estaEmAtendimento;

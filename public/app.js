@@ -305,31 +305,33 @@ function hostCard(h) {
     const doCofre = fonteDeHorario(h).tipo === 'cofre';
     const t = el(meta, 'span', 'tag' + (dentro ? ' tag-ativa' : ''),
       `⏱ ${descreverHorario(h)}${dentro ? ' — aberto agora' : ''}`);
+    // A janela do cliente governa AUTOMAÇÃO (o que abre sozinho no expediente),
+    // não credencial — decisão de produto de 16/08: conectar funciona a
+    // qualquer hora, e a trilha é o registro de leituras no ERP.
     t.title = doCofre
       ? (h.espelho && h.protocol !== 'web'
-        ? 'Horário de atendimento do cliente, vindo do cofre. Dentro dele a credencial é '
-          + 'entregue; fora, o cofre recusa. Este host NÃO abre sozinho — conectar é por '
-          + 'clique. Para abrir sozinho no expediente, cadastre-o à mão (o cadastro vence o espelho).'
+        ? 'Horário de atendimento do cliente, vindo do cofre — informativo aqui: este '
+          + 'host não abre sozinho, e conectar por clique funciona a qualquer hora. Para '
+          + 'abrir sozinho no expediente, cadastre-o à mão (o cadastro vence o espelho).'
         : 'Horário de atendimento do cliente, vindo do cofre. Nele o app mantém este host '
-          + 'conectado e a aba não pode ser fechada — fora dele o cofre recusa a credencial.')
+          + 'conectado e a aba não pode ser fechada; fora dele, conectar por clique continua funcionando.')
       : 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
   } else if (h.janelaDoCofre && h.janelaDoCofre.semJanela) {
-    // A janela não veio, mas o ERP agora DIZ por quê (16/08) — e os dois
-    // estados pedem frases diferentes, porque o conserto é diferente: num é
-    // cadastrar turnos no ERP, no outro é ligar o encaminhamento (ou aceitar
-    // que abre só por clique). Antes, isso era uma ausência muda e a recusa
-    // do cofre fora do horário chegava sem explicação nenhuma.
+    // A janela não veio, mas o ERP DIZ por quê (16/08) — e os dois estados
+    // pedem frases diferentes, porque o conserto é diferente: num é cadastrar
+    // turnos no ERP, no outro é ligar o encaminhamento. Com a janela valendo
+    // só para automação, os dois significam o mesmo na prática — "nada deste
+    // cliente abre sozinho" — mas o caminho para mudar isso é distinto.
     const semTurnos = h.janelaDoCofre.semJanela === 'sem_turnos';
     const t = el(meta, 'span', 'tag tag-warn',
       semTurnos ? '⏱ sem turnos no ERP' : '⏱ horário não encaminhado');
     t.title = semTurnos
       ? `O cliente ${h.janelaDoCofre.cliente} não tem turnos de atendimento cadastrados `
-        + 'no ERP — e a trava vale mesmo assim: a credencial do cofre não abre em '
-        + 'horário nenhum até os turnos serem cadastrados lá.'
+        + 'no ERP — nada dele abre sozinho. Conectar por clique funciona normalmente; '
+        + 'cadastrando os turnos lá, a mesa de trabalho passa a abrir no expediente.'
       : `O cliente ${h.janelaDoCofre.cliente} tem horário de atendimento no ERP, mas o `
-        + 'encaminhamento ao Canvas está desligado. Este host não abre sozinho; '
-        + 'conectar por clique funciona dentro do horário — fora dele o cofre recusa '
-        + 'a credencial sem que o app saiba dizer quando abre.';
+        + 'encaminhamento ao Canvas está desligado — nada dele abre sozinho. Conectar '
+        + 'por clique funciona normalmente.';
   }
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');
@@ -4670,9 +4672,9 @@ async function cicloDaAgenda() {
   // cada minuto, pela faixa inteira, com o erro aparecendo numa aba nova.
   // Espelhado de SEGREDO não abre sozinho: mesa de trabalho web abrindo no
   // expediente é o recurso; sessão SSH/RDP logando sozinha em equipamento do
-  // cliente, o dia inteiro, é outra coisa — a janela vale para a CREDENCIAL
-  // (fora dela o cofre recusa), não para conectar por conta própria. Quem
-  // quiser o abrir-sozinho cadastra o host à mão, que vence o espelho.
+  // cliente, o dia inteiro, é outra coisa. A janela governa AUTOMAÇÃO, e a
+  // automação de segredo-espelho é nenhuma. Quem quiser o abrir-sozinho
+  // cadastra o host à mão, que vence o espelho.
   const agendados = state.hosts.filter((h) => temHorario(h)
     && PROTOCOLOS_SESSAO.includes(h.protocol || 'ssh')
     && !(h.espelho && h.protocol !== 'web')
