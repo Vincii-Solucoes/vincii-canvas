@@ -4927,35 +4927,20 @@ function finalizeTyped(session) {
   logHistory(session, cmd, 'human', 'terminal');
 }
 
-const PROMPT_TERMS = ['❯ ', '➜ ', '$ ', '# ', '% '];
-
-// Lê o comando na posição do cursor: sobe até a linha do prompt (juntando as
-// continuações com wrap) e remove o prompt. Não depende de isWrapped — procura o
-// terminador do prompt nas últimas linhas, o que é mais robusto na prática.
+// Lê o comando na posição do cursor: entrega as últimas linhas renderizadas ao
+// extrator (public/comando.js), que conhece os prompts — de shell de PC e de
+// equipamento de rede (Huawei VRP, OLT SmartAX, Cisco, MikroTik). A regra do
+// que é prompt mora lá, testada em Node; aqui só se lê o buffer do xterm.
 function readCommandLine(term) {
   const buf = term.buffer.active;
   const cursorRow = buf.baseY + buf.cursorY;
-  const parts = [];
+  const linhas = [];
   for (let r = cursorRow; r >= 0 && r >= cursorRow - 5; r--) {
     const ln = buf.getLine(r);
     if (!ln) break;
-    const text = ln.translateToString(false);
-    parts.unshift(text);
-    if (PROMPT_TERMS.some((t) => text.includes(t))) {
-      return stripPrompt(parts.join('').replace(/\s+$/, ''));
-    }
+    linhas.push(ln.translateToString(false));
   }
-  return ''; // sem prompt reconhecível → não registra (evita capturar dentro de vim/top)
-}
-
-// Remove o prompt do shell, pegando o que vem após o último terminador comum.
-function stripPrompt(line) {
-  let cut = -1;
-  for (const t of PROMPT_TERMS) {
-    const i = line.lastIndexOf(t);
-    if (i >= 0 && i + t.length > cut) cut = i + t.length;
-  }
-  return cut >= 0 ? line.slice(cut).trim() : '';
+  return extrairComando(linhas);
 }
 
 // Envia uma entrada ao histórico; o servidor resolve máquina/IP/usuário.
