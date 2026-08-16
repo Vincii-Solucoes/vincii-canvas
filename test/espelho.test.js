@@ -396,6 +396,18 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
     igual(dados.pegarHost(opa.id).name, 'OPA', 'o servidor acha o espelhado pelo id');
     igual(dados.pegarHost('qc_qualquer'), null, 'e não responde por id que não é dele');
     igual(dados.pegarHost(null), null, 'nem por id ausente');
+
+    // O ARRANQUE FRIO: o espelho só existe depois da primeira conversa com o
+    // ERP, e o clique rápido (Recentes, aba reatada) chegava antes — "Host não
+    // encontrado" para um host que ia existir dois segundos depois. A busca
+    // com renovação espera essa primeira conversa.
+    dados.esquecer('erp');
+    igual(dados.pegarHost(opa.id), null, 'com o cache frio, a busca direta não acha');
+    const renovado = await dados.pegarHostRenovando(opa.id);
+    igual(renovado && renovado.name, 'OPA',
+      'a busca com renovação acha — é o que atende o clique dos Recentes no arranque');
+    igual(await dados.pegarHostRenovando('h-comum'), null,
+      'host cadastrado não passa por aqui, nem dispara renovação à toa');
   }
 
   // ---------- 10. as rotas de ESCRITA recusam ----------

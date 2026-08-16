@@ -545,7 +545,7 @@ function ladoDe(body, res) {
 app.post('/api/files/open', async (req, res) => {
   limpaFileSessions();
   const b = req.body || {};
-  const host = store.get().hosts.find((h) => h.id === b.hostId) || quickhosts.get(b.hostId) || dadosDeCofre.pegarHost(b.hostId);
+  const host = store.get().hosts.find((h) => h.id === b.hostId) || quickhosts.get(b.hostId) || await dadosDeCofre.pegarHostRenovando(b.hostId);
   if (!host) return fail(res, 400, 'Host não encontrado.');
   if (fileSessions.size >= 20) return fail(res, 400, 'Muitos painéis de arquivo abertos.');
   try {
@@ -682,11 +682,11 @@ app.get('/api/rdp/modo', (req, res) => {
 // Registra que o usuário aceitou falar RDP antigo com este host. Fica na
 // memória do processo para hosts avulsos e no data.json para hosts salvos —
 // perguntar de novo a cada abertura do app seria ruído, e o usuário já decidiu.
-app.post('/api/rdp/consentir', (req, res) => {
+app.post('/api/rdp/consentir', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
   const id = String(corpo.hostId || '');
-  const host = store.get().hosts.find((h) => h.id === id) || quickhosts.get(id) || dadosDeCofre.pegarHost(id);
+  const host = store.get().hosts.find((h) => h.id === id) || quickhosts.get(id) || await dadosDeCofre.pegarHostRenovando(id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   if (host.protocol !== 'rdp') return fail(res, 400, 'Este host não é RDP.');
   rdp.consentir(id);
@@ -706,7 +706,7 @@ app.post('/api/rdp/consentir', (req, res) => {
 app.post('/api/desktop/credencial', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
-  const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId) || dadosDeCofre.pegarHost(corpo.hostId);
+  const host = store.get().hosts.find((h) => h.id === corpo.hostId) || quickhosts.get(corpo.hostId) || await dadosDeCofre.pegarHostRenovando(corpo.hostId);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   if (host.protocol !== 'rdp' && host.protocol !== 'vnc') {
     return fail(res, 400, 'Este host não é de área de trabalho remota.');
@@ -1443,7 +1443,7 @@ app.delete('/api/hosts/:id', (req, res) => {
 app.post('/api/hosts/:id/segredo', async (req, res) => {
   const corpo = req.body || {};
   if (!tokenValido(corpo.token)) return fail(res, 403, 'Token inválido.');
-  const host = store.get().hosts.find((h) => h.id === req.params.id) || quickhosts.get(req.params.id) || dadosDeCofre.pegarHost(req.params.id);
+  const host = store.get().hosts.find((h) => h.id === req.params.id) || quickhosts.get(req.params.id) || await dadosDeCofre.pegarHostRenovando(req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   const campo = corpo.campo === 'passphrase' ? 'passphrase' : 'senha';
 
@@ -1489,7 +1489,7 @@ app.post('/api/hosts/:id/forget-fingerprint', (req, res) => {
 app.post('/api/hosts/:id/test', async (req, res) => {
   // O card do espelhado tem o botão Testar — a rota tem que conhecê-lo.
   const host = store.get().hosts.find((h) => h.id === req.params.id)
-    || dadosDeCofre.pegarHost(req.params.id);
+    || await dadosDeCofre.pegarHostRenovando(req.params.id);
   if (!host) return fail(res, 404, 'Host não encontrado.');
   const result = await runner.testHost(host, { saveData: () => store.save() });
   res.json(result);
@@ -1844,7 +1844,7 @@ app.post('/api/ai/playbook', async (req, res) => {
 });
 
 // ---------- agente autônomo (IA age sozinha, analista acompanha) ----------
-app.post('/api/agent/start', (req, res) => {
+app.post('/api/agent/start', async (req, res) => {
   const body = req.body || {};
   let host;
   if (body.local === true) {
@@ -1859,7 +1859,7 @@ app.post('/api/agent/start', (req, res) => {
       platform: process.platform,
     };
   } else {
-    host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId) || dadosDeCofre.pegarHost(body.hostId);
+    host = store.get().hosts.find((h) => h.id === body.hostId) || quickhosts.get(body.hostId) || await dadosDeCofre.pegarHostRenovando(body.hostId);
     if (!host) return fail(res, 400, 'Host não encontrado.');
     if (host.protocol && host.protocol !== 'ssh') return fail(res, 400, 'O agente autônomo precisa de SSH — não funciona em hosts Telnet, FTP, VNC, RDP ou de página web.');
   }
