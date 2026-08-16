@@ -33,7 +33,8 @@ function modosDaLinhaDeComando(args) {
   const num = (f, p) => { const a = args.find((x) => x.startsWith(f + '=')); return a ? Number(a.split('=')[1]) : p; };
   return {
     invalida: tem('--401'), expira: tem('--expira'), semPermissao: tem('--403'),
-    inativo: tem('--inativo'), limite: tem('--429'), indisponivel: tem('--503'),
+    inativo: tem('--inativo'), funcionarioInativo: tem('--desligado'),
+    limite: tem('--429'), indisponivel: tem('--503'),
     erpValidation: tem('--erp-validation'), erp500: tem('--erp-500'),
     conflito: tem('--conflict'), semCliente: tem('--sem-cliente'),
     semJanela: tem('--sem-janela'), foraDeHorario: tem('--fora-de-horario'),
@@ -70,12 +71,19 @@ const JANELA_COMERCIAL = { fuso: '-03:00',
   ] };
 
 const PLANTAO = '7d10aa22-0000-4000-8000-000000000003';
+const SANTACLARA = '9e55bb33-0000-4000-8000-000000000004';
+const REDEFIBRA = 'a166cc44-0000-4000-8000-000000000005';
 
 const CLIENTES = [
   { id: VELONIC, nome: 'Velonic', janela: JANELA_24H },
   { id: MAYLINK, nome: 'Maylink', janela: JANELA_COMERCIAL },
   // Terceiro cliente só para a OUTRA escrita de 24 h ficar exercitada.
   { id: PLANTAO, nome: 'Plantão', janela: JANELA_24H_DO_DOCUMENTO },
+  // Os dois estados de "sem janela" (16/08). O primeiro tem o nome do caso
+  // REAL da produção do usuário: cliente sem turno cadastrado, credencial
+  // travada até alguém cadastrar os horários no ERP.
+  { id: SANTACLARA, nome: 'Santa Clara Resort', semJanela: 'sem_turnos' },
+  { id: REDEFIBRA, nome: 'Rede Fibra', semJanela: 'encaminhamento_desativado' },
 ];
 
 const SISTEMAS = [
@@ -221,6 +229,12 @@ function atender(req, res, M, token, diario) {
   if (M.invalida) return erro(res, 401, 'chave_invalida', 'Token revogado (modo de teste).');
   if (M.expira) return erro(res, 401, 'chave_expirada', 'Token vencido (modo de teste).');
   if (M.inativo) return erro(res, 403, 'cliente_inativo', 'Contrato encerrado (modo de teste).');
+  // Analista DESLIGADO (16/08): 403 com código próprio nas rotas de DADOS —
+  // inclusive a listagem SEM filtro, que antes devolvia 200 [] muda. O ping
+  // continua respondendo: é ele que identifica a chave.
+  if (M.funcionarioInativo && p !== '/v1/ping') {
+    return erro(res, 403, 'funcionario_inativo', 'Seu usuário foi desativado no ERP.');
+  }
   if (M.limite) return erro(res, 429, 'limite_de_taxa', 'Devagar (modo de teste).', { 'Retry-After': '2' });
   if (M.indisponivel) return erro(res, 503, 'indisponivel', 'Cofre sem chave de cifra (modo de teste).');
   if (M.erpValidation) return erroErp(res, 422, 'validation_error', 'limite: must be between 1 and 200');
@@ -249,9 +263,14 @@ function atender(req, res, M, token, diario) {
       produto: 'Homem Vitruviano', versao: '1.0',
       chave: { id: 'hvk_3f4hoG', rotulo: 'Canvas — laboratório' },
       permissoes: ['ler'],
-      cofres: CLIENTES.map((c) => (M.semJanela
-        ? { id: c.id, nome: c.nome }
-        : { id: c.id, nome: c.nome, janela: c.janela })),
+      cofres: CLIENTES.map((c) => {
+        const base = { id: c.id, nome: c.nome };
+        if (M.semJanela) return base;
+        if (c.janela) base.janela = c.janela;
+        // O estado de "sem janela" (16/08) — só aparece quando a janela falta.
+        if (!c.janela && c.semJanela) base.semJanela = c.semJanela;
+        return base;
+      }),
     });
   }
 
@@ -302,6 +321,8 @@ function atender(req, res, M, token, diario) {
     if (s.dominio) corpo.dominio = s.dominio;
     if (s.protocolo) corpo.protocolo = s.protocolo;
     if (cliente && cliente.janela && !M.semJanela) corpo.janela = cliente.janela;
+    // Sem janela, o estado vem no lugar (16/08) — igual ao ping.
+    if (cliente && !cliente.janela && cliente.semJanela && !M.semJanela) corpo.semJanela = cliente.semJanela;
     return responder(res, 200, corpo);
   }
 
@@ -321,4 +342,5 @@ if (require.main === module) {
 }
 
 module.exports = { criar, CLIENTES, SISTEMAS, SEGREDOS, TOKEN, PORTA, VELONIC, MAYLINK, PLANTAO,
+  SANTACLARA, REDEFIBRA,
   JANELA_24H, JANELA_24H_DO_DOCUMENTO, JANELA_COMERCIAL };

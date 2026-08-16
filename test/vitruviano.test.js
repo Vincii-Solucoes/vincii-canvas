@@ -55,7 +55,7 @@ async function comServidor(modos, corpo) {
     igual(r.produto, 'Homem Vitruviano', 'o ping identifica o produto');
     igual(r.permissoes, ['ler'], 'e as permissões da chave');
     igual(r.rotuloDaChave, 'Canvas — laboratório', 'e o rótulo, para a tela dizer qual token é');
-    igual(r.cofres.length, 3, 'três clientes atendidos');
+    igual(r.cofres.length, fake.CLIENTES.length, 'todos os clientes atendidos vêm');
     igual(r.cofres[0].nome, 'Velonic', 'com nome para a tela');
     ok(r.cofres[0].janela && r.cofres[0].janela.turnos.length === 1,
       'a janela de atendimento vem junto do cliente, normalizada');
@@ -68,6 +68,18 @@ async function comServidor(modos, corpo) {
       'a janela 24 h da Velonic fecha o círculo, como a produção manda');
     igual(r.cofres[2].janela.turnos[0].fim, '23:59',
       'e o terceiro cliente usa a escrita do documento — as duas ficam exercitadas');
+
+    // `semJanela` (16/08): a ausência de janela GANHOU NOME — e são dois nomes,
+    // porque os consertos são diferentes (cadastrar turnos x ligar o
+    // encaminhamento). A trava do cofre vale nos dois.
+    const santa = r.cofres.find((c) => c.nome === 'Santa Clara Resort');
+    igual(santa.semJanela, 'sem_turnos',
+      'cliente sem turno cadastrado diz sem_turnos — a credencial nunca abre');
+    igual(santa.janela, null, 'e segue sem janela, claro');
+    igual(r.cofres.find((c) => c.nome === 'Rede Fibra').semJanela, 'encaminhamento_desativado',
+      'encaminhamento desligado diz encaminhamento_desativado — abre por clique, no horário');
+    igual(r.cofres[0].semJanela, '',
+      'cliente COM janela não carrega estado de ausência');
   });
 
   // Cliente sem janela é caso previsto — e é diferente de janela vazia.
@@ -76,6 +88,45 @@ async function comServidor(modos, corpo) {
     igual(r.cofres[0].janela, null,
       'cliente sem horário declarado devolve null, não uma janela que nunca abre — '
       + 'a diferença decide entre "não trava a tela" e "trava para sempre fechada"');
+  });
+
+  // Estado de ausência INVENTADO não passa: a tela escolhe frase por estado, e
+  // um estado desconhecido viraria texto sem sentido no cartão do host.
+  await comServidor({}, async (cfg) => {
+    const original = fake.CLIENTES.find((c) => c.nome === 'Santa Clara Resort');
+    const antes = original.semJanela;
+    original.semJanela = 'ferias-coletivas';
+    try {
+      const r = await adaptador.ping(cfg);
+      igual(r.cofres.find((c) => c.nome === 'Santa Clara Resort').semJanela, '',
+        'valor fora dos dois estados do contrato é descartado, como protocolo estranho');
+    } finally { original.semJanela = antes; }
+  });
+
+  // ---------- funcionario_inativo (16/08): a conta inteira, não um cliente ----------
+
+  await comServidor({ funcionarioInativo: true }, async (cfg) => {
+    // O ping continua identificando a chave — é pelas rotas de DADOS que o
+    // desligamento fala.
+    const r = await adaptador.ping(cfg);
+    ok(r.cofres.length > 0, 'o ping responde mesmo para a conta desligada');
+
+    for (const [nome, chamada] of [
+      ['secrets sem filtro', () => adaptador.listar(cfg, { limite: 50 })],
+      ['sistemas', () => adaptador.sistemas(cfg, {})],
+      ['leitura de segredo', () => adaptador.ler(cfg, fake.SEGREDOS[0].id)],
+    ]) {
+      try {
+        await chamada();
+        assert.fail(`${nome} deveria ter recusado a conta desligada`);
+      } catch (e) {
+        igual(e.codigo, 'funcionario_inativo',
+          `${nome} devolve o código próprio — antes a listagem sem filtro vinha `
+          + '200 [] muda e a tela sugeria "peça acesso" para uma conta desativada');
+        n += 1;
+        ok(!e.transitorio, 'e é definitivo: insistir não recontrata ninguém');
+      }
+    }
   });
 
   // ---------- a janela do ERP alimenta a regra de horário ----------
@@ -349,7 +400,8 @@ async function comServidor(modos, corpo) {
     // Campo a mais na resposta não entra no app.
     a = responder({ id: 'x', tipo: 'senha', senha: 'abc123', __proto__mal: 1, admin: true });
     const s2 = await a.ler({ baseUrl: 'https://x', chave: 'k' }, 'x');
-    igual(Object.keys(s2).sort(), ['dominio', 'expiraEm', 'janela', 'protocolo', 'senha', 'tipo', 'usuario'],
+    igual(Object.keys(s2).sort(),
+      ['dominio', 'expiraEm', 'janela', 'protocolo', 'semJanela', 'senha', 'tipo', 'usuario'],
       'a credencial é montada campo a campo: o que a API mandar a mais fica de fora');
 
     // "constructor" é propriedade HERDADA de todo objeto: um acesso direto a
@@ -634,6 +686,23 @@ async function comServidor(modos, corpo) {
         'o domínio digitado no host manda; o do cofre cobre quando vazio');
     }
 
+    // O `semJanela` atravessa o cache até o host (16/08): é o que o cartão na
+    // aba Hosts usa para explicar POR QUE o host do cliente não abre sozinho.
+    {
+      const dados = require('../lib/dadosdecofre');
+      await dados.renovarAgora('erp');
+      const semTurnos = dados.janelaDoHost({ segredo: { cofre: 'erp', id: 'x', cliente: fake.SANTACLARA } });
+      igual(semTurnos && semTurnos.semJanela, 'sem_turnos',
+        'cliente sem turnos chega ao host com o estado nomeado — era ausência muda');
+      igual(semTurnos.janela, null, 'sem inventar janela');
+      igual(semTurnos.cliente, 'Santa Clara Resort', 'e com o nome, para a frase da tela');
+      const desativado = dados.janelaDoHost({ segredo: { cofre: 'erp', id: 'x', cliente: fake.REDEFIBRA } });
+      igual(desativado && desativado.semJanela, 'encaminhamento_desativado', 'o outro estado idem');
+      const comJanela = dados.janelaDoHost({ segredo: { cofre: 'erp', id: 'x', cliente: fake.VELONIC } });
+      igual(comJanela && comJanela.semJanela, '', 'cliente com janela não carrega estado de ausência');
+      ok(comJanela.janela, 'ele carrega a janela mesmo');
+    }
+
     // As guardas de TELA que a revisão provou faltarem — de fonte, como as do
     // backup, porque app.js não roda em Node:
     {
@@ -654,6 +723,9 @@ async function comServidor(modos, corpo) {
       ok(app.includes('s.host && s.host === enderecoDoHost'),
         'segredo sem host não casa com formulário de host vazio — casava, e '
         + 'notas e certificados subiam ao topo sem selo que explicasse');
+      ok(app.includes('sem turnos no ERP') && app.includes('horário não encaminhado'),
+        'o cartão do host tem as DUAS frases do semJanela — os consertos são '
+        + 'diferentes (cadastrar turnos x ligar o encaminhamento), a frase também');
     }
 
     await new Promise((r) => servidor.close(r));

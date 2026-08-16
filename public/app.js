@@ -309,6 +309,23 @@ function hostCard(h) {
       ? 'Horário de atendimento do cliente, vindo do cofre. Nele o app mantém este host '
         + 'conectado e a aba não pode ser fechada — fora dele o cofre recusa a credencial.'
       : 'Neste horário, todo dia, o app mantém este host conectado e a aba não pode ser fechada.';
+  } else if (h.janelaDoCofre && h.janelaDoCofre.semJanela) {
+    // A janela não veio, mas o ERP agora DIZ por quê (16/08) — e os dois
+    // estados pedem frases diferentes, porque o conserto é diferente: num é
+    // cadastrar turnos no ERP, no outro é ligar o encaminhamento (ou aceitar
+    // que abre só por clique). Antes, isso era uma ausência muda e a recusa
+    // do cofre fora do horário chegava sem explicação nenhuma.
+    const semTurnos = h.janelaDoCofre.semJanela === 'sem_turnos';
+    const t = el(meta, 'span', 'tag tag-warn',
+      semTurnos ? '⏱ sem turnos no ERP' : '⏱ horário não encaminhado');
+    t.title = semTurnos
+      ? `O cliente ${h.janelaDoCofre.cliente} não tem turnos de atendimento cadastrados `
+        + 'no ERP — e a trava vale mesmo assim: a credencial do cofre não abre em '
+        + 'horário nenhum até os turnos serem cadastrados lá.'
+      : `O cliente ${h.janelaDoCofre.cliente} tem horário de atendimento no ERP, mas o `
+        + 'encaminhamento ao Canvas está desligado. Este host não abre sozinho; '
+        + 'conectar por clique funciona dentro do horário — fora dele o cofre recusa '
+        + 'a credencial sem que o app saiba dizer quando abre.';
   }
   const actions = el(info, 'div', 'actions');
   const btnConn = el(actions, 'button', 'btn small primary', 'Conectar');

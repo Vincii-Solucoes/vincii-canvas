@@ -353,8 +353,22 @@ Isso não é detalhe: decidindo pelo nome, `certificado` (que é PEM) caía no r
 do valor único e estourava com "o cofre não mandou a senha" — com o cofre tendo
 mandado tudo.
 
-### O que segue em aberto (das partes anteriores)
+### As duas ofertas — entregues (16/08) e consumidas
 
-Os dois itens oferecidos por vocês continuam valendo a pena: o código
-`funcionario_inativo` e o campo que distinga "sem turnos" de "encaminhamento
-desativado". Nada do 14/ago os substitui.
+**`funcionario_inativo`** agora fala em todas as rotas de dados, inclusive a
+listagem sem filtro que devolvia `200 []` mudo. O Canvas o trata como
+definitivo (insistir não recontrata ninguém) e o distingue do `200 []`
+legítimo — analista ativo que ainda não atende ninguém — que continua com a
+mensagem "é cadastro no ERP".
+
+**`semJanela`** dá nome à ausência de janela, e o cartão do host na aba Hosts
+usa os dois nomes, porque os consertos são diferentes:
+
+- `sem_turnos` → selo "⏱ sem turnos no ERP": a credencial não abre em horário
+  nenhum até os turnos serem cadastrados lá;
+- `encaminhamento_desativado` → selo "⏱ horário não encaminhado": abre por
+  clique dentro do horário; o app só não sabe dizer quando.
+
+Valor fora dos dois estados é descartado na entrada, como protocolo estranho.
+O aviso de vocês se confirmou aqui: os clientes reais sem turnos vão aparecer
+com o primeiro selo até os horários serem cadastrados no ERP.

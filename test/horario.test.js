@@ -163,7 +163,8 @@ const janelaComercial = { fuso: '-03:00', turnos: [
 
   // Só o cofre que declara ter clientes é consultado.
   const estado = dadosDeCofre.estado();
-  ok(estado.erp && estado.erp.clientes.length === 3, 'o cofre com clientes foi lido');
+  ok(estado.erp && estado.erp.clientes.length === fake.CLIENTES.length,
+    'o cofre com clientes foi lido');
   igual(await dadosDeCofre.renovarAgora('aberto'), null,
     'o cofre do contrato aberto NÃO é consultado por causa de janela: ele não tem '
     + 'esse conceito, e a requisição só gastaria o limite de taxa');
