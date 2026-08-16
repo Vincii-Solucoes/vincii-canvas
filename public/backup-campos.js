@@ -21,7 +21,7 @@
 // Atributos do <host>. A ordem é a mesma da saída, para facilitar a leitura.
 const HOST_ATRIBUTOS = [
   'name', 'host', 'port', 'username', 'protocol', 'ftps', 'rdpDomain', 'url',
-  'group', 'icon', 'color',
+  'group', 'subgroup', 'icon', 'color',
 ];
 
 // Atributos que só fazem sentido num protocolo — o export os omite nos demais,

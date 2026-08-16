@@ -56,6 +56,7 @@ const HOST_REF = {
   url: 'https://192.168.1.1/admin',
   webCert: 'sha256/AAAA',
   group: 'Producao',
+  subgroup: 'Web',
   icon: 'windows',
   color: 'azul',
   vars: { PAPEL: 'dc' },

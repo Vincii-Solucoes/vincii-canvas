@@ -154,23 +154,14 @@ function makeAvatar(parent, host, extraClass) {
   }
   return av;
 }
-// agrupa hosts por grupo; "Sem grupo" por último
-function groupedHosts() {
-  const groups = new Map();
-  for (const h of state.hosts) {
-    const g = (h.group || '').trim() || 'Sem grupo';
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(h);
-  }
-  return [...groups.entries()].sort((a, b) => {
-    if (a[0] === 'Sem grupo') return 1;
-    if (b[0] === 'Sem grupo') return -1;
-    return a[0].localeCompare(b[0], 'pt-BR');
-  });
-}
+// O agrupamento (grupo > subgrupo, ordenação, rótulos) mora em agrupar.js — as
+// regras estão lá, testadas em Node. Aqui só se aplica ao estado da tela.
+function hostsAgrupados() { return agruparHosts(state.hosts); }
+function groupedHosts() { return agruparHostsPlano(state.hosts); }
 function existingGroups() {
   return [...new Set(state.hosts.map((h) => (h.group || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
+function existingSubgroups(grupo) { return subgruposDe(state.hosts, grupo); }
 
 // ---------- abas ----------
 function initTabs() {
@@ -255,13 +246,23 @@ function renderHosts() {
     el(wrap, 'p', 'empty', 'Nenhum host cadastrado. Clique em "Novo host".');
     return;
   }
-  for (const [groupName, hosts] of groupedHosts()) {
+  for (const g of hostsAgrupados()) {
     const grp = el(wrap, 'div', 'host-group');
     const head = el(grp, 'div', 'host-group-header');
-    el(head, 'span', 'gname', groupName);
-    el(head, 'span', 'count', `${hosts.length} host(s)`);
-    const cards = el(grp, 'div', 'host-cards');
-    for (const h of hosts) cards.appendChild(hostCard(h));
+    el(head, 'span', 'gname', g.nome);
+    el(head, 'span', 'count', `${g.total} host(s)`);
+    if (g.diretos.length) {
+      const cards = el(grp, 'div', 'host-cards');
+      for (const h of g.diretos) cards.appendChild(hostCard(h));
+    }
+    for (const [sub, hosts] of g.subgrupos) {
+      const sg = el(grp, 'div', 'host-subgroup');
+      const shead = el(sg, 'div', 'host-subgroup-header');
+      el(shead, 'span', 'sgname', sub);
+      el(shead, 'span', 'count', `${hosts.length} host(s)`);
+      const cards = el(sg, 'div', 'host-cards');
+      for (const h of hosts) cards.appendChild(hostCard(h));
+    }
   }
 }
 
@@ -870,6 +871,7 @@ function openHostModal(existing) {
     <div class="grid2">
       <label>Nome <input id="f_name" required placeholder="ex.: web-01 Cliente A"></label>
       <label>Grupo (opcional) <input id="f_group" list="groupList" placeholder="ex.: Produção"><datalist id="groupList"></datalist></label>
+      <label>Subgrupo (opcional) <input id="f_subgroup" list="subgroupList" placeholder="ex.: Web"><datalist id="subgroupList"></datalist></label>
       <label>Protocolo
         <select id="f_protocol">
           <option value="ssh">SSH / SFTP (recomendado)</option>
@@ -969,7 +971,20 @@ function openHostModal(existing) {
 
   $('#f_name').value = existing ? existing.name : '';
   $('#f_group').value = (existing && existing.group) || '';
+  $('#f_subgroup').value = (existing && existing.subgroup) || '';
   $('#groupList').innerHTML = existingGroups().map((g) => `<option value="${g.replace(/"/g, '&quot;')}"></option>`).join('');
+  // Subgrupo depende do grupo: sem grupo o campo trava (mas NÃO apaga — quem
+  // limpa o grupo para retocar o nome não perde o que já digitou ao lado), e as
+  // sugestões são só os subgrupos que já existem DENTRO do grupo escolhido.
+  const syncSubgrupo = () => {
+    const g = $('#f_group').value.trim();
+    const inp = $('#f_subgroup');
+    inp.disabled = !g;
+    inp.placeholder = g ? 'ex.: Web' : 'preencha o grupo antes';
+    $('#subgroupList').innerHTML = existingSubgroups(g).map((s) => `<option value="${s.replace(/"/g, '&quot;')}"></option>`).join('');
+  };
+  $('#f_group').addEventListener('input', syncSubgrupo);
+  syncSubgrupo();
   $('#f_user').value = existing ? existing.username : '';
   $('#f_host').value = existing ? existing.host : '';
   $('#f_port').value = existing ? existing.port : 22;
@@ -1177,6 +1192,7 @@ function openHostModal(existing) {
     const body = {
       name: $('#f_name').value.trim(),
       group: $('#f_group').value.trim(),
+      subgroup: $('#f_subgroup').value.trim(),
       icon: selIcon,
       color: selColor,
       host: $('#f_host').value.trim(),
@@ -2777,6 +2793,7 @@ function xmlToConfig(text) {
           // como undefined, o JSON nem carrega a chave — e o servidor sabe
           // diferenciar "o arquivo não diz" de "apague isto".
           group: h.getAttribute('group') ?? undefined,
+          subgroup: h.getAttribute('subgroup') ?? undefined,
           icon: h.getAttribute('icon') ?? undefined,
           color: h.getAttribute('color') ?? undefined,
           // Esta lista já esqueceu RDP e VNC uma vez: enquanto ela viveu aqui
@@ -3482,7 +3499,10 @@ function renderHostSidebar() {
     // BUSCA: mostra todos os hosts que casam, agrupados — para conectar a qualquer um
     let shown = 0;
     for (const [groupName, hosts] of groupedHosts()) {
-      const matches = hosts.filter((h) => `${h.name} ${h.username}@${h.host}:${h.port}`.toLowerCase().includes(q));
+      // O rótulo ("Produção › Web") entra no casamento: buscar pelo nome do
+      // grupo ou do subgrupo acha os hosts dele — igual à aba Executar. Sem
+      // isso as duas buscas do app respondiam diferente à mesma palavra.
+      const matches = hosts.filter((h) => `${groupName} ${h.name} ${h.username}@${h.host}:${h.port}`.toLowerCase().includes(q));
       if (!matches.length) continue;
       const lbl = el(list, 'div', 'host-group-label');
       el(lbl, 'span', null, groupName);

@@ -878,6 +878,7 @@ function publicHost(h) {
     url: h.url || '',
     rdpLegadoOk: !!h.rdpLegadoOk,
     group: h.group || '',
+    subgroup: h.subgroup || '',
     icon: h.icon || '',
     color: h.color || '',
     agenda: h.agenda || null,
@@ -947,6 +948,10 @@ function parseHostBody(body, res) {
   const vars = cleanVars(body.vars, res);
   if (vars === null) return null;
   const group = String(body.group || '').trim().slice(0, 60);
+  // Subgrupo sem grupo não tem onde morar: um host "Sem grupo > Web" leria como
+  // dois lugares ao mesmo tempo. Grupo vazio zera o subgrupo, em vez de recusar
+  // — apagar o grupo na edição não pode virar erro por causa de um campo filho.
+  const subgroup = group ? String(body.subgroup || '').trim().slice(0, 60) : '';
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
@@ -973,7 +978,7 @@ function parseHostBody(body, res) {
     segredo = { cofre: apelido, id: idSegredo, cliente,
       rotulo: String(b2.rotulo || '').trim().slice(0, 200) };
   }
-  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, segredo, auth, vars };
+  return { name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, subgroup, icon, color, agenda, segredo, auth, vars };
 }
 
 // slug curto para ícone/cor do avatar (defensivo): só [a-z0-9-], até 24 chars
@@ -1108,6 +1113,7 @@ app.post('/api/import', (req, res) => {
       const protocol = protocolo;
       const ftps = proto.FTPS_MODOS.includes(h.ftps) ? h.ftps : 'auto';
       const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
+      const subgroup = opcional(h.subgroup, (v) => String(v).trim().slice(0, 60));
       const rdpDomain = opcional(h.rdpDomain, (v) => String(v).trim().slice(0, 80));
     // A URL passa pela MESMA validação do cadastro manual: o arquivo importado
     // é entrada não confiável e a URL vira `src` de um <webview> dentro do app.
@@ -1194,8 +1200,13 @@ app.post('/api/import', (req, res) => {
         }
         // Variáveis mesclam chave a chave, igual ao que já se faz com as globais:
         // um arquivo sem a variável X não é motivo para apagar o X daqui.
-        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, icon, color, agenda, segredo, auth }),
+        Object.assign(ex, soDefinidos({ name, host: hostAddr, port, username, protocol, ftps, rdpDomain, url, group, subgroup, icon, color, agenda, segredo, auth }),
           { vars: { ...(ex.vars || {}), ...vars } });
+        // A regra do cadastro vale para o RESULTADO da mesclagem: o arquivo pode
+        // trazer só o subgrupo (e o host daqui não ter grupo), ou apagar só o
+        // grupo (e o subgrupo ficar órfão). Nos dois casos, sem grupo não há
+        // onde pendurar o subgrupo.
+        if (!ex.group) ex.subgroup = '';
         summary.hosts.updated++;
       } else {
         // rdpLegadoOk fica de fora de propósito, pela mesma razão do fingerprint:
@@ -1204,7 +1215,8 @@ app.post('/api/import', (req, res) => {
         // webCert fica de fora pela mesma razão do fingerprint: é prova de
         // identidade aprendida NESTA máquina, não configuração.
         d.hosts.push({ id: crypto.randomUUID(), fingerprint: null, name, host: hostAddr, port, username, protocol, ftps,
-          rdpDomain: rdpDomain || '', url: url || '', group: group || '', icon: icon || '', color: color || '',
+          rdpDomain: rdpDomain || '', url: url || '', group: group || '',
+          subgroup: (group && subgroup) || '', icon: icon || '', color: color || '',
           agenda: agenda || null, segredo: segredo || null, auth, vars });
         summary.hosts.added++;
       }
