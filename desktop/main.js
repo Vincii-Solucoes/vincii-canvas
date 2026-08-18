@@ -84,6 +84,28 @@ if (!electronApp.requestSingleInstanceLock()) {
 
   let win = null;
 
+  // O seletor de pasta do backup: só existe sob Electron (dialog nativo). O
+  // motor de backup guarda esta função e a chama quando o usuário clica em
+  // "Escolher pasta…"; em `npm start` ela nunca é registrada e a tela sabe que
+  // precisa do caminho digitado. Mesmo padrão do safeStorage do cofre.
+  try {
+    const backup = require('../lib/backup');
+    backup.definirSeletor(async (inicial) => {
+      const r = await dialog.showOpenDialog(win || undefined, {
+        title: 'Pasta do backup automático',
+        defaultPath: inicial,
+        properties: ['openDirectory', 'createDirectory'],
+        buttonLabel: 'Usar esta pasta',
+      });
+      return (r.canceled || !r.filePaths || !r.filePaths[0]) ? null : r.filePaths[0];
+    });
+    // Restaurar um backup exige reiniciar o app, para tudo recarregar do
+    // data.json restaurado (store em memória, caches do servidor e do cofre).
+    backup.definirRelaunch(() => { electronApp.relaunch(); electronApp.exit(0); });
+  } catch (e) {
+    console.error('[backup] seletor/relaunch indisponível:', e && e.message);
+  }
+
   // Travas de TODO conteúdo web do app, registradas ANTES de existir janela
   // alguma.
   //

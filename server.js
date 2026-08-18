@@ -7,6 +7,7 @@ const os = require('os');
 const express = require('express');
 
 const store = require('./lib/store');
+const backup = require('./lib/backup');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
@@ -999,6 +1000,43 @@ function slug(v) {
 // Origin, então um site externo conseguiria disparar o download do arquivo COM
 // SEGREDOS na pasta de downloads do usuário. Com POST o Origin vem sempre, e a
 // guarda de origem barra. O front-end já baixa via fetch + Blob.
+// ---------- backup automático do data.json ----------
+// A rede contra a perda total (o único achado ALTO da auditoria): uma cópia
+// rotativa e datada do último estado bom, numa pasta que o usuário escolhe.
+app.get('/api/backup', (req, res) => res.json(backup.estado()));
+
+app.put('/api/backup', (req, res) => {
+  try { res.json(backup.aplicar(req.body || {})); }
+  catch (e) { return fail(res, 400, e.message); }
+});
+
+app.post('/api/backup/agora', (req, res) => {
+  const r = backup.rodarAgora();
+  if (r.feito) return res.json({ ok: true, ...backup.estado() });
+  const porque = r.motivo === 'desligado' ? 'O backup automático está desligado.'
+    : r.motivo === 'sem-dados' ? 'Ainda não há data.json para copiar.'
+      : r.motivo === 'origem-invalida' ? 'O data.json atual está ilegível — nada foi copiado.'
+        : (r.erro || 'Não foi possível fazer o backup.');
+  return fail(res, 400, porque);
+});
+
+// Abre o diálogo NATIVO de escolha de pasta (só sob Electron). Não grava nada:
+// devolve o caminho para a tela mostrar, e o usuário confirma com Salvar.
+app.post('/api/backup/escolher-pasta', async (req, res) => {
+  try {
+    const pasta = await backup.escolherPasta();
+    res.json({ pasta: pasta || null });
+  } catch (e) { return fail(res, 400, e.message); }
+});
+
+// Restaura o data.json a partir de uma cópia. Sobrescreve os dados atuais e
+// reinicia o app (sob Electron) — é o caminho de volta que faz o backup valer.
+app.post('/api/backup/restaurar', (req, res) => {
+  const r = backup.restaurar((req.body || {}).nome);
+  if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível restaurar.');
+  res.json({ ok: true, reiniciou: r.reiniciou });
+});
+
 app.post('/api/export.xml', (req, res) => {
   const includeSecrets = req.query.secrets === '1' || req.query.secrets === 'true';
   const xml = buildXml(store.get(), { exportedAt: new Date().toISOString(), includeSecrets });
@@ -1939,6 +1977,12 @@ function start(port = PORT, host = HOST) {
       // aplicação subir, não.
       try { dadosDeCofre.renovarSeVencido(); } catch (e) {
         console.error('[cofres] não deu para aquecer o cache na partida:', e && e.message);
+      }
+      // A cópia do último estado bom, ANTES de a sessão mexer em nada, mais o
+      // timer periódico. Protegido: uma falha de disco aqui não pode impedir o
+      // app de subir — o backup é rede, não pré-requisito.
+      try { backup.iniciar(); } catch (e) {
+        console.error('[backup] não deu para iniciar o backup automático:', e && e.message);
       }
       resolve(server);
     });

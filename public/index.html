@@ -463,6 +463,36 @@ try {
       <label class="check-danger"><input type="checkbox" id="exportSecrets"><span>Incluir <strong>senhas e chave da API</strong> no arquivo exportado (texto claro — guarde com cuidado)</span></label>
       <input type="file" id="importFile" accept=".xml,application/xml,text/xml" hidden>
     </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Backup automático</h2>
+        <label class="switch"><input type="checkbox" id="bkAtivo"><span>Ligado</span></label>
+      </div>
+      <p class="hint">Uma cópia fiel dos seus dados (hosts, senhas, cofres, playbooks — o <code>data.json</code> inteiro) é guardada automaticamente ao abrir o app e a cada 12&nbsp;horas. É a rede contra perder tudo se o arquivo principal corromper. Diferente do <strong>Exportar .xml</strong>, aqui a cópia é crua e completa — restaura exatamente o que você tinha.</p>
+      <div id="bkAviso" class="banner-warn" hidden></div>
+      <div class="grid2">
+        <label>Pasta das cópias
+          <div class="input-row">
+            <input id="bkPasta" placeholder="pasta padrão" spellcheck="false">
+            <button id="bkEscolher" type="button" class="btn">Escolher…</button>
+          </div>
+        </label>
+        <label>Manter as últimas
+          <div class="input-row">
+            <input id="bkManter" type="number" min="1" max="100" value="10" style="max-width:90px">
+            <span class="hint" style="margin:0">cópias (as mais antigas são apagadas)</span>
+          </div>
+        </label>
+      </div>
+      <p id="bkPadraoNota" class="hint" hidden></p>
+      <div class="btn-row" style="margin-top:12px">
+        <button id="bkSalvar" type="button" class="btn primary">Salvar</button>
+        <button id="bkAgora" type="button" class="btn">Fazer backup agora</button>
+        <span id="bkUltimo" class="hint" style="margin:0"></span>
+      </div>
+      <div id="bkCopias" class="bk-copias"></div>
+    </div>
     <div class="card largo">
       <h2>Área de trabalho remota (VNC e RDP)</h2>
       <p class="hint">Cadastre o host com protocolo <strong>VNC</strong> ou <strong>RDP</strong> em <strong>Hosts</strong> e clique nele na barra lateral do <strong>Terminal</strong> — a área de trabalho abre como mais uma aba.</p>

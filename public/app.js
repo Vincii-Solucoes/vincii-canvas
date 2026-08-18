@@ -5643,6 +5643,129 @@ async function loadConfigTab() {
   const cxLocal = $('#cfgAbrirLocal');
   if (cxLocal) cxLocal.checked = prefBool('abrirLocalSozinho');
   updateFontPreview();
+  loadBackupCard();
+}
+
+// ---------- backup automático ----------
+let bkPodeEscolher = false;
+
+function descreverQuando(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const dia = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const hora = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return `${dia} ${hora}`;
+}
+function tamanhoLegivel(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function loadBackupCard() {
+  let s;
+  try { s = await api('/api/backup'); } catch (e) { toast(e.message, 'erro'); return; }
+  bkPodeEscolher = s.podeEscolherPasta;
+  $('#bkAtivo').checked = s.ativo;
+  // Pasta padrão aparece como placeholder, não como valor: assim o usuário vê
+  // que "vazio = padrão" e não fica com um caminho longo colado no campo.
+  $('#bkPasta').value = s.naPastaPadrao ? '' : s.pasta;
+  $('#bkPasta').placeholder = s.pastaPadrao;
+  $('#bkManter').value = s.manter;
+  const nota = $('#bkPadraoNota');
+  nota.hidden = false;
+  nota.textContent = s.naPastaPadrao
+    ? `Pasta padrão: ${s.pastaPadrao}`
+    : `Padrão seria: ${s.pastaPadrao} — deixe o campo vazio para voltar a ela.`;
+  const botaoEscolher = $('#bkEscolher');
+  botaoEscolher.hidden = !bkPodeEscolher;
+  botaoEscolher.title = bkPodeEscolher ? '' : 'Disponível no app instalado — no modo web, digite o caminho.';
+
+  // O aviso de corrupção do arranque: era MUDO, e é o meio do achado da
+  // auditoria. Aparece uma vez, com o caminho da cópia preservada.
+  const aviso = $('#bkAviso');
+  if (s.arranque && s.arranque.tipo === 'corrompido') {
+    aviso.hidden = false;
+    aviso.textContent = `⚠ ${s.arranque.mensagem}`;
+  } else if (s.erro) {
+    aviso.hidden = false;
+    aviso.textContent = `⚠ ${s.erro}`;
+  } else {
+    aviso.hidden = true;
+  }
+
+  $('#bkUltimo').textContent = s.ultimo
+    ? `Último backup: ${descreverQuando(s.ultimo.quando)}`
+    : 'Nenhuma cópia ainda.';
+
+  const lista = $('#bkCopias');
+  lista.innerHTML = '';
+  if (!s.copias.length) {
+    el(lista, 'div', 'bk-vazio', 'Nenhuma cópia guardada nesta pasta ainda.');
+  } else {
+    for (const c of s.copias) {
+      const row = el(lista, 'div', 'bk-item');
+      el(row, 'span', 'bk-quando', descreverQuando(c.quando));
+      el(row, 'span', 'bk-tam', tamanhoLegivel(c.tamanho));
+      // Restaurar: o caminho de volta. Nome do arquivo via textContent (dado de
+      // disco), e a ação é destrutiva — confirma e explica o reinício.
+      const btn = el(row, 'button', 'btn small bk-restaurar', 'Restaurar');
+      btn.type = 'button';
+      btn.dataset.nome = c.nome;
+      btn.addEventListener('click', () => restaurarBackup(c.nome, c.quando));
+    }
+  }
+}
+
+async function restaurarBackup(nome, quando) {
+  const q = descreverQuando(quando);
+  if (!confirm(`Restaurar o backup de ${q}?\n\nOs dados ATUAIS serão substituídos por esta cópia, e o app vai reiniciar. `
+    + 'Faça isso quando o app tiver aberto vazio ou com dados errados.')) return;
+  try {
+    const r = await api('/api/backup/restaurar', { method: 'POST', body: { nome } });
+    if (r.reiniciou) {
+      toast('Restaurado — reiniciando o app…');
+    } else {
+      // Modo web: não há relaunch nativo. Recarrega a página para reler o estado.
+      toast('Restaurado. Recarregando…');
+      setTimeout(() => window.location.reload(), 800);
+    }
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+async function salvarBackup() {
+  const btn = $('#bkSalvar');
+  btn.disabled = true;
+  try {
+    await api('/api/backup', { method: 'PUT', body: {
+      ativo: $('#bkAtivo').checked,
+      pasta: $('#bkPasta').value.trim(),
+      manter: Number($('#bkManter').value) || 10,
+    } });
+    toast('Backup automático salvo.');
+    await loadBackupCard();
+  } catch (e) { toast(e.message, 'erro'); }
+  finally { btn.disabled = false; }
+}
+
+async function escolherPastaBackup() {
+  try {
+    const r = await api('/api/backup/escolher-pasta', { method: 'POST' });
+    if (r.pasta) { $('#bkPasta').value = r.pasta; toast('Pasta escolhida — clique em Salvar para aplicar.'); }
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+async function backupAgora() {
+  const btn = $('#bkAgora');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = 'Copiando…';
+  try {
+    await api('/api/backup/agora', { method: 'POST' });
+    toast('Backup feito.');
+    await loadBackupCard();
+  } catch (e) { toast(e.message, 'erro'); }
+  finally { btn.disabled = false; btn.textContent = old; }
 }
 
 // prévia ao vivo — lê os controles atuais, sem aplicar no terminal nem salvar
@@ -5862,6 +5985,9 @@ function init() {
   $('#cfgTermFont').addEventListener('change', updateFontPreview);
   $('#cfgTermSize').addEventListener('input', updateFontPreview);
   $('#cfgSaveTerm').addEventListener('click', saveTermAppearance);
+  $('#bkSalvar').addEventListener('click', salvarBackup);
+  $('#bkEscolher').addEventListener('click', escolherPastaBackup);
+  $('#bkAgora').addEventListener('click', backupAgora);
   $('#aiClear').addEventListener('click', () => { if (currentMode() === 'agent') agentResetFeed(); else aiReset(); });
   initAiModes();
   $('#agentStart').addEventListener('click', () => agentStart(false));
