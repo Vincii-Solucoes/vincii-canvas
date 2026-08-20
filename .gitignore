@@ -10,3 +10,7 @@ dist/
 .DS_Store
 
 .claude/
+
+# backups automáticos e sentinela (dados de runtime, nunca versionar)
+backups/
+.canvas-iniciado
