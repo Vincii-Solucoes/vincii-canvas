@@ -4124,6 +4124,9 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     const saida = window.serialLib.transformarEnvio(d, cfg.fimDeLinha);
     if (cfg.ecoLocal && ecoavel(d)) { try { term.write(d === '\r' ? '\r\n' : d); } catch {} }
     if (saida) escrever(encoder.encode(saida));
+    // Histórico: no Enter, lê a linha da tela e registra — igual ao SSH/Telnet.
+    // Só pega o que está VISÍVEL (device com eco, ou eco local), como sempre.
+    captureTyped(session, d);
   });
 
   // Leitura: um laço que joga o que chega da porta no xterm.
@@ -5319,6 +5322,9 @@ function insertCommand(cmd, run, opts = {}) {
     if (excedeuSerial) { toast('Comando longo demais para a porta serial.', 'erro'); return; }
     if (!s.serial.enviar(limpoSerial, !!run)) { toast('A porta serial não está aberta.', 'erro'); return; }
     if (mudouSerial && !run) toast('O comando tinha quebra de linha — foi inserido sem ela.', 'aviso');
+    // Rodou direto → registra (igual ao caminho normal); inserido sem rodar, a
+    // captura do Enter registra depois.
+    if (run) logHistory(s, limpoSerial, opts.source || 'ai', opts.origin || 'assistant');
     focusActive();
     return;
   }
@@ -5390,7 +5396,9 @@ function logHistory(session, command, source, origin) {
   const body = { command, source, origin };
   if (session.isLocal) body.local = true;
   else if (session.hostId) body.hostId = session.hostId;
-  else return; // sem contexto de host, não registra
+  // Serial não tem host: o contexto é a porta/parâmetros (o rótulo da aba).
+  else if (session.kind === 'serial') body.serial = { rotulo: session.hostName || 'Serial' };
+  else return; // sem contexto nenhum, não registra
   api('/api/history', { method: 'POST', body }).catch(() => {});
 }
 

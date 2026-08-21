@@ -747,7 +747,7 @@ app.post('/api/desktop/credencial', async (req, res) => {
 // ---------- histórico de comandos ----------
 // Resolve os metadados da máquina (nome/IP/usuário) a partir do host ou do local,
 // no servidor — o cliente nunca dita esses dados (evita spoofing e mantém consistência).
-function historyMeta(hostId, local) {
+function historyMeta(hostId, local, serial) {
   if (local) {
     let user = '';
     try { user = os.userInfo().username; } catch {}
@@ -759,6 +759,13 @@ function historyMeta(hostId, local) {
       local: true,
       hostId: null,
     };
+  }
+  // Serial: sem host nem IP — o "endereço" é a porta COM. O rótulo vem do
+  // renderer (ex.: "Serial 9600 8-N-1"), aparado, para a lista do histórico
+  // saber de onde o comando veio.
+  if (serial && typeof serial === 'object' && serial.rotulo) {
+    return { machine: String(serial.rotulo).slice(0, 80), ip: 'porta serial',
+      username: '', port: null, local: false, hostId: null };
   }
   const h = store.get().hosts.find((x) => x.id === hostId) || quickhosts.get(hostId) || dadosDeCofre.pegarHost(hostId);
   if (!h) return null;
@@ -826,7 +833,7 @@ app.get('/api/history', (req, res) => {
 
 app.post('/api/history', (req, res) => {
   const b = req.body || {};
-  const meta = historyMeta(b.hostId, b.local === true);
+  const meta = historyMeta(b.hostId, b.local === true, b.serial);
   if (!meta) return fail(res, 400, 'Host não encontrado.');
   const entry = history.add({ command: b.command, source: b.source, origin: b.origin, ...meta });
   if (!entry) return fail(res, 400, 'Comando vazio.');
