@@ -3980,7 +3980,9 @@ async function enumerarSerial() {
     const ports = await serialEmVoo;
     if (!ports.length) {
       if (sel) sel.innerHTML = '<option value="">Nenhuma porta encontrada</option>';
-      if (nota) nota.textContent = 'Conecte o cabo/adaptador e clique em Atualizar.';
+      // A causa de lista vazia muda por sistema (grupo dialout no Linux, driver
+      // no Windows, encaixe no mac) — a dica diz o que checar em cada um.
+      if (nota) nota.textContent = window.serialLib.dicaSemPortas(navigator.platform);
       return;
     }
     if (sel) {

@@ -76,7 +76,20 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
     'o resumo para a aba/histórico');
 }
 
-// ---------- 5. a ponte de escolha de porta ----------
+// ---------- 5. dica por plataforma quando a lista vem vazia ----------
+
+{
+  const dLinux = serial.dicaSemPortas('Linux x86_64');
+  ok(dLinux.includes('dialout'), 'Linux: a dica fala do grupo dialout — sem ele a porta nem lista');
+  ok(dLinux.includes('usermod'), 'e dá o comando pronto');
+  const dWin = serial.dicaSemPortas('Win32');
+  ok(dWin.includes('Gerenciador de Dispositivos'), 'Windows: aponta o driver no Gerenciador');
+  const dMac = serial.dicaSemPortas('MacIntel');
+  ok(dMac.includes('outra porta USB'), 'mac: encaixe/porta — visto ao vivo no dock do Ygor');
+  ok(serial.dicaSemPortas(undefined).length > 0, 'plataforma desconhecida ainda tem dica');
+}
+
+// ---------- 6. a ponte de escolha de porta ----------
 
 (async () => {
   ponte._reset();

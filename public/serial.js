@@ -91,10 +91,31 @@ function resumo(cfg) {
   return `${c.baudRate} ${c.dataBits}-${par}-${c.stopBits}`;
 }
 
+// Dica quando a enumeração volta VAZIA — por plataforma, porque a causa muda:
+// no Linux o clássico é permissão (o usuário precisa estar no grupo dialout;
+// sem isso a porta existe no /dev mas o Chromium nem lista), no Windows é
+// driver, e no mac é encaixe/porta (visto ao vivo com o dock do Ygor).
+function dicaSemPortas(plataforma) {
+  const p = String(plataforma || '');
+  if (/linux/i.test(p)) {
+    return 'Conecte o adaptador e clique em Atualizar. No Linux, seu usuário precisa '
+      + 'estar no grupo "dialout" (sudo usermod -a -G dialout $USER, e entre de novo '
+      + 'na sessão) — sem isso a porta nem aparece na lista.';
+  }
+  if (/win/i.test(p)) {
+    return 'Conecte o adaptador e clique em Atualizar. No Windows, se a porta COM não '
+      + 'aparecer, confira no Gerenciador de Dispositivos se o driver do adaptador '
+      + 'foi instalado (FTDI e CH340 costumam vir pelo Windows Update).';
+  }
+  return 'Conecte o cabo/adaptador e clique em Atualizar. Se não aparecer, tente '
+    + 'outra porta USB — encaixe ruim é a causa mais comum.';
+}
+
 const API = {
   BAUDS, DATA_BITS, PARIDADES, STOP_BITS, FLUXOS, FINS_DE_LINHA,
   ROTULO_PARIDADE, ROTULO_FLUXO, ROTULO_FIM, PADRAO,
   normalizarConfig, opcoesDeAbertura, transformarEnvio, rotuloDaPorta, resumo,
+  dicaSemPortas,
 };
 
 if (typeof window !== 'undefined') window.serialLib = API;
