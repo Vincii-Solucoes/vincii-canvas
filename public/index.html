@@ -480,10 +480,11 @@ try {
           </div>
         </label>
         <label>Manter as últimas
-          <div class="input-row">
-            <input id="bkManter" type="number" min="1" max="100" value="10" style="max-width:90px">
-            <span class="hint" style="margin:0">cópias (as mais antigas são apagadas)</span>
+          <div class="bk-manter">
+            <input id="bkManter" type="number" min="1" max="100" value="10">
+            <span class="bk-manter-suf">cópias</span>
           </div>
+          <span class="hint bk-manter-nota">As mais antigas são apagadas automaticamente.</span>
         </label>
       </div>
       <p id="bkPadraoNota" class="hint" hidden></p>

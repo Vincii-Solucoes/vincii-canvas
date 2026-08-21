@@ -1045,6 +1045,13 @@ app.post('/api/backup/restaurar', (req, res) => {
   res.json({ ok: true, reiniciou: r.reiniciou });
 });
 
+// Apaga uma cópia (o lixinho da lista). Não toca no data.json.
+app.post('/api/backup/apagar', (req, res) => {
+  const r = backup.apagar((req.body || {}).nome);
+  if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível apagar.');
+  res.json({ ok: true });
+});
+
 // ---------- serial (porta COM) via Web Serial ----------
 // A porta é aberta no renderer; o servidor só media a ESCOLHA da porta com o
 // seletor nativo do Electron (lib/serialbridge). Fora do Electron, `disponivel`

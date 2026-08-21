@@ -6091,8 +6091,23 @@ async function loadBackupCard() {
       btn.type = 'button';
       btn.dataset.nome = c.nome;
       btn.addEventListener('click', () => restaurarBackup(c.nome, c.quando));
+      // Lixinho: apaga só esta cópia.
+      const lixo = el(row, 'button', 'bk-apagar', '🗑');
+      lixo.type = 'button';
+      lixo.title = 'Apagar esta cópia';
+      lixo.setAttribute('aria-label', 'Apagar esta cópia');
+      lixo.addEventListener('click', () => apagarBackup(c.nome, c.quando));
     }
   }
+}
+
+async function apagarBackup(nome, quando) {
+  if (!confirm(`Apagar o backup de ${descreverQuando(quando)}?\n\nEsta cópia será removida do disco. Os seus dados atuais não são afetados.`)) return;
+  try {
+    await api('/api/backup/apagar', { method: 'POST', body: { nome } });
+    toast('Cópia apagada.');
+    await loadBackupCard();
+  } catch (e) { toast(e.message, 'erro'); }
 }
 
 async function restaurarBackup(nome, quando) {

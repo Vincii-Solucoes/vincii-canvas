@@ -217,6 +217,33 @@ const tick = () => (t += 60000);
   igual(backup.restaurar('canvas-data-inexistente.json').ok, false, 'cópia que não está na pasta é recusada');
 }
 
+// ---------- 10c. APAGAR: o lixinho, com a mesma guarda do restaurar ----------
+
+{
+  // pasta padrão de volta, e uma cópia real para apagar
+  store.get().settings.backup = { ativo: true, pasta: '', manter: 10 };
+  store.save();
+  const feito = backup.rodarAgora(tick());
+  ok(feito.feito, 'guardou uma cópia para o teste de apagar');
+  const alvo = feito.arquivo;
+  ok(lerCopias().some((c) => c.nome === alvo), 'a cópia está na listagem antes de apagar');
+
+  // recusa caminho hostil — NÃO apaga nada fora
+  igual(backup.apagar('../../etc/passwd').ok, false, 'apagar recusa ".."');
+  igual(backup.apagar('/etc/passwd').ok, false, 'apagar recusa caminho absoluto');
+  igual(backup.apagar('documento.txt').ok, false, 'apagar recusa nome que não é nosso');
+  igual(backup.apagar('canvas-data-fantasma.json').ok, false, 'apagar recusa cópia fora da pasta');
+  ok(lerCopias().some((c) => c.nome === alvo), 'a cópia real continua lá — nenhuma recusa a tocou');
+
+  // apaga a cópia de verdade, e só ela some
+  const antes = lerCopias().length;
+  const r = backup.apagar(alvo);
+  ok(r.ok, 'apagar aceita uma cópia da pasta');
+  ok(!lerCopias().some((c) => c.nome === alvo), 'a cópia sumiu do disco');
+  igual(lerCopias().length, antes - 1, 'sumiu exatamente uma');
+  igual(backup.apagar(alvo).ok, false, 'apagar de novo o que já foi é recusado (não está mais na pasta)');
+}
+
 // ---------- 11. arranque corrompido: o motor NÃO come as cópias boas ----------
 
 // Este é o achado grave: o app abre vazio, e sem esta guarda a rotação

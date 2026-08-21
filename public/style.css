@@ -442,7 +442,33 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .bk-copias .bk-item .bk-quando { color: var(--text); }
 .bk-copias .bk-item .bk-tam { margin-left: auto; }
 .bk-copias .bk-item .bk-restaurar { padding: 2px 10px; font-size: 11.5px; }
+/* Lixinho: discreto por padrão, vermelho ao passar o mouse — ação destrutiva. */
+.bk-copias .bk-item .bk-apagar {
+  background: none; border: 0; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 3px 5px; border-radius: 6px;
+  opacity: .55; filter: grayscale(1);
+  transition: opacity .12s, background .12s, filter .12s;
+}
+.bk-copias .bk-item .bk-apagar:hover {
+  opacity: 1; filter: none; background: color-mix(in srgb, var(--red) 18%, transparent);
+}
 .bk-copias .bk-vazio { color: var(--muted); font-size: 12.5px; padding: 6px 8px; }
+
+/* Contador "Manter as últimas": campo compacto com sufixo "cópias" colado, em
+   vez do número solto ao lado de um texto. */
+.bk-manter { display: inline-flex; align-items: stretch; margin-top: 4px; }
+.bk-manter input[type="number"] {
+  width: 64px; margin: 0; text-align: center;
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  border-right: 0;
+}
+.bk-manter-suf {
+  display: inline-flex; align-items: center; padding: 0 12px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-top-right-radius: var(--radius); border-bottom-right-radius: var(--radius);
+  color: var(--muted); font-size: 13px; white-space: nowrap;
+}
+.bk-manter-nota { display: block; margin-top: 6px; }
 
 .modal-root {
   display: none;
