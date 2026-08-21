@@ -8,6 +8,7 @@ const express = require('express');
 
 const store = require('./lib/store');
 const backup = require('./lib/backup');
+const serialbridge = require('./lib/serialbridge');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
@@ -1035,6 +1036,27 @@ app.post('/api/backup/restaurar', (req, res) => {
   const r = backup.restaurar((req.body || {}).nome);
   if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível restaurar.');
   res.json({ ok: true, reiniciou: r.reiniciou });
+});
+
+// ---------- serial (porta COM) via Web Serial ----------
+// A porta é aberta no renderer; o servidor só media a ESCOLHA da porta com o
+// seletor nativo do Electron (lib/serialbridge). Fora do Electron, `disponivel`
+// é false e a tela cai no seletor do próprio navegador.
+app.get('/api/serial/status', (req, res) => res.json({ disponivel: serialbridge.disponivel() }));
+
+app.post('/api/serial/modo', (req, res) => {
+  const b = req.body || {};
+  serialbridge.definirModo(b.modo, b.portId);
+  res.json({ ok: true });
+});
+
+app.get('/api/serial/ports', async (req, res) => {
+  const ports = await serialbridge.pendentes();
+  // Só o que a tela precisa mostrar/escolher — nada de handles do Chromium.
+  res.json({ ports: (ports || []).map((p) => ({
+    portId: p.portId, portName: p.portName, displayName: p.displayName,
+    manufacturer: p.manufacturer, path: p.path,
+  })) });
 });
 
 app.post('/api/export.xml', (req, res) => {

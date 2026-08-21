@@ -154,8 +154,36 @@ if (!electronApp.requestSingleInstanceLock()) {
       const ses = contents.session;
       if (ses && !ses.__vcPermissoesNegadas) {
         ses.__vcPermissoesNegadas = true;
-        ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-        ses.setPermissionCheckHandler(() => false);
+        // 'serial' é a ÚNICA permissão liberada, e SÓ para a janela principal
+        // (a UI do app). Um <webview> — que carrega painel de roteador, página
+        // remota — nunca ganha acesso à porta serial: `getType()` distingue a
+        // janela ('window') do webview ('webview'). Todo o resto segue negado.
+        const ehAppPrincipal = (wc) => {
+          try { return wc && typeof wc.getType === 'function' && wc.getType() !== 'webview'; }
+          catch { return false; }
+        };
+        ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === 'serial' && ehAppPrincipal(wc)));
+        ses.setPermissionCheckHandler((wc, perm) => perm === 'serial' && ehAppPrincipal(wc));
+        // Depois da permissão, o Chromium consulta isto para o dispositivo em si.
+        // Só serial, e só vindo da origem do próprio app (localhost) — reforço
+        // sobre a checagem de webContents acima.
+        ses.setDevicePermissionHandler((det) => {
+          const daApp = det && typeof det.origin === 'string'
+            && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(det.origin);
+          return det && det.deviceType === 'serial' && daApp;
+        });
+        // O seletor de porta: o Chromium dispara aqui e espera o callback. A
+        // ponte (lib/serialbridge) decide qual porta, comandada pela tela.
+        try {
+          const serialbridge = require('../lib/serialbridge');
+          ses.on('select-serial-port', (_event, portList, wc, callback) => {
+            if (!ehAppPrincipal(wc)) { callback(''); return; }
+            serialbridge.aoSelecionar(portList, callback);
+          });
+          serialbridge.marcarLigado();
+        } catch (e) {
+          console.error('[serial] ponte indisponível:', e && e.message);
+        }
       }
     });
   }

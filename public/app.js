@@ -2641,6 +2641,13 @@ function colarNaSessao(valor) {
     return;
   }
   // terminal: escreve sem executar, igual ao favorito — você revisa e dá Enter
+  // Serial não tem WebSocket: escreve direto na porta.
+  if (s.serial) {
+    const { texto: limpoSerial, mudou: mudouSerial } = sanearParaTerminal(texto);
+    if (!s.serial.enviar(limpoSerial, false)) { toast('A porta serial não está aberta.', 'erro'); return; }
+    if (mudouSerial) toast('A variável tinha quebra de linha — foi colada sem ela.', 'aviso');
+    return;
+  }
   if (!s.ws || s.ws.readyState !== WebSocket.OPEN) {
     toast('Abra uma conexão antes de colar.', 'erro');
     return;
@@ -3748,6 +3755,7 @@ function openQuickConnectModal() {
           <option value="rdp">RDP (área de trabalho do Windows)</option>
           <option value="vnc">VNC (área de trabalho remota)</option>
           <option value="telnet">Telnet (equipamentos legados)</option>
+          <option value="serial">Serial (porta COM)</option>
           <option value="web">Página web (gerência de roteador, painel)</option>
         </select>
       </label>
@@ -3776,8 +3784,28 @@ function openQuickConnectModal() {
         <label>Senha <input id="qc_password" type="password" autocomplete="new-password"></label>
       </div>
     </fieldset>
-    <label class="check-inline"><input type="checkbox" id="qc_save"> Salvar este host para reusar depois</label>
+    <fieldset id="qcSerialFs" hidden>
+      <legend>Porta serial</legend>
+      <label>Porta COM
+        <div class="input-row">
+          <select id="qc_serialPort"><option value="">Detectando portas…</option></select>
+          <button id="qc_serialRefresh" type="button" class="btn">Atualizar</button>
+        </div>
+      </label>
+      <p id="qc_serialNota" class="hint"></p>
+      <div class="grid2">
+        <label>Velocidade (baud) <select id="qc_baud"></select></label>
+        <label>Data bits <select id="qc_dataBits"></select></label>
+        <label>Paridade <select id="qc_parity"></select></label>
+        <label>Stop bits <select id="qc_stopBits"></select></label>
+        <label>Controle de fluxo <select id="qc_flow"></select></label>
+        <label>Fim de linha (Enter) <select id="qc_eol"></select></label>
+      </div>
+      <label class="check-inline"><input type="checkbox" id="qc_echo"> Eco local (mostrar o que você digita)</label>
+    </fieldset>
+    <label class="check-inline" id="qc_saveWrap"><input type="checkbox" id="qc_save"> Salvar este host para reusar depois</label>
   `);
+  montarSerialForm();
   const submit = $('#modalForm button[type=submit]');
   submit.textContent = 'Conectar';
   const syncQc = () => {
@@ -3792,15 +3820,24 @@ function openQuickConnectModal() {
     const proto = $('#qc_protocol').value;
     const isTelnet = proto === 'telnet';
     const ehTela = proto === 'vnc' || proto === 'rdp';
+    const ehSerial = proto === 'serial';
     $('#qc_telnetNote').hidden = !isTelnet;
+    // Serial não é conexão de REDE: não tem host, porta, usuário nem
+    // autenticação — só a porta COM e os parâmetros do fieldset próprio.
+    $('#qcSerialFs').hidden = !ehSerial;
+    for (const id of ['qc_host', 'qc_port', 'qc_user', 'qc_name']) {
+      mostrarCampo($('#' + id), !ehSerial || id === 'qc_name');
+    }
+    $('#qc_saveWrap').hidden = ehSerial; // serial é sempre avulso (a porta é local)
     // Área de trabalho e Telnet não usam chave/agente SSH: só senha (e o VNC
     // nem usuário).
     // Página web não tem login nenhum do lado do app: quem pede usuário e senha
     // é a própria página, no formulário dela. Nada de agente, chave ou senha.
     const ehWebProto = proto === 'web';
-    $('#qcAuthFs').hidden = isTelnet || ehTela || ehWebProto;
+    $('#qcAuthFs').hidden = isTelnet || ehTela || ehWebProto || ehSerial;
     $('#qc_telaSenhaWrap').hidden = !ehTela;
     $('#qc_telaNota').hidden = !ehTela;
+    if (ehSerial) { enumerarSerial(); return; }
     mostrarCampo($('#qc_user'), !(proto === 'vnc' || ehWebProto));
     // Numa página web a porta vem da URL digitada no campo de host.
     mostrarCampo($('#qc_port'), !ehWebProto);
@@ -3814,9 +3851,12 @@ function openQuickConnectModal() {
 
   $('#modalForm').onsubmit = async (ev) => {
     ev.preventDefault();
+    const protocol = $('#qc_protocol').value;
+    // Serial tem caminho próprio: nada de host/porta/servidor — abre a COM
+    // direto no renderer via Web Serial.
+    if (protocol === 'serial') { await conectarSerialDoForm(submit); return; }
     const host = $('#qc_host').value.trim();
     const username = $('#qc_user').value.trim();
-    const protocol = $('#qc_protocol').value;
     const ehTela = protocol === 'vnc' || protocol === 'rdp';
     if (!host) { toast('Informe host/IP.', 'erro'); return; }
     if (!username && protocol === 'ssh') { toast('Informe o usuário.', 'erro'); return; }
@@ -3855,6 +3895,227 @@ function openQuickConnectModal() {
       }
     } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
   };
+}
+
+// ---------- conexão serial (porta COM) via Web Serial ----------
+//
+// A porta é aberta AQUI no renderer (navigator.serial), sem servidor no meio —
+// é hardware local. O main do Electron só media a ESCOLHA da porta (lib/
+// serialbridge), para a tela ter um dropdown próprio em vez do seletor cru do
+// Chromium. Fora do Electron, cai no seletor do próprio navegador.
+
+let serialSuportado = null; // cache do /api/serial/status
+
+function preencherSelect(sel, itens, valorPadrao) {
+  if (!sel) return;
+  sel.innerHTML = '';
+  for (const it of itens) {
+    const o = el(sel, 'option', null, it.rotulo);
+    o.value = String(it.valor);
+  }
+  if (valorPadrao !== undefined) sel.value = String(valorPadrao);
+}
+
+function montarSerialForm() {
+  const L = window.serialLib;
+  if (!L) return;
+  preencherSelect($('#qc_baud'), L.BAUDS.map((b) => ({ valor: b, rotulo: String(b) })), L.PADRAO.baudRate);
+  preencherSelect($('#qc_dataBits'), L.DATA_BITS.map((b) => ({ valor: b, rotulo: String(b) })), L.PADRAO.dataBits);
+  preencherSelect($('#qc_parity'), L.PARIDADES.map((p) => ({ valor: p, rotulo: L.ROTULO_PARIDADE[p] })), L.PADRAO.parity);
+  preencherSelect($('#qc_stopBits'), L.STOP_BITS.map((b) => ({ valor: b, rotulo: String(b) })), L.PADRAO.stopBits);
+  preencherSelect($('#qc_flow'), L.FLUXOS.map((f) => ({ valor: f, rotulo: L.ROTULO_FLUXO[f] })), L.PADRAO.flowControl);
+  preencherSelect($('#qc_eol'), L.FINS_DE_LINHA.map((e) => ({ valor: e, rotulo: L.ROTULO_FIM[e] })), L.PADRAO.fimDeLinha);
+  const btn = $('#qc_serialRefresh');
+  if (btn) btn.addEventListener('click', enumerarSerial);
+}
+
+async function serialDisponivel() {
+  if (serialSuportado !== null) return serialSuportado;
+  if (typeof navigator === 'undefined' || !navigator.serial) { serialSuportado = false; return false; }
+  try { serialSuportado = !!(await api('/api/serial/status')).disponivel; }
+  catch { serialSuportado = false; }
+  return serialSuportado;
+}
+
+// Descobre as portas e enche o dropdown. Só roda sob Electron (onde o main
+// media): no navegador comum, a escolha da porta acontece no CONECTAR, pelo
+// seletor nativo do Chrome, e aqui só se mostra o aviso.
+async function enumerarSerial() {
+  const sel = $('#qc_serialPort');
+  const nota = $('#qc_serialNota');
+  if (!navigator.serial) {
+    if (sel) sel.innerHTML = '<option value="">Serial não suportado neste navegador</option>';
+    if (nota) nota.textContent = 'A conexão serial precisa do app instalado (ou de um navegador com Web Serial, como Chrome/Edge).';
+    return;
+  }
+  const nativo = await serialDisponivel();
+  if (!nativo) {
+    // navegador comum: sem dropdown; o Chrome pede a porta ao conectar.
+    if (sel) { sel.innerHTML = '<option value="">O navegador vai pedir a porta ao conectar</option>'; sel.disabled = true; }
+    if (nota) nota.textContent = 'Ao clicar em Conectar, o navegador abre o seletor de portas dele.';
+    return;
+  }
+  if (sel) { sel.disabled = false; sel.innerHTML = '<option value="">Detectando portas…</option>'; }
+  if (nota) nota.textContent = '';
+  try {
+    await api('/api/serial/modo', { method: 'POST', body: { modo: 'enumerar' } });
+    // Dispara o evento no main; a escolha é cancelada de propósito (só enumera).
+    navigator.serial.requestPort().catch(() => {});
+    const { ports } = await api('/api/serial/ports');
+    if (!ports.length) {
+      if (sel) sel.innerHTML = '<option value="">Nenhuma porta encontrada</option>';
+      if (nota) nota.textContent = 'Conecte o cabo/adaptador e clique em Atualizar.';
+      return;
+    }
+    if (sel) {
+      sel.innerHTML = '';
+      for (const p of ports) {
+        const o = el(sel, 'option', null, window.serialLib.rotuloDaPorta(p));
+        o.value = p.portId;
+      }
+    }
+  } catch (e) {
+    if (nota) nota.textContent = 'Não foi possível listar as portas: ' + e.message;
+  }
+}
+
+function lerConfigSerialDoForm() {
+  return window.serialLib.normalizarConfig({
+    baudRate: $('#qc_baud').value, dataBits: $('#qc_dataBits').value,
+    parity: $('#qc_parity').value, stopBits: $('#qc_stopBits').value,
+    flowControl: $('#qc_flow').value, fimDeLinha: $('#qc_eol').value,
+    ecoLocal: $('#qc_echo').checked,
+  });
+}
+
+async function conectarSerialDoForm(submit) {
+  if (!navigator.serial) { toast('Serial não é suportado aqui — use o app instalado.', 'erro'); return; }
+  const cfg = lerConfigSerialDoForm();
+  const rotuloAba = $('#qc_name').value.trim();
+  submit.disabled = true;
+  try {
+    let port;
+    const nativo = await serialDisponivel();
+    if (nativo) {
+      const portId = $('#qc_serialPort').value;
+      if (!portId) { toast('Escolha uma porta COM.', 'erro'); submit.disabled = false; return; }
+      await api('/api/serial/modo', { method: 'POST', body: { modo: 'abrir', portId } });
+      port = await navigator.serial.requestPort(); // o main seleciona o portId
+    } else {
+      // navegador comum: o próprio Chrome abre o seletor.
+      port = await navigator.serial.requestPort();
+    }
+    await port.open(window.serialLib.opcoesDeAbertura(cfg));
+    closeModal();
+    abrirSessaoSerial(port, cfg, rotuloAba);
+  } catch (e) {
+    // NotFoundError = o usuário cancelou o seletor; não é erro a gritar.
+    if (e && e.name === 'NotFoundError') { submit.disabled = false; return; }
+    toast('Serial: ' + (e && e.message ? e.message : e), 'erro');
+    submit.disabled = false;
+  }
+}
+
+// Cria uma aba de terminal ligada a uma porta serial já aberta. Reaproveita o
+// xterm (como SSH/Telnet), mas o transporte é o Web Serial, não o WebSocket.
+function abrirSessaoSerial(port, cfg, rotuloAba) {
+  document.querySelector('.tabs button[data-tab="terminal"]').click();
+  const id = ++sessionSeq;
+  const container = el($('#termContainers'), 'div', 'term-instance');
+  const term = new Terminal({
+    cursorBlink: true, fontSize: termFontSize, fontFamily: termFont,
+    theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1' },
+    scrollback: 5000,
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+
+  const nome = rotuloAba || ('Serial ' + window.serialLib.resumo(cfg));
+  const session = { id, hostId: null, hostName: nome, isLocal: false, kind: 'serial',
+    protocol: 'serial', term, fitAddon, container, status: 'conectando', serial: null };
+  session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
+  sessions.push(session);
+  setActiveSession(id);
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let writer = null;
+  let reader = null;
+  let vivo = true;
+
+  const encerrar = (motivo) => {
+    if (!vivo) return;
+    vivo = false;
+    session.status = 'encerrado';
+    try { if (motivo) term.write(`\r\n\x1b[33m${motivo}\x1b[0m\r\n`); } catch {}
+    renderTermTabs();
+  };
+
+  // Fecha tudo — chamado pelo closeSession quando a aba fecha.
+  session.serial = {
+    port,
+    // Usado pela colagem de variável e pelo inserir-comando da IA: escreve na
+    // porta. `executar` acrescenta o fim de linha configurado (o "Enter").
+    enviar: (texto, executar) => {
+      if (!vivo || !writer) return false;
+      try {
+        if (texto) writer.write(encoder.encode(texto));
+        if (executar) {
+          const eol = window.serialLib.transformarEnvio('\r', cfg.fimDeLinha);
+          if (eol) writer.write(encoder.encode(eol));
+        }
+        return true;
+      } catch { return false; }
+    },
+    fechar: () => {
+      vivo = false;
+      try { if (reader) reader.cancel().catch(() => {}); } catch {}
+      try { if (writer) { writer.releaseLock(); } } catch {}
+      // O close() precisa dos locks liberados; adiado para o próximo tick.
+      setTimeout(() => { try { port.close().catch(() => {}); } catch {} }, 0);
+    },
+  };
+
+  // Escrita: o que a pessoa digita vai para a porta, com o Enter virando o fim
+  // de linha escolhido; eco local opcional.
+  try { writer = port.writable.getWriter(); } catch (e) { encerrar('Porta sem canal de escrita: ' + e.message); }
+  term.onData((d) => {
+    if (!vivo || !writer) return;
+    const saida = window.serialLib.transformarEnvio(d, cfg.fimDeLinha);
+    if (cfg.ecoLocal) { try { term.write(d === '\r' ? '\r\n' : d); } catch {} }
+    if (saida) { try { writer.write(encoder.encode(saida)); } catch {} }
+  });
+
+  // Leitura: um laço que joga o que chega da porta no xterm.
+  (async () => {
+    try {
+      session.status = 'conectado';
+      term.write(`\x1b[32mPorta serial aberta — ${window.serialLib.resumo(cfg)}\x1b[0m\r\n`);
+      renderTermTabs();
+      while (vivo && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value && value.length) term.write(decoder.decode(value, { stream: true }));
+          }
+        } catch (e) {
+          if (vivo) encerrar('A porta caiu: ' + (e && e.message ? e.message : e));
+          break;
+        } finally {
+          try { reader.releaseLock(); } catch {}
+        }
+      }
+      if (vivo) encerrar('A porta foi encerrada.');
+    } catch (e) {
+      encerrar('Erro na leitura: ' + (e && e.message ? e.message : e));
+    }
+  })();
+
+  setTimeout(() => { try { fitAddon.fit(); } catch {} }, 60);
+  return session;
 }
 
 // O tipo de segurança do RDP é detectado pelo servidor, não escolhido pelo
@@ -4374,6 +4635,9 @@ function closeSession(id, opts = {}) {
     return;
   }
   if (s.desk) { try { s.desk.desconectar(); } catch {} s.desk = null; }
+  // Serial: cancela o reader e fecha a porta COM — senão o dispositivo fica
+  // preso ao app e nenhum outro programa (nem o próprio app) reabre a porta.
+  if (s.serial) { try { s.serial.fechar(); } catch {} s.serial = null; }
   // fechar a aba precisa PARAR o agente daquela sessão: sem isto ele seguia
   // rodando no servidor e o EventSource ficava aberto para sempre
   if (s.ai && s.ai.agent) {
@@ -5007,6 +5271,15 @@ function termSnapshot() {
 
 function insertCommand(cmd, run, opts = {}) {
   const s = activeSession();
+  // Serial: escreve na porta (o "Enter" vira o fim de linha configurado).
+  if (s && s.serial) {
+    const { texto: limpoSerial, mudou: mudouSerial, excedeu: excedeuSerial } = sanearParaTerminal(cmd);
+    if (excedeuSerial) { toast('Comando longo demais para a porta serial.', 'erro'); return; }
+    if (!s.serial.enviar(limpoSerial, !!run)) { toast('A porta serial não está aberta.', 'erro'); return; }
+    if (mudouSerial && !run) toast('O comando tinha quebra de linha — foi inserido sem ela.', 'aviso');
+    focusActive();
+    return;
+  }
   if (!s || !s.ws || s.ws.readyState !== WebSocket.OPEN) {
     toast('Abra uma conexão antes de inserir o comando.', 'erro');
     return;
