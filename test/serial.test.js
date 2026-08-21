@@ -116,6 +116,21 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
     igual(escolhido, '', 'id que não está na lista é recusado — nada de mandar id inventado ao Chromium');
   }
 
+  // trocar de modo com um /api/serial/ports pendente RESOLVE ele — senão a
+  // enumeração abandonada penduraria até o timeout (achado da revisão).
+  {
+    ponte._reset(); ponte.marcarLigado();
+    ponte.definirModo('enumerar');
+    ponte.aoSelecionar(LISTA, () => {}); // preenche ultimaLista, sem waiter ainda
+    ponte.definirModo('enumerar');
+    const espera = ponte.pendentes(3000);
+    const t0 = Date.now();
+    ponte.definirModo('abrir', 'p1'); // troca de modo: deve resolver o waiter na hora
+    const lista = await espera;
+    ok(Date.now() - t0 < 500, 'trocar de modo resolve o /api/serial/ports pendente SEM esperar o timeout');
+    igual(lista.map((p) => p.portId), ['p1', 'p2'], 'e devolve a última lista conhecida');
+  }
+
   // pendentes() sem evento: não pendura para sempre; devolve o que tiver.
   {
     ponte.definirModo('enumerar');

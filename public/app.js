@@ -2643,7 +2643,10 @@ function colarNaSessao(valor) {
   // terminal: escreve sem executar, igual ao favorito — você revisa e dá Enter
   // Serial não tem WebSocket: escreve direto na porta.
   if (s.serial) {
-    const { texto: limpoSerial, mudou: mudouSerial } = sanearParaTerminal(texto);
+    const { texto: limpoSerial, mudou: mudouSerial, excedeu: excedeuSerial } = sanearParaTerminal(texto);
+    // Truncar em silêncio manda um comando pela metade ao equipamento — recusa,
+    // como o caminho do WebSocket e o inserir-comando fazem.
+    if (excedeuSerial) { toast('A variável é longa demais para colar de uma vez na porta serial.', 'erro'); return; }
     if (!s.serial.enviar(limpoSerial, false)) { toast('A porta serial não está aberta.', 'erro'); return; }
     if (mudouSerial) toast('A variável tinha quebra de linha — foi colada sem ela.', 'aviso');
     return;
@@ -3940,7 +3943,16 @@ async function serialDisponivel() {
 // Descobre as portas e enche o dropdown. Só roda sob Electron (onde o main
 // media): no navegador comum, a escolha da porta acontece no CONECTAR, pelo
 // seletor nativo do Chrome, e aqui só se mostra o aviso.
+//
+// A ponte usa UM modo global por vez, e cada requestPort() dispara um evento
+// assíncrono no main. Se enumerar e abrir se sobrepusessem, os eventos casariam
+// com a chamada errada (o Conectar receberia o cancelamento da enumeração e
+// falharia calado). Por isso serializa-se: só um requestPort em voo, e o
+// Conectar espera a enumeração terminar.
+let serialEmVoo = null;
+
 async function enumerarSerial() {
+  if (serialEmVoo) { try { await serialEmVoo; } catch { /* segue */ } }
   const sel = $('#qc_serialPort');
   const nota = $('#qc_serialNota');
   if (!navigator.serial) {
@@ -3957,11 +3969,15 @@ async function enumerarSerial() {
   }
   if (sel) { sel.disabled = false; sel.innerHTML = '<option value="">Detectando portas…</option>'; }
   if (nota) nota.textContent = '';
-  try {
+  serialEmVoo = (async () => {
     await api('/api/serial/modo', { method: 'POST', body: { modo: 'enumerar' } });
     // Dispara o evento no main; a escolha é cancelada de propósito (só enumera).
     navigator.serial.requestPort().catch(() => {});
     const { ports } = await api('/api/serial/ports');
+    return ports;
+  })();
+  try {
+    const ports = await serialEmVoo;
     if (!ports.length) {
       if (sel) sel.innerHTML = '<option value="">Nenhuma porta encontrada</option>';
       if (nota) nota.textContent = 'Conecte o cabo/adaptador e clique em Atualizar.';
@@ -3976,6 +3992,8 @@ async function enumerarSerial() {
     }
   } catch (e) {
     if (nota) nota.textContent = 'Não foi possível listar as portas: ' + e.message;
+  } finally {
+    serialEmVoo = null;
   }
 }
 
@@ -3999,6 +4017,9 @@ async function conectarSerialDoForm(submit) {
     if (nativo) {
       const portId = $('#qc_serialPort').value;
       if (!portId) { toast('Escolha uma porta COM.', 'erro'); submit.disabled = false; return; }
+      // Espera qualquer enumeração em voo terminar antes de armar o modo 'abrir'
+      // — senão o evento da enumeração casaria com este requestPort e vice-versa.
+      if (serialEmVoo) { try { await serialEmVoo; } catch { /* segue */ } }
       await api('/api/serial/modo', { method: 'POST', body: { modo: 'abrir', portId } });
       port = await navigator.serial.requestPort(); // o main seleciona o portId
     } else {
@@ -4060,10 +4081,10 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     enviar: (texto, executar) => {
       if (!vivo || !writer) return false;
       try {
-        if (texto) writer.write(encoder.encode(texto));
+        if (texto) escrever(encoder.encode(texto));
         if (executar) {
           const eol = window.serialLib.transformarEnvio('\r', cfg.fimDeLinha);
-          if (eol) writer.write(encoder.encode(eol));
+          if (eol) escrever(encoder.encode(eol));
         }
         return true;
       } catch { return false; }
@@ -4080,11 +4101,29 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
   // Escrita: o que a pessoa digita vai para a porta, com o Enter virando o fim
   // de linha escolhido; eco local opcional.
   try { writer = port.writable.getWriter(); } catch (e) { encerrar('Porta sem canal de escrita: ' + e.message); }
+
+  // writer.write() NÃO lança quando a porta caiu: devolve uma promise
+  // REJEITADA. Um try/catch síncrono não a pega, e a rejeição vira "unhandled".
+  // Aqui ela é tratada: a porta caiu no meio de uma escrita → encerra a sessão,
+  // uma vez (encerrar é idempotente).
+  const escrever = (bytes) => {
+    if (!vivo || !writer) return;
+    try {
+      const p = writer.write(bytes);
+      if (p && typeof p.catch === 'function') p.catch((e) => encerrar('A porta caiu ao escrever: ' + (e && e.message ? e.message : e)));
+    } catch (e) { encerrar('A porta caiu ao escrever: ' + (e && e.message ? e.message : e)); }
+  };
+
+  // O eco local só reflete o que é SEGURO imprimir: Enter e caracteres visíveis.
+  // Ecoar bytes crus fazia backspace não apagar e setas (ESC[A…) andarem o
+  // cursor — o xterm INTERPRETA sequências de controle recebidas, embaralhando
+  // a tela em vez de "mostrar o que você digita".
+  const ecoavel = (d) => d === '\r' || (d.length >= 1 && !/[\x00-\x1f\x7f]/.test(d));
   term.onData((d) => {
     if (!vivo || !writer) return;
     const saida = window.serialLib.transformarEnvio(d, cfg.fimDeLinha);
-    if (cfg.ecoLocal) { try { term.write(d === '\r' ? '\r\n' : d); } catch {} }
-    if (saida) { try { writer.write(encoder.encode(saida)); } catch {} }
+    if (cfg.ecoLocal && ecoavel(d)) { try { term.write(d === '\r' ? '\r\n' : d); } catch {} }
+    if (saida) escrever(encoder.encode(saida));
   });
 
   // Leitura: um laço que joga o que chega da porta no xterm.
@@ -5117,7 +5156,10 @@ function renderTermTabs() {
         ind.title = s.ai.agent.needsApproval ? 'Agente aguardando sua aprovação' : 'Agente de IA em execução';
       }
       // Soltar em janela própria. Não aparece numa janela que já é solta.
-      if (!MODO_SOLO) {
+      // Serial NÃO solta em janela: a porta COM é hardware local ligado a ESTE
+      // renderer, e o handle do Web Serial não se transfere entre janelas —
+      // soltar só fecharia a porta e abriria uma aba morta na janela nova.
+      if (!MODO_SOLO && s.kind !== 'serial') {
         const solta = el(tab, 'span', 'tab-solta', '↗');
         solta.title = 'Abrir esta aba numa janela própria';
         solta.addEventListener('click', (e) => { e.stopPropagation(); soltarEmJanela(s.id); });
