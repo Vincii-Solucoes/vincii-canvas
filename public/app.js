@@ -4130,6 +4130,7 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     // Só pega o que está VISÍVEL (device com eco, ou eco local), como sempre.
     captureTyped(session, d);
   });
+  habilitarBotaoDireito(session); // botão direito: copia/cola como os outros terminais
 
   // Leitura: um laço que joga o que chega da porta no xterm.
   (async () => {
@@ -4538,6 +4539,57 @@ function createDeskSession({ hostId, hostName, protocol }) {
   return session;
 }
 
+// Botão direito no terminal: com seleção COPIA, sem seleção COLA — como PuTTY e
+// os terminais de sempre. Vale para todo terminal de texto (SSH, Telnet, local,
+// serial): a colagem passa por `term.paste`, que dispara o mesmo `onData` de
+// cada tipo (WebSocket no SSH, escrita na porta no serial) e respeita o
+// bracketed-paste do shell. Diferente do "colar variável", aqui o clipboard é
+// do PRÓPRIO usuário e vai CRU — colar um bloco de config com várias linhas é
+// justamente o uso que se espera de um console.
+function copiarParaClipboard(texto) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(texto).catch(() => copiarPorTextarea(texto));
+  }
+  copiarPorTextarea(texto);
+  return Promise.resolve();
+}
+function copiarPorTextarea(texto) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = texto;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch { /* sem clipboard: nada a fazer */ }
+}
+function habilitarBotaoDireito(session) {
+  const { term, container } = session;
+  if (!term || !container) return;
+  container.addEventListener('contextmenu', async (e) => {
+    e.preventDefault();
+    if (term.hasSelection && term.hasSelection()) {
+      const sel = term.getSelection();
+      if (sel) { await copiarParaClipboard(sel); term.clearSelection(); }
+      return;
+    }
+    // sem seleção → cola o clipboard do usuário no terminal
+    let texto = '';
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) texto = await navigator.clipboard.readText();
+    } catch { texto = ''; }
+    // Fallback: se o navigator.clipboard foi barrado (ou veio vazio por
+    // permissão), lê pelo clipboard do Electron via servidor.
+    if (!texto) {
+      try { texto = ((await api('/api/clipboard')) || {}).texto || ''; } catch { texto = ''; }
+    }
+    if (!texto) return;
+    try { term.paste(texto); } catch { /* aba fechando */ }
+  });
+}
+
 function createSession({ hostId, hostName, isLocal, reatarId }) {
   const id = ++sessionSeq;
   const container = el($('#termContainers'), 'div', 'term-instance');
@@ -4559,6 +4611,7 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
     captureTyped(session, d);
   });
   term.onResize(({ cols, rows }) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'r', cols, rows })); });
+  habilitarBotaoDireito(session);
   sessions.push(session);
   setActiveSession(id);
   // só conecta quando o xterm já tem tamanho real (senão o pty nasce estreito)

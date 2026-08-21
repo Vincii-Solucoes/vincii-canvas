@@ -154,16 +154,20 @@ if (!electronApp.requestSingleInstanceLock()) {
       const ses = contents.session;
       if (ses && !ses.__vcPermissoesNegadas) {
         ses.__vcPermissoesNegadas = true;
-        // 'serial' é a ÚNICA permissão liberada, e SÓ para a janela principal
-        // (a UI do app). Um <webview> — que carrega painel de roteador, página
-        // remota — nunca ganha acesso à porta serial: `getType()` distingue a
+        // 'serial' e o clipboard são as ÚNICAS permissões liberadas, e SÓ para a
+        // janela principal (a UI do app). Um <webview> — que carrega painel de
+        // roteador, página remota — nunca as ganha: `getType()` distingue a
         // janela ('window') do webview ('webview'). Todo o resto segue negado.
+        // O clipboard é para o copiar/colar do terminal com o botão direito
+        // (ler para colar, escrever ao copiar) — ação do próprio usuário, na UI
+        // do app; um webview remoto continua sem tocar a área de transferência.
+        const PERMITIDAS = new Set(['serial', 'clipboard-read', 'clipboard-sanitized-write']);
         const ehAppPrincipal = (wc) => {
           try { return wc && typeof wc.getType === 'function' && wc.getType() !== 'webview'; }
           catch { return false; }
         };
-        ses.setPermissionRequestHandler((wc, perm, cb) => cb(perm === 'serial' && ehAppPrincipal(wc)));
-        ses.setPermissionCheckHandler((wc, perm) => perm === 'serial' && ehAppPrincipal(wc));
+        ses.setPermissionRequestHandler((wc, perm, cb) => cb(PERMITIDAS.has(perm) && ehAppPrincipal(wc)));
+        ses.setPermissionCheckHandler((wc, perm) => PERMITIDAS.has(perm) && ehAppPrincipal(wc));
         // Depois da permissão, o Chromium consulta isto para o dispositivo em si.
         // Só serial, e só vindo da origem do próprio app (localhost) — reforço
         // sobre a checagem de webContents acima.

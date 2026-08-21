@@ -1051,6 +1051,15 @@ app.post('/api/backup/restaurar', (req, res) => {
 // é false e a tela cai no seletor do próprio navegador.
 app.get('/api/serial/status', (req, res) => res.json({ disponivel: serialbridge.disponivel() }));
 
+// Clipboard do Electron — fallback do copiar/colar por botão direito quando o
+// navigator.clipboard do renderer é barrado pela política de permissão. Só
+// funciona sob Electron (no `npm start` puro, require('electron') é um caminho,
+// não o módulo — daí a checagem de função). Nunca expõe nada de terceiros: é a
+// área de transferência da própria máquina do usuário, na ação dele.
+let _clipboard = null;
+try { const e = require('electron'); if (e && e.clipboard && typeof e.clipboard.readText === 'function') _clipboard = e.clipboard; } catch { /* fora do Electron */ }
+app.get('/api/clipboard', (req, res) => res.json({ texto: _clipboard ? _clipboard.readText() : '' }));
+
 app.post('/api/serial/modo', (req, res) => {
   const b = req.body || {};
   serialbridge.definirModo(b.modo, b.portId);
