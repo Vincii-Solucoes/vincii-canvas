@@ -384,20 +384,9 @@ try {
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
-         (?solo=1&tipo=monitor). O endereço é informado DENTRO da janela. -->
+         (?solo=1&tipo=monitor&ip=...). O endereço vem do pop-up no principal;
+         aqui NÃO há campo nem botão para abrir/trocar de host. -->
     <div id="toolsMonitor" hidden>
-      <!-- Antes de começar: pede o host (um por janela). -->
-      <div id="monEntrada" class="mon-entrada">
-        <h2>📡 Monitorador de IP</h2>
-        <p class="hint">Informe o endereço para começar. Esta janela vigia <strong>um host</strong>. Para vigiar outro, abra outro monitor.</p>
-        <div class="input-row" style="max-width:460px">
-          <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false" autofocus>
-          <button id="monIniciar" type="button" class="btn primary">Iniciar</button>
-        </div>
-      </div>
-
-      <!-- Depois de iniciar: o monitor propriamente dito. -->
-      <div id="monPainel" hidden>
       <div class="mon-cab">
         <span id="monDot" class="mon-dot"></span>
         <span id="monHost" class="mon-host"></span>
@@ -415,8 +404,7 @@ try {
         <button id="monSilenciar" type="button" class="btn">🔇 Silenciar</button>
       </div>
       <div id="monTerm" class="mon-term"></div>
-      </div><!-- #monPainel -->
-    </div><!-- #toolsMonitor -->
+    </div>
   </section>
 
   <section id="tab-config" class="tab-panel">

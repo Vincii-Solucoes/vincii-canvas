@@ -490,9 +490,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-bloqueio { font-size: 11px; color: var(--muted); margin-left: auto; }
 /* a janela solta do monitor: sem o teto de largura das outras abas */
 .modo-solo #tab-tools { max-width: none; padding: 12px 14px; }
-.mon-entrada { padding: 8px 2px; }
-.mon-entrada h2 { margin: 0 0 6px; }
-#monPainel { display: flex; flex-direction: column; height: calc(100vh - 24px); gap: 10px; }
+#toolsMonitor { display: flex; flex-direction: column; height: calc(100vh - 24px); gap: 10px; }
 
 .mon-cab { display: flex; align-items: center; gap: 10px; }
 .mon-cab .mon-host { font-size: 18px; font-weight: 700; color: var(--text); font-family: var(--mono); }

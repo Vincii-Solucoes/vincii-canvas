@@ -6043,12 +6043,28 @@ function onToolsTabShown() {
   if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
 }
 
-// O tile abre o monitor numa janela própria (SEM host ainda — o endereço é
-// informado dentro dela). `_blank` deixa abrir uma por host.
+// O tile pergunta o host AQUI, no Canvas principal (pop-up), e a janela nasce
+// JÁ monitorando — sem campo nem botão de "abrir" dentro dela. `_blank` deixa
+// abrir uma janela por host.
 function abrirMonitorEmJanela() {
-  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', nome: 'Monitorador de IP' }).toString();
-  const janela = window.open(url, '_blank', 'width=600,height=560');
-  try { if (janela) janela.focus(); } catch { /* ok */ }
+  openModal('Monitorar um host', `
+    <p class="hint">Abre uma janela que fica pingando este endereço — terminal ao vivo, cronômetro e perda de pacotes, com sirene quando cai. <strong>Uma janela por host.</strong></p>
+    <label>IP ou host
+      <input id="monModalIp" placeholder="ex.: 192.168.0.1, roteador.local" spellcheck="false" required>
+    </label>
+  `);
+  const submit = $('#modalForm button[type=submit]');
+  submit.textContent = 'Abrir monitor ↗';
+  setTimeout(() => { try { $('#monModalIp').focus(); } catch {} }, 40);
+  $('#modalForm').onsubmit = (ev) => {
+    ev.preventDefault();
+    const ip = $('#monModalIp').value.trim();
+    if (!ip) { toast('Informe um IP ou host.', 'erro'); return; }
+    closeModal();
+    const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', ip, nome: ip }).toString();
+    const janela = window.open(url, '_blank', 'width=600,height=560');
+    try { if (janela) janela.focus(); } catch { /* ok */ }
+  };
 }
 
 // --- dentro da janela solta: o monitor de UM host ---
@@ -6063,12 +6079,11 @@ let monAudioCtx = null;
 let monOsc = null;
 let monVarredura = null;
 
-// Prepara a janela solta do monitor: mostra o painel e liga a caixa de host.
-// Se veio um ip na URL (atalho), começa direto; senão espera o "Iniciar".
+// A janela solta do monitor: mostra o painel e começa a vigiar o host da URL.
+// O endereço vem do pop-up no Canvas principal — aqui não há como escolher.
 function abrirMonitorSolo() {
-  const painel = $('#toolsMonitor');
   if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
-  if (painel) painel.hidden = false;
+  if ($('#toolsMonitor')) $('#toolsMonitor').hidden = false;
   $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
   document.body.classList.remove('term-full');
 
@@ -6077,25 +6092,14 @@ function abrirMonitorSolo() {
   document.addEventListener('click', destravar, { once: true });
   document.addEventListener('keydown', destravar, { once: true });
 
-  const iniciar = () => {
-    const ip = $('#monIp').value.trim();
-    if (!ip) { toast('Informe um IP ou host.', 'erro'); return; }
-    iniciarMonitor(ip);
-  };
-  $('#monIniciar').addEventListener('click', iniciar);
-  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
-  setTimeout(() => { try { $('#monIp').focus(); } catch {} }, 40);
-
-  // Atalho: /?...&ip=... já começa monitorando (o tile não passa ip).
-  const ipUrl = new URLSearchParams(location.search).get('ip');
-  if (ipUrl) { $('#monIp').value = ipUrl; iniciarMonitor(ipUrl); }
+  const ip = new URLSearchParams(location.search).get('ip');
+  if (!ip) { $('#monHost').textContent = '(sem endereço)'; monTermLinha('Abra o monitor pelo tile em Ferramentas.', 'erro'); return; }
+  iniciarMonitor(ip);
 }
 
-// Começa a vigiar UM host nesta janela: troca a caixa de endereço pelo monitor.
+// Começa a vigiar o host desta janela.
 function iniciarMonitor(ip) {
   monIp = ip;
-  $('#monEntrada').hidden = true;
-  $('#monPainel').hidden = false;
   $('#monHost').textContent = monIp;
   document.title = monIp + ' — Monitor';
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
@@ -6111,7 +6115,7 @@ function iniciarMonitor(ip) {
       monTimerRelogio = setInterval(atualizarRelogio, 1000);
       monPollDetalhe();
     })
-    .catch((e) => { $('#monEntrada').hidden = false; $('#monPainel').hidden = true; toast('Não foi possível iniciar: ' + e.message, 'erro'); });
+    .catch((e) => monTermLinha('Não foi possível iniciar: ' + e.message, 'erro'));
 }
 
 async function monPollDetalhe() {
