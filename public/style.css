@@ -470,55 +470,47 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .bk-manter-nota { display: block; margin-top: 6px; }
 
-/* ---------- Ferramentas: lançador (tiles) ---------- */
-.tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.tool-tile {
-  display: flex; align-items: center; gap: 14px; text-align: left;
-  padding: 18px; border-radius: 12px; cursor: pointer;
-  background: var(--panel2); border: 1px solid var(--border); color: var(--text);
-  transition: border-color .12s, transform .06s, background .12s;
-}
-.tool-tile:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel2)); }
-.tool-tile:active { transform: translateY(1px); }
-.tool-tile .tool-ico { font-size: 30px; line-height: 1; flex: none; }
-.tool-tile .tool-corpo { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
-.tool-tile .tool-nome { font-weight: 700; font-size: 15px; }
-.tool-tile .tool-desc { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
-.tool-tile .tool-abrir { flex: none; font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+/* ---------- Ferramentas: monitorador de IP (uma janela por host) ---------- */
+.mon-bloqueio { font-size: 11px; color: var(--muted); margin-left: auto; }
+/* a janela solta do monitor: sem o teto de largura das outras abas */
+.modo-solo #tab-tools { max-width: none; padding: 12px 14px; }
+#toolsMonitor { display: flex; flex-direction: column; height: calc(100vh - 24px); gap: 10px; }
 
-/* ---------- Ferramentas: monitorador de IP ---------- */
-.mon-bloqueio { font-size: 12px; color: var(--muted); }
-.mon-lista { margin-top: 16px; display: flex; flex-direction: column; gap: 4px; }
-.mon-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 9px 12px; border-radius: 8px; background: var(--panel2);
-  font-family: var(--mono); font-size: 13px;
+.mon-cab { display: flex; align-items: center; gap: 10px; }
+.mon-cab .mon-host { font-size: 18px; font-weight: 700; color: var(--text); font-family: var(--mono); }
+.mon-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--muted); }
+.mon-dot.ok { background: var(--green); box-shadow: 0 0 8px color-mix(in srgb, var(--green) 70%, transparent); }
+.mon-dot.checando { background: var(--yellow); }
+.mon-dot.timeout { background: var(--red); box-shadow: 0 0 8px color-mix(in srgb, var(--red) 70%, transparent); }
+
+.mon-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.mon-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 6px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--border);
 }
-.mon-item .mon-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
-.mon-item .mon-dot.ok { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent); }
-.mon-item .mon-dot.checando { background: var(--yellow); }
-.mon-item .mon-dot.timeout { background: var(--red); }
-.mon-item .mon-ip { color: var(--text); font-weight: 600; }
-.mon-item .mon-status { margin-left: auto; color: var(--muted); font-size: 12px; }
-.mon-item .mon-status.ok { color: var(--green); }
-.mon-item .mon-status.timeout { color: var(--red); font-weight: 700; letter-spacing: .3px; }
-.mon-item .mon-remover {
-  background: none; border: 0; cursor: pointer; font-size: 13px; padding: 3px 5px;
-  border-radius: 6px; opacity: .5; filter: grayscale(1); transition: opacity .12s, background .12s, filter .12s;
+.mon-stat .mon-stat-num { font-size: 18px; font-weight: 700; font-family: var(--mono); color: var(--text); }
+.mon-stat .mon-stat-rot { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.mon-stat #monPerda.ruim { color: var(--red); }
+
+.mon-term {
+  flex: 1 1 auto; min-height: 120px; overflow-y: auto;
+  background: #0a0d12; color: #cfe; border-radius: 8px; padding: 10px 12px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
 }
-.mon-item .mon-remover:hover { opacity: 1; filter: none; background: color-mix(in srgb, var(--red) 18%, transparent); }
-/* linha que caiu: fundo vermelho pulsando, pra saltar aos olhos */
-.mon-item.caiu { background: color-mix(in srgb, var(--red) 16%, var(--panel2)); animation: mon-pulsa 1s ease-in-out infinite; }
-@keyframes mon-pulsa { 0%,100% { background: color-mix(in srgb, var(--red) 12%, var(--panel2)); } 50% { background: color-mix(in srgb, var(--red) 30%, var(--panel2)); } }
+.mon-linha { white-space: pre-wrap; word-break: break-all; }
+.mon-linha.ok { color: #7ee0b8; }
+.mon-linha.perda { color: #ff8b8b; font-weight: 600; }
+.mon-linha.info { color: #8ab4ff; }
+.mon-linha.erro { color: #ffcf6b; }
 
 .mon-alarme {
-  display: flex; align-items: center; gap: 14px; margin-top: 14px;
-  padding: 12px 16px; border-radius: 8px;
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px; border-radius: 8px;
   background: color-mix(in srgb, var(--red) 20%, var(--panel));
   border: 1px solid var(--red);
   animation: mon-pulsa-alarme 1s ease-in-out infinite;
 }
-.mon-alarme #monAlarmeTxt { color: var(--red); font-weight: 700; font-size: 14px; }
+.mon-alarme #monAlarmeTxt { color: var(--red); font-weight: 700; font-size: 13.5px; }
 .mon-alarme button { margin-left: auto; }
 @keyframes mon-pulsa-alarme { 0%,100% { border-color: var(--red); } 50% { border-color: color-mix(in srgb, var(--red) 35%, transparent); } }
 

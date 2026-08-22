@@ -370,37 +370,37 @@ try {
   </section>
 
   <section id="tab-tools" class="tab-panel">
-    <!-- Lançador: no app normal, a aba mostra os "tiles" das ferramentas. O do
-         monitor abre numa JANELA própria, para você deixar vigiando enquanto
-         trabalha nas outras abas. -->
-    <div id="toolsLauncher" class="tools-grid">
-      <button id="tileMonitor" type="button" class="tool-tile">
-        <span class="tool-ico">📡</span>
-        <span class="tool-corpo">
-          <span class="tool-nome">Monitorador de IP</span>
-          <span class="tool-desc">Vigia vários hosts ao mesmo tempo e toca uma sirene quando um cai. Abre numa janela própria.</span>
-        </span>
-        <span class="tool-abrir">Abrir&nbsp;↗</span>
-      </button>
+    <!-- Lançador: no app normal, cada endereço abre o SEU monitor numa janela
+         própria. Vários hosts = várias janelas. -->
+    <div id="toolsLauncher" class="card largo">
+      <h2>📡 Monitorador de IP</h2>
+      <p class="hint">Abre uma janela que fica pingando um endereço, com terminal ao vivo, cronômetro e contagem de perda de pacotes. Quando o host <strong>cai</strong>, toca uma <strong>sirene</strong> até você silenciar — e, no app instalado, impede a tela de bloquear. <strong>Uma janela por host</strong>: para vigiar vários, abra vários.</p>
+      <div class="input-row" style="max-width:460px">
+        <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false">
+        <button id="monAbrir" type="button" class="btn primary">Abrir monitor&nbsp;↗</button>
+      </div>
     </div>
 
-    <!-- O monitor em si: escondido no app normal, exibido na janela solta
-         (?solo=1&tipo=monitor). -->
-    <div id="toolsMonitor" class="card largo" hidden>
-      <div class="card-head">
-        <h2>Monitorador de IP</h2>
-        <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 A tela não vai bloquear enquanto monitora</span>
+    <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
+         (?solo=1&tipo=monitor&ip=...). -->
+    <div id="toolsMonitor" hidden>
+      <div class="mon-cab">
+        <span id="monDot" class="mon-dot"></span>
+        <span id="monHost" class="mon-host"></span>
+        <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 tela travada</span>
       </div>
-      <p class="hint">Fica pingando os endereços da lista. Quando um deles <strong>cai</strong> (não responde a alguns pings seguidos), dispara uma <strong>sirene</strong> até você silenciar — e, no app instalado, impede a tela de bloquear para você ver o alarme mesmo de longe.</p>
-      <div class="input-row" style="max-width:420px">
-        <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false">
-        <button id="monAdd" type="button" class="btn primary">Monitorar</button>
+      <div class="mon-stats">
+        <div class="mon-stat"><span class="mon-stat-num" id="monTempo">00:00:00</span><span class="mon-stat-rot">tempo</span></div>
+        <div class="mon-stat"><span class="mon-stat-num" id="monEnviados">0</span><span class="mon-stat-rot">enviados</span></div>
+        <div class="mon-stat"><span class="mon-stat-num" id="monPerdidos">0</span><span class="mon-stat-rot">perdidos</span></div>
+        <div class="mon-stat"><span class="mon-stat-num" id="monPerda">0%</span><span class="mon-stat-rot">perda</span></div>
+        <div class="mon-stat"><span class="mon-stat-num" id="monPing">—</span><span class="mon-stat-rot">último</span></div>
       </div>
       <div id="monAlarme" class="mon-alarme" hidden>
         <span id="monAlarmeTxt">⚠ Sem resposta!</span>
         <button id="monSilenciar" type="button" class="btn">🔇 Silenciar</button>
       </div>
-      <div id="monLista" class="mon-lista"></div>
+      <div id="monTerm" class="mon-term"></div>
     </div>
   </section>
 

@@ -1059,16 +1059,21 @@ app.post('/api/backup/apagar', (req, res) => {
 // é false e a tela cai no seletor do próprio navegador.
 app.get('/api/serial/status', (req, res) => res.json({ disponivel: serialbridge.disponivel() }));
 
-// ---------- Ferramentas: monitorador de IP ----------
-app.get('/api/tools/monitor', (req, res) => res.json(monitor.estado()));
+// ---------- Ferramentas: monitorador de IP (uma janela por host) ----------
 app.post('/api/tools/monitor/add', (req, res) => {
   const r = monitor.adicionar((req.body || {}).ip);
   if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível adicionar.');
-  res.json(monitor.estado());
+  res.json({ ok: true });
 });
 app.post('/api/tools/monitor/remove', (req, res) => {
   monitor.remover((req.body || {}).ip);
-  res.json(monitor.estado());
+  res.json({ ok: true });
+});
+// A janela do host pergunta o detalhe: contadores + as linhas de ping novas.
+app.get('/api/tools/monitor/detalhe', (req, res) => {
+  const d = monitor.detalhe(req.query.ip, req.query.desde);
+  if (!d) return fail(res, 404, 'Este endereço não está sendo monitorado.');
+  res.json(d);
 });
 
 // Clipboard do Electron — fallback do copiar/colar por botão direito quando o

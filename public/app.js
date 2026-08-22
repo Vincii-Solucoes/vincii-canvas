@@ -6027,129 +6027,135 @@ async function loadConfigTab() {
   loadBackupCard();
 }
 
-// ---------- Ferramentas: monitorador de IP ----------
+// ---------- Ferramentas: monitorador de IP (uma janela por host) ----------
 //
 // O laço de PING roda no servidor (main), que não sofre o throttling de janela
-// oculta do Chromium — então a queda é detectada mesmo com o app em segundo
-// plano. Aqui a tela só faz duas coisas: perguntar o estado de tempos em tempos
-// e, quando algum IP está em timeout, tocar a sirene (Web Audio sintetizado, sem
-// arquivo) até você silenciar. O bloqueio de tela é impedido pelo main.
-let monTimer = null;
+// oculta do Chromium. Cada JANELA vigia um host só: mostra um terminal de ping
+// ao vivo, um cronômetro e a perda de pacotes, e toca a sirene quando cai. Para
+// vários hosts, várias janelas. O bloqueio de tela é impedido pelo main.
+
+// --- app normal: a aba Ferramentas é o LANÇADOR ---
+let monLauncherLigado = false;
+function onToolsTabShown() {
+  if (monLauncherLigado) return;
+  monLauncherLigado = true;
+  const abrir = () => {
+    const ip = $('#monIp').value.trim();
+    if (!ip) { toast('Informe um IP ou host.', 'erro'); return; }
+    abrirMonitorEmJanela(ip);
+    $('#monIp').value = '';
+  };
+  $('#monAbrir').addEventListener('click', abrir);
+  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+}
+
+// Uma janela por host: o `name` do window.open inclui o IP, então reabrir o
+// MESMO host foca a janela existente em vez de duplicar.
+function abrirMonitorEmJanela(ip) {
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', ip, nome: ip }).toString();
+  const nome = 'vc-monitor-' + ip.replace(/[^a-zA-Z0-9]/g, '');
+  const janela = window.open(url, nome, 'width=600,height=560');
+  try { if (janela) janela.focus(); } catch { /* ok */ }
+}
+
+// --- dentro da janela solta: o monitor de UM host ---
+let monIp = null;
+let monUltSeq = 0;
+let monDesde = 0;
+let monTimerPoll = null;
+let monTimerRelogio = null;
+let monEstavaCaido = false;
 let monSilenciado = false;
-let monDownAnterior = new Set();
 let monAudioCtx = null;
 let monOsc = null;
 let monVarredura = null;
 
-// Janela do monitor já aberta (para focar em vez de abrir outra).
-let monJanela = null;
-
-// No app normal, a aba Ferramentas é um LANÇADOR: o monitor abre em janela
-// própria. Aqui só liga o tile.
-function onToolsTabShown() {
-  const tile = $('#tileMonitor');
-  if (tile && !tile._ligado) { tile._ligado = true; tile.addEventListener('click', abrirMonitorEmJanela); }
-}
-
-function abrirMonitorEmJanela() {
-  // Já aberta? Só traz para frente.
-  if (monJanela && !monJanela.closed) { try { monJanela.focus(); return; } catch { /* abre outra */ } }
-  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', nome: 'Monitorador de IP' }).toString();
-  monJanela = window.open(url, 'vc-monitor', 'width=560,height=640');
-  try { if (monJanela) monJanela.focus(); } catch { /* ok */ }
-}
-
-// Dentro da janela solta do monitor: mostra o painel, esconde o lançador e liga
-// o monitor de verdade (polling + sirene + controles).
 function abrirMonitorSolo() {
+  monIp = new URLSearchParams(location.search).get('ip') || '';
   const launcher = $('#toolsLauncher');
   const painel = $('#toolsMonitor');
   if (launcher) launcher.hidden = true;
   if (painel) painel.hidden = false;
   $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
   document.body.classList.remove('term-full');
-  ligarBtnMonitor();
-  monPoll();
-}
-
-let monBtnLigado = false;
-function ligarBtnMonitor() {
-  if (monBtnLigado) return;
-  monBtnLigado = true;
-  $('#monAdd').addEventListener('click', monAdicionar);
-  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); monAdicionar(); } });
+  $('#monHost').textContent = monIp || '(sem endereço)';
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
+  // Qualquer clique/tecla destrava o áudio (AudioContext nasce suspenso).
+  const destravar = () => destravarAudio();
+  document.addEventListener('click', destravar, { once: true });
+  document.addEventListener('keydown', destravar, { once: true });
+
+  if (!monIp) { monTermLinha('Nenhum endereço informado.', 'erro'); return; }
+
+  // fecha a janela → para de monitorar aquele host no servidor
+  window.addEventListener('pagehide', () => {
+    try { navigator.sendBeacon('/api/tools/monitor/remove', new Blob([JSON.stringify({ ip: monIp })], { type: 'application/json' })); } catch {}
+  });
+
+  api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
+    .then(() => {
+      monTermLinha(`Iniciando ping em ${monIp}…`, 'info');
+      monTimerRelogio = setInterval(atualizarRelogio, 1000);
+      monPollDetalhe();
+    })
+    .catch((e) => monTermLinha('Não foi possível iniciar: ' + e.message, 'erro'));
 }
 
-async function monAdicionar() {
-  const ip = $('#monIp').value.trim();
-  if (!ip) return;
-  // O clique é um gesto: aproveita para destravar o áudio (o AudioContext nasce
-  // suspenso e só toca depois de uma interação do usuário).
-  destravarAudio();
+async function monPollDetalhe() {
   try {
-    const est = await api('/api/tools/monitor/add', { method: 'POST', body: { ip } });
-    $('#monIp').value = '';
-    monDesenhar(est);
-    agendarMonPoll(true);
-  } catch (e) { toast(e.message, 'erro'); }
+    const d = await api(`/api/tools/monitor/detalhe?ip=${encodeURIComponent(monIp)}&desde=${monUltSeq}`);
+    monAplicar(d);
+  } catch { /* servidor reiniciou ou host removido: para em silêncio */ }
+  monTimerPoll = setTimeout(monPollDetalhe, 1000);
 }
 
-async function monRemover(ip) {
-  try { const est = await api('/api/tools/monitor/remove', { method: 'POST', body: { ip } }); monDesenhar(est); }
-  catch (e) { toast(e.message, 'erro'); }
-}
-
-async function monPoll() {
-  try { const est = await api('/api/tools/monitor'); monDesenhar(est); agendarMonPoll(est.ips.length > 0); }
-  catch { agendarMonPoll(false); }
-}
-function agendarMonPoll(ativo) {
-  clearTimeout(monTimer);
-  monTimer = setTimeout(monPoll, ativo ? 2500 : 8000);
-}
-
-function monDesenhar(est) {
-  const lista = $('#monLista');
-  if (!lista) return;
-  const down = new Set(est.ips.filter((x) => x.status === 'timeout').map((x) => x.ip));
-  // Um IP que caiu AGORA (não estava caído antes) re-arma a sirene, mesmo que
-  // você tenha silenciado uma queda anterior.
-  for (const ip of down) if (!monDownAnterior.has(ip)) monSilenciado = false;
-  monDownAnterior = down;
-
-  lista.innerHTML = '';
-  if (!est.ips.length) {
-    el(lista, 'div', 'bk-vazio', 'Nenhum endereço monitorado. Adicione um IP acima.');
-  } else {
-    for (const x of est.ips) {
-      const row = el(lista, 'div', 'mon-item' + (x.status === 'timeout' ? ' caiu' : ''));
-      el(row, 'span', 'mon-dot ' + x.status);
-      el(row, 'span', 'mon-ip', x.ip);
-      const s = x.status === 'ok'
-        ? (x.latencia != null ? `${x.latencia} ms` : 'no ar')
-        : x.status === 'timeout' ? 'SEM RESPOSTA' : 'checando…';
-      el(row, 'span', 'mon-status ' + x.status, s);
-      const lixo = el(row, 'button', 'mon-remover', '🗑');
-      lixo.type = 'button'; lixo.title = 'Parar de monitorar';
-      lixo.addEventListener('click', () => monRemover(x.ip));
-    }
+function monAplicar(d) {
+  monDesde = d.desde || monDesde;
+  // linhas novas do ping no terminal
+  for (const e of d.novos) {
+    monUltSeq = Math.max(monUltSeq, e.seq);
+    if (e.vivo) monTermLinha(`resposta de ${monIp}: tempo=${e.latencia != null ? e.latencia : '<1'} ms`, 'ok');
+    else monTermLinha(`sem resposta de ${monIp} (tempo esgotado)`, 'perda');
   }
-
-  // indicador de bloqueio de tela
-  const bloq = $('#monBloqueio');
-  if (bloq) bloq.hidden = !est.bloqueio;
+  // contadores
+  $('#monEnviados').textContent = d.total;
+  $('#monPerdidos').textContent = d.perdidos;
+  const perda = d.total ? Math.round((d.perdidos / d.total) * 100) : 0;
+  $('#monPerda').textContent = perda + '%';
+  $('#monPerda').classList.toggle('ruim', perda > 0);
+  $('#monPing').textContent = d.status === 'ok' && d.latencia != null ? d.latencia + ' ms' : (d.status === 'timeout' ? '—' : '…');
+  const dot = $('#monDot');
+  dot.className = 'mon-dot ' + d.status;
+  $('#monBloqueio').hidden = !d.bloqueio;
 
   // alarme + sirene
-  const alarme = $('#monAlarme');
-  const temQueda = down.size > 0;
-  if (alarme) {
-    alarme.hidden = !temQueda;
-    if (temQueda) $('#monAlarmeTxt').textContent = down.size === 1
-      ? `⚠ ${[...down][0]} não está respondendo!`
-      : `⚠ ${down.size} endereços sem resposta!`;
-  }
-  if (temQueda && !monSilenciado) tocarSirene(); else pararSirene();
+  const caiu = d.status === 'timeout';
+  if (caiu && !monEstavaCaido) monSilenciado = false; // caiu agora: re-arma
+  monEstavaCaido = caiu;
+  $('#monAlarme').hidden = !caiu;
+  if (caiu) $('#monAlarmeTxt').textContent = `⚠ ${monIp} não está respondendo! (${d.falhas} perdas seguidas)`;
+  if (caiu && !monSilenciado) tocarSirene(); else pararSirene();
+  document.title = (caiu ? '🔴 ' : '') + monIp + ' — Monitor';
+}
+
+function atualizarRelogio() {
+  if (!monDesde) return;
+  const s = Math.max(0, Math.floor((Date.now() - monDesde) / 1000));
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  $('#monTempo').textContent = `${hh}:${mm}:${ss}`;
+}
+
+function monTermLinha(texto, cls) {
+  const term = $('#monTerm');
+  if (!term) return;
+  const hora = new Date().toLocaleTimeString('pt-BR');
+  const linha = el(term, 'div', 'mon-linha ' + (cls || ''));
+  linha.textContent = `[${hora}] ${texto}`;
+  // rola para o fim; poda o histórico da tela
+  while (term.childElementCount > 500) term.removeChild(term.firstChild);
+  term.scrollTop = term.scrollHeight;
 }
 
 // ---- sirene: dois tons alternados, chatos de propósito, em loop ----
@@ -6169,7 +6175,7 @@ function tocarSirene() {
     const g = ctx.createGain();
     osc.type = 'square';
     osc.frequency.value = 700;
-    g.gain.value = 0.09; // audível, sem estourar
+    g.gain.value = 0.09;
     osc.connect(g); g.connect(ctx.destination);
     osc.start();
     monOsc = { osc, g };
