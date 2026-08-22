@@ -64,6 +64,7 @@ try {
       <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
       <button data-tab="vars">Variáveis</button>
+      <button data-tab="tools">Ferramentas</button>
       <button data-tab="config">Configurações</button>
     </nav>
     <button id="themeToggle" class="theme-toggle" type="button" title="Alternar tema claro/escuro" aria-label="Alternar tema"></button>
@@ -366,6 +367,25 @@ try {
     </div>
     <p class="hint precedence">Precedência (a maior vence): sobrescritas da execução &gt; variáveis do host &gt; perfil &gt; globais. Variáveis embutidas: {{host.name}}, {{host.host}}, {{host.port}}, {{host.user}}.</p>
     <p class="hint precedence">Ranges e listas: uma variável pode guardar uma faixa, ex.: <code>VLANS=100-110,150,200-205</code>. Use literal com {{VLANS}} ou expanda com <code>@cada VLAN em {{VLANS}}: comando com {{VLAN}}</code> no playbook (um comando por item).</p>
+  </section>
+
+  <section id="tab-tools" class="tab-panel">
+    <div class="card largo">
+      <div class="card-head">
+        <h2>Monitorador de IP</h2>
+        <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 A tela não vai bloquear enquanto monitora</span>
+      </div>
+      <p class="hint">Fica pingando os endereços da lista. Quando um deles <strong>cai</strong> (não responde a alguns pings seguidos), dispara uma <strong>sirene</strong> até você silenciar — e, no app instalado, impede a tela de bloquear para você ver o alarme mesmo de longe.</p>
+      <div class="input-row" style="max-width:420px">
+        <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false">
+        <button id="monAdd" type="button" class="btn primary">Monitorar</button>
+      </div>
+      <div id="monAlarme" class="mon-alarme" hidden>
+        <span id="monAlarmeTxt">⚠ Sem resposta!</span>
+        <button id="monSilenciar" type="button" class="btn">🔇 Silenciar</button>
+      </div>
+      <div id="monLista" class="mon-lista"></div>
+    </div>
   </section>
 
   <section id="tab-config" class="tab-panel">

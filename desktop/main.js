@@ -106,6 +106,26 @@ if (!electronApp.requestSingleInstanceLock()) {
     console.error('[backup] seletor/relaunch indisponível:', e && e.message);
   }
 
+  // Monitorador de IP: enquanto houver endereço monitorado, impede a TELA de
+  // dormir (e, por tabela, o bloqueio automático por inatividade) — para a
+  // sirene de queda ser vista mesmo com você longe do teclado. Em `npm start`
+  // esta injeção não acontece e o monitor roda sem o bloqueio.
+  try {
+    const monitor = require('../lib/monitor');
+    const { powerSaveBlocker } = require('electron');
+    let bloqueioId = null;
+    monitor.definirBloqueio((ligar) => {
+      if (ligar && bloqueioId === null) {
+        bloqueioId = powerSaveBlocker.start('prevent-display-sleep');
+      } else if (!ligar && bloqueioId !== null) {
+        try { powerSaveBlocker.stop(bloqueioId); } catch { /* já parou */ }
+        bloqueioId = null;
+      }
+    });
+  } catch (e) {
+    console.error('[monitor] powerSaveBlocker indisponível:', e && e.message);
+  }
+
   // Travas de TODO conteúdo web do app, registradas ANTES de existir janela
   // alguma.
   //

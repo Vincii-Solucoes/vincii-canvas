@@ -9,6 +9,7 @@ const express = require('express');
 const store = require('./lib/store');
 const backup = require('./lib/backup');
 const serialbridge = require('./lib/serialbridge');
+const monitor = require('./lib/monitor');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
@@ -1057,6 +1058,18 @@ app.post('/api/backup/apagar', (req, res) => {
 // seletor nativo do Electron (lib/serialbridge). Fora do Electron, `disponivel`
 // é false e a tela cai no seletor do próprio navegador.
 app.get('/api/serial/status', (req, res) => res.json({ disponivel: serialbridge.disponivel() }));
+
+// ---------- Ferramentas: monitorador de IP ----------
+app.get('/api/tools/monitor', (req, res) => res.json(monitor.estado()));
+app.post('/api/tools/monitor/add', (req, res) => {
+  const r = monitor.adicionar((req.body || {}).ip);
+  if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível adicionar.');
+  res.json(monitor.estado());
+});
+app.post('/api/tools/monitor/remove', (req, res) => {
+  monitor.remover((req.body || {}).ip);
+  res.json(monitor.estado());
+});
 
 // Clipboard do Electron — fallback do copiar/colar por botão direito quando o
 // navigator.clipboard do renderer é barrado pela política de permissão. Só

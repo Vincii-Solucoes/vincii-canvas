@@ -174,6 +174,7 @@ function initTabs() {
     if (btn.dataset.tab === 'config') loadConfigTab();
     if (btn.dataset.tab === 'history') loadHistory();
     if (btn.dataset.tab === 'files') onFilesTabShown();
+    if (btn.dataset.tab === 'tools') onToolsTabShown();
   }));
   document.body.classList.toggle('term-full', !!$('#tab-terminal.active') || $('#tab-terminal').classList.contains('active'));
 }
@@ -6024,6 +6025,132 @@ async function loadConfigTab() {
   loadBackupCard();
 }
 
+// ---------- Ferramentas: monitorador de IP ----------
+//
+// O laço de PING roda no servidor (main), que não sofre o throttling de janela
+// oculta do Chromium — então a queda é detectada mesmo com o app em segundo
+// plano. Aqui a tela só faz duas coisas: perguntar o estado de tempos em tempos
+// e, quando algum IP está em timeout, tocar a sirene (Web Audio sintetizado, sem
+// arquivo) até você silenciar. O bloqueio de tela é impedido pelo main.
+let monTimer = null;
+let monSilenciado = false;
+let monDownAnterior = new Set();
+let monAudioCtx = null;
+let monOsc = null;
+let monVarredura = null;
+
+function onToolsTabShown() { monPoll(); ligarBtnMonitor(); }
+
+let monBtnLigado = false;
+function ligarBtnMonitor() {
+  if (monBtnLigado) return;
+  monBtnLigado = true;
+  $('#monAdd').addEventListener('click', monAdicionar);
+  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); monAdicionar(); } });
+  $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
+}
+
+async function monAdicionar() {
+  const ip = $('#monIp').value.trim();
+  if (!ip) return;
+  // O clique é um gesto: aproveita para destravar o áudio (o AudioContext nasce
+  // suspenso e só toca depois de uma interação do usuário).
+  destravarAudio();
+  try {
+    const est = await api('/api/tools/monitor/add', { method: 'POST', body: { ip } });
+    $('#monIp').value = '';
+    monDesenhar(est);
+    agendarMonPoll(true);
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+async function monRemover(ip) {
+  try { const est = await api('/api/tools/monitor/remove', { method: 'POST', body: { ip } }); monDesenhar(est); }
+  catch (e) { toast(e.message, 'erro'); }
+}
+
+async function monPoll() {
+  try { const est = await api('/api/tools/monitor'); monDesenhar(est); agendarMonPoll(est.ips.length > 0); }
+  catch { agendarMonPoll(false); }
+}
+function agendarMonPoll(ativo) {
+  clearTimeout(monTimer);
+  monTimer = setTimeout(monPoll, ativo ? 2500 : 8000);
+}
+
+function monDesenhar(est) {
+  const lista = $('#monLista');
+  if (!lista) return;
+  const down = new Set(est.ips.filter((x) => x.status === 'timeout').map((x) => x.ip));
+  // Um IP que caiu AGORA (não estava caído antes) re-arma a sirene, mesmo que
+  // você tenha silenciado uma queda anterior.
+  for (const ip of down) if (!monDownAnterior.has(ip)) monSilenciado = false;
+  monDownAnterior = down;
+
+  lista.innerHTML = '';
+  if (!est.ips.length) {
+    el(lista, 'div', 'bk-vazio', 'Nenhum endereço monitorado. Adicione um IP acima.');
+  } else {
+    for (const x of est.ips) {
+      const row = el(lista, 'div', 'mon-item' + (x.status === 'timeout' ? ' caiu' : ''));
+      el(row, 'span', 'mon-dot ' + x.status);
+      el(row, 'span', 'mon-ip', x.ip);
+      const s = x.status === 'ok'
+        ? (x.latencia != null ? `${x.latencia} ms` : 'no ar')
+        : x.status === 'timeout' ? 'SEM RESPOSTA' : 'checando…';
+      el(row, 'span', 'mon-status ' + x.status, s);
+      const lixo = el(row, 'button', 'mon-remover', '🗑');
+      lixo.type = 'button'; lixo.title = 'Parar de monitorar';
+      lixo.addEventListener('click', () => monRemover(x.ip));
+    }
+  }
+
+  // indicador de bloqueio de tela
+  const bloq = $('#monBloqueio');
+  if (bloq) bloq.hidden = !est.bloqueio;
+
+  // alarme + sirene
+  const alarme = $('#monAlarme');
+  const temQueda = down.size > 0;
+  if (alarme) {
+    alarme.hidden = !temQueda;
+    if (temQueda) $('#monAlarmeTxt').textContent = down.size === 1
+      ? `⚠ ${[...down][0]} não está respondendo!`
+      : `⚠ ${down.size} endereços sem resposta!`;
+  }
+  if (temQueda && !monSilenciado) tocarSirene(); else pararSirene();
+}
+
+// ---- sirene: dois tons alternados, chatos de propósito, em loop ----
+function destravarAudio() {
+  try {
+    if (!monAudioCtx) monAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (monAudioCtx.state === 'suspended') monAudioCtx.resume();
+  } catch { /* sem áudio: o alarme visual ainda vale */ }
+}
+function tocarSirene() {
+  if (monOsc) return; // já tocando
+  try {
+    destravarAudio();
+    if (!monAudioCtx) return;
+    const ctx = monAudioCtx;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = 700;
+    g.gain.value = 0.09; // audível, sem estourar
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start();
+    monOsc = { osc, g };
+    let alto = true;
+    monVarredura = setInterval(() => { alto = !alto; try { osc.frequency.value = alto ? 990 : 620; } catch {} }, 380);
+  } catch { /* ignora: alarme visual segue */ }
+}
+function pararSirene() {
+  if (monVarredura) { clearInterval(monVarredura); monVarredura = null; }
+  if (monOsc) { try { monOsc.osc.stop(); } catch {} try { monOsc.osc.disconnect(); monOsc.g.disconnect(); } catch {} monOsc = null; }
+}
+
 // ---------- backup automático ----------
 let bkPodeEscolher = false;
 
@@ -6448,6 +6575,7 @@ function init() {
   refreshAiVisibility(); // esconde recursos de IA se não houver chave configurada
   checkForUpdate(); // avisa (sem instalar) se houver versão nova no GitHub
   loadLocalInfo(); // login/SO da máquina para o botão "Meu computador"
+  monPoll(); // monitorador de IP: mantém o polling vivo para a sirene tocar de qualquer aba
   // se o Terminal for a aba inicial, prepara o xterm já na carga
   if ($('#tab-terminal').classList.contains('active')) onTerminalTabShown();
 }
