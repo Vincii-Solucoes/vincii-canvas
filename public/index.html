@@ -370,17 +370,21 @@ try {
   </section>
 
   <section id="tab-tools" class="tab-panel">
-    <!-- Lançador: o TILE. Clicar abre o monitor numa janela própria. Uma
+    <!-- O TILE fica na tela principal, com o campo de IP nele. Digita o host
+         aqui e clica em Abrir: a janela nasce já com o monitor completo. Uma
          janela por host — para vigiar vários, abra vários. -->
     <div id="toolsLauncher" class="tools-grid">
-      <button id="tileMonitor" type="button" class="tool-tile">
+      <div class="tool-tile tool-tile-form">
         <span class="tool-ico">📡</span>
-        <span class="tool-corpo">
+        <div class="tool-corpo">
           <span class="tool-nome">Monitorador de IP</span>
           <span class="tool-desc">Pinga um host numa janela própria — terminal ao vivo, cronômetro e perda de pacotes, com sirene quando cai.</span>
-        </span>
-        <span class="tool-abrir">Abrir&nbsp;↗</span>
-      </button>
+          <div class="input-row" style="margin-top:10px">
+            <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false">
+            <button id="monAbrir" type="button" class="btn primary">Abrir&nbsp;↗</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta

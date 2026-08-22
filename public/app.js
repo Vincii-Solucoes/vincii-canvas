@@ -6034,37 +6034,28 @@ async function loadConfigTab() {
 // ao vivo, um cronômetro e a perda de pacotes, e toca a sirene quando cai. Para
 // vários hosts, várias janelas. O bloqueio de tela é impedido pelo main.
 
-// --- app normal: a aba Ferramentas é o LANÇADOR (o tile) ---
+// --- app normal: a aba Ferramentas é o LANÇADOR (o tile com o campo de IP) ---
 let monLauncherLigado = false;
 function onToolsTabShown() {
   if (monLauncherLigado) return;
   monLauncherLigado = true;
-  const tile = $('#tileMonitor');
-  if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
+  const abrir = () => {
+    const ip = $('#monIp').value.trim();
+    if (!ip) { toast('Informe um IP ou host.', 'erro'); $('#monIp').focus(); return; }
+    abrirMonitorEmJanela(ip);
+    $('#monIp').value = '';
+    $('#monIp').focus();
+  };
+  $('#monAbrir').addEventListener('click', abrir);
+  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
 }
 
-// O tile pergunta o host AQUI, no Canvas principal (pop-up), e a janela nasce
-// JÁ monitorando — sem campo nem botão de "abrir" dentro dela. `_blank` deixa
-// abrir uma janela por host.
-function abrirMonitorEmJanela() {
-  openModal('Monitorar um host', `
-    <p class="hint">Abre uma janela que fica pingando este endereço — terminal ao vivo, cronômetro e perda de pacotes, com sirene quando cai. <strong>Uma janela por host.</strong></p>
-    <label>IP ou host
-      <input id="monModalIp" placeholder="ex.: 192.168.0.1, roteador.local" spellcheck="false" required>
-    </label>
-  `);
-  const submit = $('#modalForm button[type=submit]');
-  submit.textContent = 'Abrir monitor ↗';
-  setTimeout(() => { try { $('#monModalIp').focus(); } catch {} }, 40);
-  $('#modalForm').onsubmit = (ev) => {
-    ev.preventDefault();
-    const ip = $('#monModalIp').value.trim();
-    if (!ip) { toast('Informe um IP ou host.', 'erro'); return; }
-    closeModal();
-    const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', ip, nome: ip }).toString();
-    const janela = window.open(url, '_blank', 'width=600,height=560');
-    try { if (janela) janela.focus(); } catch { /* ok */ }
-  };
+// Abre a janela JÁ monitorando o host — a janela nasce com o monitor completo,
+// sem campo nem botão dentro dela. `_blank` deixa abrir uma janela por host.
+function abrirMonitorEmJanela(ip) {
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', ip, nome: ip }).toString();
+  const janela = window.open(url, '_blank', 'width=600,height=560');
+  try { if (janela) janela.focus(); } catch { /* ok */ }
 }
 
 // --- dentro da janela solta: o monitor de UM host ---
