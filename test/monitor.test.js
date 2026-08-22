@@ -56,6 +56,10 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   igual(d.status, 'timeout', `após ${mon.LIMITE_ALARME} perdas seguidas → timeout (sirene)`);
   igual(d.novos.length, mon.LIMITE_ALARME, 'o log traz uma linha de ping por rodada');
   ok(d.novos.every((e) => e.vivo === false), 'todas marcadas como perda');
+  // relatório: sem resposta não há média, e a QUEDA fica registrada em aberto
+  igual(d.media, null, 'host que nunca respondeu não tem média');
+  igual(d.quedas.length, 1, 'a virada para timeout registra UMA queda');
+  ok(d.quedas[0].inicio > 0 && d.quedas[0].fim === null, 'a queda está em aberto (sem fim)');
 
   // `desde` (seq) só traz o que é NOVO — o terminal não repete linhas
   const ultimoSeq = d.seq;
@@ -72,6 +76,11 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   igual(loop.status, 'ok', 'loopback → ok');
   igual(loop.perdidos, 0, 'sem perdas no loopback');
   ok(loop.total >= 1, 'contou ao menos um envio');
+  // média/mín/máx do relatório, com resposta real
+  ok(loop.media != null && loop.media >= 0, 'a MÉDIA de ping existe com respostas');
+  ok(loop.min != null && loop.max != null && loop.min <= loop.media && loop.media <= loop.max,
+    'mín ≤ média ≤ máx');
+  igual(loop.quedas.length, 0, 'sem queda no loopback');
 
   // refcount: duas janelas do MESMO host; fechar uma não para o monitor
   mon.adicionar('192.0.2.1'); // segunda janela

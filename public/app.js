@@ -6062,6 +6062,9 @@ let monSilenciado = false;
 let monAudioCtx = null;
 let monOsc = null;
 let monVarredura = null;
+let monUltimoDetalhe = null; // último retrato completo (para o relatório)
+let monParado = false;
+let monRelatorioTexto = '';
 
 // Prepara a janela solta do monitor: mostra o painel e liga a caixa de host.
 // Se veio um ip na URL (atalho), começa direto; senão espera o "Iniciar".
@@ -6099,6 +6102,11 @@ function iniciarMonitor(ip) {
   $('#monHost').textContent = monIp;
   document.title = monIp + ' — Monitor';
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
+  $('#monParar').addEventListener('click', pararMonitoramento);
+  $('#monCopiar').addEventListener('click', () => {
+    copiarParaClipboard(monRelatorioTexto);
+    toast('Relatório copiado — cole no chamado ou no chat.');
+  });
 
   // fecha a janela → para de monitorar aquele host no servidor
   window.addEventListener('pagehide', () => {
@@ -6115,15 +6123,17 @@ function iniciarMonitor(ip) {
 }
 
 async function monPollDetalhe() {
+  if (monParado) return;
   try {
     const d = await api(`/api/tools/monitor/detalhe?ip=${encodeURIComponent(monIp)}&desde=${monUltSeq}`);
-    monAplicar(d);
+    if (!monParado) monAplicar(d);
   } catch { /* servidor reiniciou ou host removido: para em silêncio */ }
-  monTimerPoll = setTimeout(monPollDetalhe, 1000);
+  if (!monParado) monTimerPoll = setTimeout(monPollDetalhe, 1000);
 }
 
 function monAplicar(d) {
   monDesde = d.desde || monDesde;
+  monUltimoDetalhe = d; // o relatório usa o último retrato completo
   // linhas novas do ping no terminal
   for (const e of d.novos) {
     monUltSeq = Math.max(monUltSeq, e.seq);
@@ -6136,6 +6146,7 @@ function monAplicar(d) {
   const perda = d.total ? Math.round((d.perdidos / d.total) * 100) : 0;
   $('#monPerda').textContent = perda + '%';
   $('#monPerda').classList.toggle('ruim', perda > 0);
+  $('#monMedia').textContent = d.media != null ? d.media.toFixed(1) + ' ms' : '—';
   $('#monPing').textContent = d.status === 'ok' && d.latencia != null ? d.latencia + ' ms' : (d.status === 'timeout' ? '—' : '…');
   const dot = $('#monDot');
   dot.className = 'mon-dot ' + d.status;
@@ -6163,12 +6174,66 @@ function atualizarRelogio() {
 function monTermLinha(texto, cls) {
   const term = $('#monTerm');
   if (!term) return;
-  const hora = new Date().toLocaleTimeString('pt-BR');
   const linha = el(term, 'div', 'mon-linha ' + (cls || ''));
-  linha.textContent = `[${hora}] ${texto}`;
+  // linhas de relatório saem sem o carimbo de hora (o relatório traz as suas)
+  linha.textContent = cls === 'rel' ? texto : `[${new Date().toLocaleTimeString('pt-BR')}] ${texto}`;
   // rola para o fim; poda o histórico da tela
   while (term.childElementCount > 500) term.removeChild(term.firstChild);
   term.scrollTop = term.scrollHeight;
+}
+
+// ---- parar e gerar relatório ----
+function pararMonitoramento() {
+  if (monParado) return;
+  monParado = true;
+  clearTimeout(monTimerPoll);
+  clearInterval(monTimerRelogio);
+  pararSirene();
+  $('#monAlarme').hidden = true;
+  $('#monDot').className = 'mon-dot';
+  $('#monParar').hidden = true;
+  $('#monCopiar').hidden = false;
+  document.title = '⏹ ' + monIp + ' — Monitor';
+  // solta o host no servidor (o refcount libera o powerSaveBlocker se for o último)
+  api('/api/tools/monitor/remove', { method: 'POST', body: { ip: monIp } }).catch(() => {});
+  gerarRelatorioMonitor();
+}
+
+function gerarRelatorioMonitor() {
+  const d = monUltimoDetalhe || {};
+  const fim = Date.now();
+  const inicio = d.desde || monDesde || fim;
+  const quando = (ms) => new Date(ms).toLocaleString('pt-BR');
+  const hora = (ms) => new Date(ms).toLocaleTimeString('pt-BR');
+  const durar = (ms) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    return `${hh}:${mm}:${String(s % 60).padStart(2, '0')}`;
+  };
+  const msish = (v) => (v != null ? `${Number(v).toFixed(1)} ms` : '—');
+  const total = d.total || 0;
+  const perdidos = d.perdidos || 0;
+  const quedas = d.quedas || [];
+  const linhas = [
+    '──────────── RELATÓRIO DE MONITORAMENTO ────────────',
+    `Host: ${monIp}`,
+    `Período: ${quando(inicio)} → ${quando(fim)}  (duração ${durar(fim - inicio)})`,
+    `Pacotes: ${total} enviados · ${perdidos} perdidos · ${total ? Math.round((perdidos / total) * 100) : 0}% de perda`,
+    `Latência: mín ${msish(d.min)} · média ${msish(d.media)} · máx ${msish(d.max)}`,
+    quedas.length
+      ? `Quedas: ${quedas.length}`
+      : 'Quedas: nenhuma — o host respondeu o tempo todo.',
+    ...quedas.map((q, i) => {
+      const fimQ = q.fim || fim;
+      return `  ${i + 1}ª queda: ${hora(q.inicio)} → ${q.fim ? hora(q.fim) : 'em queda ao parar'} (${durar(fimQ - q.inicio)})`;
+    }),
+    '────────────────────────────────────────────────────',
+  ];
+  monRelatorioTexto = `Relatório de monitoramento — Vincii Canvas\n` + linhas.filter((l) => !l.startsWith('─')).join('\n');
+  monTermLinha('', 'rel');
+  for (const l of linhas) monTermLinha(l, 'rel');
+  monTermLinha('Monitoramento parado. Use "Copiar relatório" para levar este resumo.', 'info');
 }
 
 // ---- sirene: dois tons alternados, chatos de propósito, em loop ----

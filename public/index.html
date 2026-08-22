@@ -401,13 +401,18 @@ try {
       <div class="mon-cab">
         <span id="monDot" class="mon-dot"></span>
         <span id="monHost" class="mon-host"></span>
-        <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 tela travada</span>
+        <div class="mon-cab-dir">
+          <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 tela travada</span>
+          <button id="monParar" type="button" class="btn small">⏹ Parar e gerar relatório</button>
+          <button id="monCopiar" type="button" class="btn small primary" hidden>📋 Copiar relatório</button>
+        </div>
       </div>
       <div class="mon-stats">
         <div class="mon-stat"><span class="mon-stat-num" id="monTempo">00:00:00</span><span class="mon-stat-rot">tempo</span></div>
         <div class="mon-stat"><span class="mon-stat-num" id="monEnviados">0</span><span class="mon-stat-rot">enviados</span></div>
         <div class="mon-stat"><span class="mon-stat-num" id="monPerdidos">0</span><span class="mon-stat-rot">perdidos</span></div>
         <div class="mon-stat"><span class="mon-stat-num" id="monPerda">0%</span><span class="mon-stat-rot">perda</span></div>
+        <div class="mon-stat"><span class="mon-stat-num" id="monMedia">—</span><span class="mon-stat-rot">média</span></div>
         <div class="mon-stat"><span class="mon-stat-num" id="monPing">—</span><span class="mon-stat-rot">último</span></div>
       </div>
       <div id="monAlarme" class="mon-alarme" hidden>

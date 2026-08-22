@@ -490,7 +490,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .tool-tile .tool-abrir { flex: none; font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
 
 /* ---------- Ferramentas: monitorador de IP (uma janela por host) ---------- */
-.mon-bloqueio { font-size: 11px; color: var(--muted); margin-left: auto; }
+.mon-bloqueio { font-size: 11px; color: var(--muted); }
+/* o grupo da direita do cabecalho: indicador de tela + Parar/Copiar */
+.mon-cab-dir { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 /* a janela solta do monitor: sem o teto de largura das outras abas */
 .modo-solo #tab-tools { max-width: none; padding: 12px 14px; }
 .mon-entrada { padding: 8px 2px; }
@@ -507,7 +509,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-dot.checando { background: var(--yellow); }
 .mon-dot.timeout { background: var(--red); box-shadow: 0 0 8px color-mix(in srgb, var(--red) 70%, transparent); }
 
-.mon-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.mon-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: 8px; }
 .mon-stat {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 10px 6px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--border);
@@ -525,6 +527,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-linha.ok { color: #7ee0b8; }
 .mon-linha.perda { color: #ff8b8b; font-weight: 600; }
 .mon-linha.info { color: #8ab4ff; }
+.mon-linha.rel { color: #d8c8ff; font-weight: 600; }
 .mon-linha.erro { color: #ffcf6b; }
 
 .mon-alarme[hidden] { display: none !important; }
