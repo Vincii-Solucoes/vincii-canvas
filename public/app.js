@@ -6034,26 +6034,19 @@ async function loadConfigTab() {
 // ao vivo, um cronômetro e a perda de pacotes, e toca a sirene quando cai. Para
 // vários hosts, várias janelas. O bloqueio de tela é impedido pelo main.
 
-// --- app normal: a aba Ferramentas é o LANÇADOR (o tile com o campo de IP) ---
+// --- app normal: a aba Ferramentas é o LANÇADOR (o tile) ---
 let monLauncherLigado = false;
 function onToolsTabShown() {
   if (monLauncherLigado) return;
   monLauncherLigado = true;
-  const abrir = () => {
-    const ip = $('#monIp').value.trim();
-    if (!ip) { toast('Informe um IP ou host.', 'erro'); $('#monIp').focus(); return; }
-    abrirMonitorEmJanela(ip);
-    $('#monIp').value = '';
-    $('#monIp').focus();
-  };
-  $('#monAbrir').addEventListener('click', abrir);
-  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); abrir(); } });
+  const tile = $('#tileMonitor');
+  if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
 }
 
-// Abre a janela JÁ monitorando o host — a janela nasce com o monitor completo,
-// sem campo nem botão dentro dela. `_blank` deixa abrir uma janela por host.
-function abrirMonitorEmJanela(ip) {
-  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', ip, nome: ip }).toString();
+// O tile abre o monitor numa janela própria (SEM host ainda — o endereço é
+// informado dentro dela). `_blank` deixa abrir uma por host.
+function abrirMonitorEmJanela() {
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', nome: 'Monitorador de IP' }).toString();
   const janela = window.open(url, '_blank', 'width=600,height=560');
   try { if (janela) janela.focus(); } catch { /* ok */ }
 }
@@ -6070,11 +6063,12 @@ let monAudioCtx = null;
 let monOsc = null;
 let monVarredura = null;
 
-// A janela solta do monitor: mostra o painel e começa a vigiar o host da URL.
-// O endereço vem do pop-up no Canvas principal — aqui não há como escolher.
+// Prepara a janela solta do monitor: mostra o painel e liga a caixa de host.
+// Se veio um ip na URL (atalho), começa direto; senão espera o "Iniciar".
 function abrirMonitorSolo() {
+  const painel = $('#toolsMonitor');
   if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
-  if ($('#toolsMonitor')) $('#toolsMonitor').hidden = false;
+  if (painel) painel.hidden = false;
   $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
   document.body.classList.remove('term-full');
 
@@ -6083,14 +6077,25 @@ function abrirMonitorSolo() {
   document.addEventListener('click', destravar, { once: true });
   document.addEventListener('keydown', destravar, { once: true });
 
-  const ip = new URLSearchParams(location.search).get('ip');
-  if (!ip) { $('#monHost').textContent = '(sem endereço)'; monTermLinha('Abra o monitor pelo tile em Ferramentas.', 'erro'); return; }
-  iniciarMonitor(ip);
+  const iniciar = () => {
+    const ip = $('#monIp').value.trim();
+    if (!ip) { toast('Informe um IP ou host.', 'erro'); return; }
+    iniciarMonitor(ip);
+  };
+  $('#monIniciar').addEventListener('click', iniciar);
+  $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
+  setTimeout(() => { try { $('#monIp').focus(); } catch {} }, 40);
+
+  // Atalho: /?...&ip=... já começa monitorando (o tile não passa ip).
+  const ipUrl = new URLSearchParams(location.search).get('ip');
+  if (ipUrl) { $('#monIp').value = ipUrl; iniciarMonitor(ipUrl); }
 }
 
-// Começa a vigiar o host desta janela.
+// Começa a vigiar UM host nesta janela: troca a caixa de endereço pelo monitor.
 function iniciarMonitor(ip) {
   monIp = ip;
+  $('#monEntrada').hidden = true;
+  $('#monPainel').hidden = false;
   $('#monHost').textContent = monIp;
   document.title = monIp + ' — Monitor';
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
@@ -6106,7 +6111,7 @@ function iniciarMonitor(ip) {
       monTimerRelogio = setInterval(atualizarRelogio, 1000);
       monPollDetalhe();
     })
-    .catch((e) => monTermLinha('Não foi possível iniciar: ' + e.message, 'erro'));
+    .catch((e) => { $('#monEntrada').hidden = false; $('#monPainel').hidden = true; toast('Não foi possível iniciar: ' + e.message, 'erro'); });
 }
 
 async function monPollDetalhe() {
