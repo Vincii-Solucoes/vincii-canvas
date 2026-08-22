@@ -472,6 +472,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 
 /* ---------- Ferramentas: lançador (o tile) ---------- */
 .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+/* o display:grid acima vence o [hidden] do navegador — sem isto, o TILE (o
+   botão de abrir OUTRA janela) aparecia dentro da janela do monitor */
+.tools-grid[hidden] { display: none !important; }
 .tool-tile {
   display: flex; align-items: center; gap: 14px; text-align: left;
   padding: 18px; border-radius: 12px; cursor: pointer;
@@ -493,6 +496,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-entrada { padding: 8px 2px; }
 .mon-entrada h2 { margin: 0 0 6px; }
 #monPainel { display: flex; flex-direction: column; height: calc(100vh - 24px); gap: 10px; }
+/* mesmos venenos de display vs [hidden]: o painel aparecia ANTES do Iniciar, e
+   o alarme "Sem resposta!" nascia visível */
+#monPainel[hidden], #toolsMonitor[hidden] { display: none !important; }
 
 .mon-cab { display: flex; align-items: center; gap: 10px; }
 .mon-cab .mon-host { font-size: 18px; font-weight: 700; color: var(--text); font-family: var(--mono); }
@@ -521,6 +527,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-linha.info { color: #8ab4ff; }
 .mon-linha.erro { color: #ffcf6b; }
 
+.mon-alarme[hidden] { display: none !important; }
 .mon-alarme {
   display: flex; align-items: center; gap: 14px;
   padding: 10px 14px; border-radius: 8px;
