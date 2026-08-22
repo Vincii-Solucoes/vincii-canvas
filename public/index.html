@@ -370,20 +370,34 @@ try {
   </section>
 
   <section id="tab-tools" class="tab-panel">
-    <!-- Lançador: no app normal, cada endereço abre o SEU monitor numa janela
-         própria. Vários hosts = várias janelas. -->
-    <div id="toolsLauncher" class="card largo">
-      <h2>📡 Monitorador de IP</h2>
-      <p class="hint">Abre uma janela que fica pingando um endereço, com terminal ao vivo, cronômetro e contagem de perda de pacotes. Quando o host <strong>cai</strong>, toca uma <strong>sirene</strong> até você silenciar — e, no app instalado, impede a tela de bloquear. <strong>Uma janela por host</strong>: para vigiar vários, abra vários.</p>
-      <div class="input-row" style="max-width:460px">
-        <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false">
-        <button id="monAbrir" type="button" class="btn primary">Abrir monitor&nbsp;↗</button>
-      </div>
+    <!-- Lançador: o TILE. Clicar abre o monitor numa janela própria. Uma
+         janela por host — para vigiar vários, abra vários. -->
+    <div id="toolsLauncher" class="tools-grid">
+      <button id="tileMonitor" type="button" class="tool-tile">
+        <span class="tool-ico">📡</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Monitorador de IP</span>
+          <span class="tool-desc">Pinga um host numa janela própria — terminal ao vivo, cronômetro e perda de pacotes, com sirene quando cai.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
-         (?solo=1&tipo=monitor&ip=...). -->
+         (?solo=1&tipo=monitor). O endereço é informado DENTRO da janela. -->
     <div id="toolsMonitor" hidden>
+      <!-- Antes de começar: pede o host (um por janela). -->
+      <div id="monEntrada" class="mon-entrada">
+        <h2>📡 Monitorador de IP</h2>
+        <p class="hint">Informe o endereço para começar. Esta janela vigia <strong>um host</strong>. Para vigiar outro, abra outro monitor.</p>
+        <div class="input-row" style="max-width:460px">
+          <input id="monIp" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false" autofocus>
+          <button id="monIniciar" type="button" class="btn primary">Iniciar</button>
+        </div>
+      </div>
+
+      <!-- Depois de iniciar: o monitor propriamente dito. -->
+      <div id="monPainel" hidden>
       <div class="mon-cab">
         <span id="monDot" class="mon-dot"></span>
         <span id="monHost" class="mon-host"></span>
@@ -401,7 +415,8 @@ try {
         <button id="monSilenciar" type="button" class="btn">🔇 Silenciar</button>
       </div>
       <div id="monTerm" class="mon-term"></div>
-    </div>
+      </div><!-- #monPainel -->
+    </div><!-- #toolsMonitor -->
   </section>
 
   <section id="tab-config" class="tab-panel">
