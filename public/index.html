@@ -370,7 +370,23 @@ try {
   </section>
 
   <section id="tab-tools" class="tab-panel">
-    <div class="card largo">
+    <!-- Lançador: no app normal, a aba mostra os "tiles" das ferramentas. O do
+         monitor abre numa JANELA própria, para você deixar vigiando enquanto
+         trabalha nas outras abas. -->
+    <div id="toolsLauncher" class="tools-grid">
+      <button id="tileMonitor" type="button" class="tool-tile">
+        <span class="tool-ico">📡</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Monitorador de IP</span>
+          <span class="tool-desc">Vigia vários hosts ao mesmo tempo e toca uma sirene quando um cai. Abre numa janela própria.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+    </div>
+
+    <!-- O monitor em si: escondido no app normal, exibido na janela solta
+         (?solo=1&tipo=monitor). -->
+    <div id="toolsMonitor" class="card largo" hidden>
       <div class="card-head">
         <h2>Monitorador de IP</h2>
         <span id="monBloqueio" class="mon-bloqueio" hidden>🔒🚫 A tela não vai bloquear enquanto monitora</span>

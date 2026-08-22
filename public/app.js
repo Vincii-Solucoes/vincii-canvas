@@ -5179,6 +5179,8 @@ function abrirSolo() {
   document.title = p.nome + ' — Vincii Canvas';
   const rotulo = $('#soloTitulo');
   if (rotulo) rotulo.textContent = p.nome;
+  // O monitor não é uma sessão de host: tem caminho próprio e não bate ponto.
+  if (p.tipo === 'monitor') { abrirMonitorSolo(); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
   } else if (p.tipo === 'desk') {
@@ -6039,7 +6041,36 @@ let monAudioCtx = null;
 let monOsc = null;
 let monVarredura = null;
 
-function onToolsTabShown() { monPoll(); ligarBtnMonitor(); }
+// Janela do monitor já aberta (para focar em vez de abrir outra).
+let monJanela = null;
+
+// No app normal, a aba Ferramentas é um LANÇADOR: o monitor abre em janela
+// própria. Aqui só liga o tile.
+function onToolsTabShown() {
+  const tile = $('#tileMonitor');
+  if (tile && !tile._ligado) { tile._ligado = true; tile.addEventListener('click', abrirMonitorEmJanela); }
+}
+
+function abrirMonitorEmJanela() {
+  // Já aberta? Só traz para frente.
+  if (monJanela && !monJanela.closed) { try { monJanela.focus(); return; } catch { /* abre outra */ } }
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'monitor', nome: 'Monitorador de IP' }).toString();
+  monJanela = window.open(url, 'vc-monitor', 'width=560,height=640');
+  try { if (monJanela) monJanela.focus(); } catch { /* ok */ }
+}
+
+// Dentro da janela solta do monitor: mostra o painel, esconde o lançador e liga
+// o monitor de verdade (polling + sirene + controles).
+function abrirMonitorSolo() {
+  const launcher = $('#toolsLauncher');
+  const painel = $('#toolsMonitor');
+  if (launcher) launcher.hidden = true;
+  if (painel) painel.hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  ligarBtnMonitor();
+  monPoll();
+}
 
 let monBtnLigado = false;
 function ligarBtnMonitor() {
@@ -6567,15 +6598,21 @@ function init() {
       iniciarAgenda();
       // Janela solta: vai direto para a sessão pedida, sem mais nada na tela.
       if (MODO_SOLO) {
-        try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
-        onTerminalTabShown();
+        // O monitor de IP não é uma sessão de terminal — não ativa a aba
+        // Terminal (que criaria um shell local à toa nesta janela).
+        const soloMonitor = new URLSearchParams(location.search).get('tipo') === 'monitor';
+        if (!soloMonitor) {
+          try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
+          onTerminalTabShown();
+        }
         setTimeout(abrirSolo, 60);
       }
     });
   refreshAiVisibility(); // esconde recursos de IA se não houver chave configurada
   checkForUpdate(); // avisa (sem instalar) se houver versão nova no GitHub
   loadLocalInfo(); // login/SO da máquina para o botão "Meu computador"
-  monPoll(); // monitorador de IP: mantém o polling vivo para a sirene tocar de qualquer aba
+  // O monitor de IP roda na JANELA PRÓPRIA dele (aberta pelo tile em
+  // Ferramentas), não na janela principal — por isso o polling não nasce aqui.
   // se o Terminal for a aba inicial, prepara o xterm já na carga
   if ($('#tab-terminal').classList.contains('active')) onTerminalTabShown();
 }
