@@ -6103,6 +6103,7 @@ function iniciarMonitor(ip) {
   document.title = monIp + ' — Monitor';
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
   $('#monParar').addEventListener('click', pararMonitoramento);
+  $('#monRetomar').addEventListener('click', retomarMonitoramento);
   $('#monCopiar').addEventListener('click', () => {
     copiarParaClipboard(monRelatorioTexto);
     toast('Relatório copiado — cole no chamado ou no chat.');
@@ -6192,11 +6193,45 @@ function pararMonitoramento() {
   $('#monAlarme').hidden = true;
   $('#monDot').className = 'mon-dot';
   $('#monParar').hidden = true;
+  $('#monRetomar').hidden = false;
   $('#monCopiar').hidden = false;
   document.title = '⏹ ' + monIp + ' — Monitor';
   // solta o host no servidor (o refcount libera o powerSaveBlocker se for o último)
   api('/api/tools/monitor/remove', { method: 'POST', body: { ip: monIp } }).catch(() => {});
   gerarRelatorioMonitor();
+}
+
+// Retomar: aproveita a MESMA janela e o MESMO host — limpa a tela do ping,
+// zera os contadores (o servidor recomeça do zero no add) e volta a monitorar.
+function retomarMonitoramento() {
+  if (!monParado) return;
+  monParado = false;
+  monUltSeq = 0;
+  monDesde = 0;
+  monUltimoDetalhe = null;
+  monEstavaCaido = false;
+  monSilenciado = false;
+  monRelatorioTexto = '';
+  $('#monTerm').innerHTML = ''; // a tela do ping nasce limpa
+  $('#monTempo').textContent = '00:00:00';
+  $('#monEnviados').textContent = '0';
+  $('#monPerdidos').textContent = '0';
+  $('#monPerda').textContent = '0%';
+  $('#monPerda').classList.remove('ruim');
+  $('#monMedia').textContent = '—';
+  $('#monPing').textContent = '…';
+  $('#monDot').className = 'mon-dot checando';
+  $('#monParar').hidden = false;
+  $('#monRetomar').hidden = true;
+  $('#monCopiar').hidden = true;
+  document.title = monIp + ' — Monitor';
+  api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
+    .then(() => {
+      monTermLinha(`Retomando ping em ${monIp}…`, 'info');
+      monTimerRelogio = setInterval(atualizarRelogio, 1000);
+      monPollDetalhe();
+    })
+    .catch((e) => monTermLinha('Não foi possível retomar: ' + e.message, 'erro'));
 }
 
 function gerarRelatorioMonitor() {
