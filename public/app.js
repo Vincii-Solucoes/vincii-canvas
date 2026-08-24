@@ -5199,6 +5199,8 @@ function abrirSolo() {
   // O monitor não é uma sessão de host: tem caminho próprio e não bate ponto.
   if (p.tipo === 'monitor') { abrirMonitorSolo(); return; }
   if (p.tipo === 'mtr') { abrirMtrSolo(); return; }
+  if (p.tipo === 'tcpping') { abrirTcppingSolo(); return; }
+  if (['portscan', 'dns', 'http', 'subnet'].includes(p.tipo)) { abrirConsultaSolo(p.tipo); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
   } else if (p.tipo === 'desk') {
@@ -6054,16 +6056,26 @@ async function loadConfigTab() {
 
 // --- app normal: a aba Ferramentas é o LANÇADOR (o tile) ---
 let monLauncherLigado = false;
+// Tamanho da janela por ferramenta.
+const TAM_FERRAMENTA = {
+  monitor: '600,560', mtr: '720,600', tcpping: '600,560',
+  portscan: '640,640', dns: '640,600', http: '640,560', subnet: '620,640',
+};
+function abrirFerramenta(tipo) {
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo, nome: tipo }).toString();
+  const j = window.open(url, '_blank', 'width=' + (TAM_FERRAMENTA[tipo] || '640,600').replace(',', ',height='));
+  try { if (j) j.focus(); } catch { /* ok */ }
+}
 function onToolsTabShown() {
   if (monLauncherLigado) return;
   monLauncherLigado = true;
   const tile = $('#tileMonitor');
   if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
   const tileM = $('#tileMtr');
-  if (tileM) tileM.addEventListener('click', () => {
-    const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'mtr', nome: 'MTR' }).toString();
-    const j = window.open(url, '_blank', 'width=720,height=600');
-    try { if (j) j.focus(); } catch { /* ok */ }
+  if (tileM) tileM.addEventListener('click', () => abrirFerramenta('mtr'));
+  // os tiles novos declaram data-tipo e abrem a janela da ferramenta
+  $$('#toolsLauncher .tool-tile[data-tipo]').forEach((t) => {
+    t.addEventListener('click', () => abrirFerramenta(t.dataset.tipo));
   });
 }
 
@@ -6517,6 +6529,253 @@ async function baixarPdfMtr() {
   finally { btn.disabled = false; }
 }
 
+// ---------- Ferramentas: TCP ping (contínuo, host:porta) ----------
+let tpHost = null, tpPorta = null, tpDesde = 0, tpUltSeq = 0, tpParado = false;
+let tpTimerPoll = null, tpTimerRelogio = null, tpUltimo = null, tpRelatorio = '';
+
+function abrirTcppingSolo() {
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  if ($('#toolsTcpping')) $('#toolsTcpping').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  const iniciar = () => {
+    const h = $('#tpHost').value.trim();
+    const p = Number($('#tpPorta').value);
+    if (!h) { toast('Informe o host.', 'erro'); return; }
+    if (!(p >= 1 && p <= 65535)) { toast('Informe a porta (1–65535).', 'erro'); return; }
+    iniciarTcpping(h, p);
+  };
+  $('#tpIniciar').addEventListener('click', iniciar);
+  $('#tpPorta').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
+  $('#tpParar').addEventListener('click', pararTcpping);
+  $('#tpRetomar').addEventListener('click', retomarTcpping);
+  $('#tpPdf').addEventListener('click', baixarPdfTcpping);
+  $('#tpCopiar').addEventListener('click', () => { copiarParaClipboard(tpRelatorio); toast('Relatório copiado.'); });
+  setTimeout(() => { try { $('#tpHost').focus(); } catch {} }, 40);
+}
+
+function iniciarTcpping(host, porta) {
+  tpHost = host; tpPorta = porta; tpParado = false; tpDesde = Date.now(); tpUltSeq = 0;
+  $('#tpEntrada').hidden = true; $('#tpPainel').hidden = false;
+  $('#tpHostLbl').textContent = host + ':' + porta;
+  $('#tpDot').className = 'mon-dot checando';
+  document.title = host + ':' + porta + ' — TCP ping';
+  window.addEventListener('pagehide', () => {
+    try { navigator.sendBeacon('/api/tools/tcpping/remove', new Blob([JSON.stringify({ host: tpHost, porta: tpPorta })], { type: 'application/json' })); } catch {}
+  });
+  api('/api/tools/tcpping/start', { method: 'POST', body: { host, porta } })
+    .then(() => { tpTermLinha(`Conectando em ${host}:${porta}…`, 'info'); tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
+    .catch((e) => { $('#tpEntrada').hidden = false; $('#tpPainel').hidden = true; toast('Não foi possível iniciar: ' + e.message, 'erro'); });
+}
+
+async function tpPoll() {
+  if (tpParado) return;
+  try { const d = await api(`/api/tools/tcpping/detalhe?host=${encodeURIComponent(tpHost)}&porta=${tpPorta}&desde=${tpUltSeq}`); if (!tpParado) tpAplicar(d); }
+  catch {}
+  if (!tpParado) tpTimerPoll = setTimeout(tpPoll, 1000);
+}
+
+function tpAplicar(d) {
+  tpUltimo = d;
+  for (const e of d.novos) {
+    tpUltSeq = Math.max(tpUltSeq, e.seq);
+    if (e.estado === 'aberta') tpTermLinha(`${tpHost}:${tpPorta} aberta — conexão em ${e.latencia != null ? e.latencia : '<1'} ms`, 'ok');
+    else if (e.estado === 'fechada') tpTermLinha(`${tpHost}:${tpPorta} recusada (porta fechada)`, 'perda');
+    else tpTermLinha(`${tpHost}:${tpPorta} sem resposta (tempo esgotado)`, 'perda');
+  }
+  $('#tpTotal').textContent = d.total;
+  $('#tpPerdidos').textContent = d.perdidos;
+  $('#tpFalha').textContent = d.perda + '%';
+  $('#tpFalha').classList.toggle('ruim', d.perda > 0);
+  $('#tpMedia').textContent = d.media != null ? d.media.toFixed(1) + ' ms' : '—';
+  $('#tpUlt').textContent = d.status === 'aberta' && d.ultima != null ? d.ultima.toFixed(1) + ' ms' : (d.status === 'checando' ? '…' : '—');
+  $('#tpDot').className = 'mon-dot ' + (d.status === 'aberta' ? 'ok' : d.status === 'checando' ? 'checando' : 'timeout');
+  document.title = (d.status !== 'aberta' && d.status !== 'checando' ? '🔴 ' : '') + tpHost + ':' + tpPorta + ' — TCP ping';
+}
+
+function tpRelogio() { const s = Math.max(0, Math.floor((Date.now() - tpDesde) / 1000)); const p = (x) => String(x).padStart(2, '0'); const v = `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`; $('#tpTempo').textContent = v; $('#tpTempoS').textContent = v; }
+function tpTermLinha(t, c) { const term = $('#tpTerm'); if (!term) return; const l = el(term, 'div', 'mon-linha ' + (c || '')); l.textContent = `[${new Date().toLocaleTimeString('pt-BR')}] ${t}`; while (term.childElementCount > 500) term.removeChild(term.firstChild); term.scrollTop = term.scrollHeight; }
+
+function pararTcpping() {
+  if (tpParado) return; tpParado = true;
+  clearTimeout(tpTimerPoll); clearInterval(tpTimerRelogio);
+  $('#tpParar').hidden = true; $('#tpRetomar').hidden = false; $('#tpPdf').hidden = false; $('#tpCopiar').hidden = false;
+  api('/api/tools/tcpping/remove', { method: 'POST', body: { host: tpHost, porta: tpPorta } }).catch(() => {});
+  const d = tpUltimo || {}; const dur = Math.max(0, Math.round((Date.now() - tpDesde) / 1000)); const p = (x) => String(x).padStart(2, '0');
+  const ms = (v) => (v != null ? v.toFixed(1) + 'ms' : '—');
+  tpRelatorio = [
+    'Relatório de TCP ping — Vincii Canvas',
+    `Alvo: ${tpHost}:${tpPorta}`,
+    `Duração: ${p(Math.floor(dur / 3600))}:${p(Math.floor(dur % 3600 / 60))}:${p(dur % 60)}`,
+    `Tentativas: ${d.total || 0} · sem resposta: ${d.perdidos || 0} · falha: ${d.total ? Math.round((d.perdidos / d.total) * 100) : 0}%`,
+    `Conexão: mín ${ms(d.melhor)} · média ${d.media != null ? ms(d.media) : '—'} · máx ${ms(d.pior)}`,
+  ].join('\n');
+  tpTermLinha('Medição parada. Baixe o PDF ou copie o resumo.', 'info');
+}
+
+function retomarTcpping() {
+  if (!tpParado) return; tpParado = false; tpDesde = Date.now(); tpUltSeq = 0; tpUltimo = null; tpRelatorio = '';
+  $('#tpTerm').innerHTML = ''; $('#tpTotal').textContent = '0'; $('#tpPerdidos').textContent = '0'; $('#tpFalha').textContent = '0%'; $('#tpFalha').classList.remove('ruim'); $('#tpMedia').textContent = '—'; $('#tpUlt').textContent = '…'; $('#tpTempo').textContent = '00:00:00'; $('#tpTempoS').textContent = '00:00:00';
+  $('#tpDot').className = 'mon-dot checando';
+  $('#tpParar').hidden = false; $('#tpRetomar').hidden = true; $('#tpPdf').hidden = true; $('#tpCopiar').hidden = true;
+  api('/api/tools/tcpping/start', { method: 'POST', body: { host: tpHost, porta: tpPorta } })
+    .then(() => { tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
+    .catch((e) => toast('Não foi possível retomar: ' + e.message, 'erro'));
+}
+
+async function baixarPdfTcpping() {
+  const d = tpUltimo || {}; const btn = $('#tpPdf'); btn.disabled = true;
+  try {
+    const resp = await fetch('/api/tools/tcpping/relatorio-pdf', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host: tpHost, porta: tpPorta, inicio: tpDesde, fim: Date.now(), total: d.total || 0, perdidos: d.perdidos || 0, media: d.media, melhor: d.melhor, pior: d.pior }),
+    });
+    if (!resp.ok) { let m = 'Não foi possível gerar o PDF.'; try { m = (await resp.json()).error || m; } catch {} toast(m, resp.status === 501 ? 'aviso' : 'erro'); return; }
+    const blob = await resp.blob(); const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `relatorio-tcpping-${tpHost.replace(/[^a-zA-Z0-9.-]/g, '_')}-${tpPorta}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Relatório em PDF baixado.');
+  } catch (e) { toast('Erro: ' + e.message, 'erro'); } finally { btn.disabled = false; }
+}
+
+// ---------- Ferramentas: consultas de uma vez (DNS, HTTP/TLS, portas, sub-rede) ----------
+const CONS = {
+  dns: { titulo: '🌐 Consulta DNS', hint: 'Resolve um domínio e compara três resolvers públicos (Google, Cloudflare, Quad9).', placeholder: 'Domínio ou IP — ex.: google.com, 8.8.8.8', tipos: ['A', 'AAAA', 'MX', 'TXT', 'NS', 'CNAME', 'SOA', 'PTR'], btn: 'Resolver' },
+  http: { titulo: '🔒 Checagem HTTP/TLS', hint: 'Status, tempo de resposta e, no https, a validade do certificado.', placeholder: 'URL ou host — ex.: github.com, https://192.168.1.1', btn: 'Checar' },
+  portscan: { titulo: '🚪 Varredura de portas', hint: 'Varre as portas comuns por padrão. Para portas específicas, escreva o host, um espaço e a lista — ex.: 192.168.0.1 22,80,8080.', placeholder: 'IP ou host — ex.: 192.168.0.1 (ou: 192.168.0.1 22,80,443)', btn: 'Varrer' },
+  subnet: { titulo: '🧮 Calculadora de sub-rede (IPv4/IPv6)', hint: 'Informe endereço/prefixo (CIDR). Cálculo offline, sem sair da máquina.', placeholder: 'Endereço/prefixo — ex.: 192.168.1.10/24 ou 2001:db8::/48', btn: 'Calcular' },
+};
+let consTipoAtual = null, consUltimo = null;
+
+function abrirConsultaSolo(tipo) {
+  consTipoAtual = tipo;
+  const cfg = CONS[tipo];
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  if ($('#toolsConsulta')) $('#toolsConsulta').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  $('#consTitulo').textContent = cfg.titulo;
+  $('#consHint').textContent = cfg.hint;
+  $('#consEntrada').placeholder = cfg.placeholder;
+  $('#consBtn').textContent = cfg.btn;
+  document.title = cfg.titulo.replace(/^[^ ]+ /, '') + ' — Ferramentas';
+  // porta extra para portscan (lista) vira parte do fluxo; para dns, o seletor de tipo
+  const sel = $('#consTipo');
+  if (tipo === 'dns') { sel.hidden = false; sel.innerHTML = cfg.tipos.map((t) => `<option>${t}</option>`).join(''); }
+  else sel.hidden = true;
+  const rodar = () => consConsultar(tipo);
+  $('#consBtn').addEventListener('click', rodar);
+  $('#consEntrada').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); rodar(); } });
+  $('#consCopiar').addEventListener('click', () => { copiarParaClipboard(consTexto(tipo)); toast('Resultado copiado.'); });
+  setTimeout(() => { try { $('#consEntrada').focus(); } catch {} }, 40);
+}
+
+async function consConsultar(tipo) {
+  const val = $('#consEntrada').value.trim();
+  if (!val && tipo !== 'portscan') { toast('Informe o endereço.', 'erro'); return; }
+  const alvo = $('#consResultado');
+  const btn = $('#consBtn'); btn.disabled = true;
+  alvo.innerHTML = '<p class="hint">Consultando…</p>';
+  try {
+    if (tipo === 'subnet') {
+      const r = window.subnetLib.calcular(val);
+      consUltimo = r; renderSubnet(r);
+    } else if (tipo === 'dns') {
+      const d = await api(`/api/tools/dns?host=${encodeURIComponent(val)}&tipo=${encodeURIComponent($('#consTipo').value)}`);
+      consUltimo = d; renderDns(d);
+    } else if (tipo === 'http') {
+      const d = await api(`/api/tools/http?url=${encodeURIComponent(val)}`);
+      consUltimo = d; renderHttp(d);
+    } else if (tipo === 'portscan') {
+      // aceita "host" ou "host portas" (lista após espaço)
+      let host = val, portas = 'comuns';
+      const partes = val.split(/\s+/);
+      if (partes.length > 1) { host = partes[0]; portas = partes.slice(1).join(',').split(',').map(Number).filter(Boolean); }
+      else if (val.includes(',')) { host = ''; }
+      if (!host) { toast('Informe o host (e opcionalmente as portas depois de um espaço).', 'erro'); btn.disabled = false; return; }
+      const d = await api('/api/tools/portscan', { method: 'POST', body: { host, portas } });
+      consUltimo = d; renderPortscan(d);
+    }
+    $('#consCopiar').hidden = false;
+  } catch (e) { alvo.innerHTML = ''; el(alvo, 'p', 'hint', '⚠ ' + e.message); }
+  finally { btn.disabled = false; }
+}
+
+function tabelinha(pai, linhas) {
+  const t = el(pai, 'table', 'cons-tab');
+  for (const [k, v] of linhas) { const tr = el(t, 'tr'); el(tr, 'td', 'cons-k', k); el(tr, 'td', 'cons-v', v); }
+  return t;
+}
+
+function renderSubnet(r) {
+  const alvo = $('#consResultado'); alvo.innerHTML = '';
+  if (r.erro) { el(alvo, 'p', 'hint', '⚠ ' + r.erro); return; }
+  if (r.versao === 4) tabelinha(alvo, [
+    ['Endereço', `${r.endereco}/${r.prefixo}`], ['Rede', r.rede], ['Broadcast', r.broadcast],
+    ['Máscara', r.mascara], ['Curinga', r.curinga], ['Primeiro host', r.primeiroHost], ['Último host', r.ultimoHost],
+    ['Total de endereços', r.totalEnderecos], ['Hosts usáveis', r.hostsUsaveis], ['Privado', r.privado ? 'sim' : 'não'],
+  ]);
+  else tabelinha(alvo, [
+    ['Endereço', `${r.endereco}/${r.prefixo}`], ['Rede', r.rede], ['Rede (expandida)', r.redeExpandida],
+    ['Primeiro endereço', r.primeiroHost], ['Último endereço', r.ultimoHost],
+    ['Total de endereços', r.totalEnderecos], ['Tipo', r.tipo],
+  ]);
+}
+
+function renderDns(d) {
+  const alvo = $('#consResultado'); alvo.innerHTML = '';
+  el(alvo, 'p', 'hint', `${d.tipo} de ${d.host} — ${d.tempoMs} ms`);
+  if (d.respostas.length) { const ul = el(alvo, 'div', 'cons-lista'); for (const r of d.respostas) el(ul, 'div', 'cons-item mono', r); }
+  else el(alvo, 'p', 'hint', 'Nenhum registro ' + d.tipo + '.');
+  const t = el(alvo, 'table', 'cons-tab'); const cab = el(t, 'tr'); el(cab, 'th', null, 'Resolver'); el(cab, 'th', null, 'Resposta');
+  for (const r of d.porResolver) { const tr = el(t, 'tr'); el(tr, 'td', 'cons-k', `${r.resolver} (${r.ip})`); el(tr, 'td', 'cons-v', r.ok ? r.respostas.join(', ') || '(vazio)' : '✗ ' + r.erro); }
+}
+
+function renderHttp(d) {
+  const alvo = $('#consResultado'); alvo.innerHTML = '';
+  if (d.erro) { el(alvo, 'p', 'hint', '⚠ ' + d.erro); return; }
+  const linhas = [
+    ['URL', d.url], ['Status', `${d.status} ${d.mensagem || ''}`], ['Tempo', d.tempoMs + ' ms'],
+    ['Servidor', d.servidor || '—'],
+  ];
+  if (d.redirecionaPara) linhas.push(['Redireciona para', d.redirecionaPara]);
+  tabelinha(alvo, linhas);
+  if (d.tls) {
+    el(alvo, 'h3', 'cons-sub', 'Certificado TLS');
+    const dias = d.tls.diasParaExpirar;
+    const cls = dias < 0 ? 'ruim' : dias < 15 ? 'aviso' : '';
+    const t = tabelinha(alvo, [
+      ['Emitido para', d.tls.emitidoPara], ['Emissor', d.tls.emissor],
+      ['Válido de', d.tls.validoDe], ['Válido até', d.tls.validoAte],
+      ['Expira em', (dias < 0 ? `VENCIDO há ${-dias} dia(s)` : `${dias} dia(s)`)],
+      ['Protocolo', d.tls.protocolo || '—'], ['Cadeia confiável', d.tls.confiavel ? 'sim' : 'não (autoassinado/desconhecido)'],
+    ]);
+    if (cls) t.querySelector('tr:nth-child(5)').classList.add(cls);
+  }
+}
+
+function renderPortscan(d) {
+  const alvo = $('#consResultado'); alvo.innerHTML = '';
+  el(alvo, 'p', 'hint', `${d.host} — ${d.resumo.abertas} aberta(s), ${d.resumo.fechadas} fechada(s), ${d.resumo.filtradas} filtrada(s)`);
+  const t = el(alvo, 'table', 'cons-tab'); const cab = el(t, 'tr'); ['Porta', 'Serviço', 'Estado', 'Tempo'].forEach((h) => el(cab, 'th', null, h));
+  for (const p of d.portas) {
+    const tr = el(t, 'tr', p.estado === 'aberta' ? 'ps-aberta' : '');
+    el(tr, 'td', 'mono', String(p.porta)); el(tr, 'td', null, p.servico || '—');
+    el(tr, 'td', 'ps-' + p.estado, p.estado); el(tr, 'td', 'mono', p.tempoMs + ' ms');
+  }
+}
+
+// Texto para o botão Copiar de cada consulta.
+function consTexto(tipo) {
+  const d = consUltimo; if (!d) return '';
+  if (tipo === 'subnet') { if (d.erro) return d.erro; return Object.entries(d).filter(([k]) => k !== 'versao' && k !== 'privado').map(([k, v]) => `${k}: ${v}`).join('\n'); }
+  if (tipo === 'dns') return `${d.tipo} de ${d.host}\n${d.respostas.join('\n')}\n\n` + d.porResolver.map((r) => `${r.resolver}: ${r.ok ? r.respostas.join(', ') : '✗ ' + r.erro}`).join('\n');
+  if (tipo === 'http') { if (d.erro) return d.url + ': ' + d.erro; let s = `${d.url}\nStatus: ${d.status} ${d.mensagem || ''}\nTempo: ${d.tempoMs}ms\nServidor: ${d.servidor || '—'}`; if (d.tls) s += `\nCert: ${d.tls.emitidoPara} (emissor ${d.tls.emissor}), expira em ${d.tls.diasParaExpirar} dia(s), até ${d.tls.validoAte}`; return s; }
+  if (tipo === 'portscan') return `Varredura de ${d.host}\n${d.resumo.abertas} abertas, ${d.resumo.fechadas} fechadas, ${d.resumo.filtradas} filtradas\n\n` + d.portas.map((p) => `${p.porta}\t${p.servico || ''}\t${p.estado}`).join('\n');
+  return '';
+}
+
 // ---------- backup automático ----------
 let bkPodeEscolher = false;
 
@@ -6940,7 +7199,7 @@ function init() {
         // Monitor e MTR não são sessão de terminal — não ativam a aba Terminal
         // (que criaria um shell local à toa nesta janela).
         const tipoSolo = new URLSearchParams(location.search).get('tipo');
-        const soloFerramenta = tipoSolo === 'monitor' || tipoSolo === 'mtr';
+        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet'].includes(tipoSolo);
         if (!soloFerramenta) {
           try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
           onTerminalTabShown();

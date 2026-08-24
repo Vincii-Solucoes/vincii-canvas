@@ -555,6 +555,26 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mtr-tabela tr.mtr-perda { background: color-mix(in srgb, var(--red) 12%, transparent) !important; }
 .mtr-tabela tr.mtr-mudo td.mtr-ip { color: var(--muted); font-style: italic; }
 
+/* Consultas de rede (DNS, HTTP/TLS, portas, sub-rede) */
+#toolsConsulta { padding: 20px 22px; max-width: 720px; }
+#toolsConsulta h2 { margin: 0 0 6px; }
+.cons-resultado { margin-top: 16px; }
+.cons-tab { width: 100%; border-collapse: collapse; margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cons-tab td, .cons-tab th { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; font-size: 13px; }
+.cons-tab tr:last-child td { border-bottom: none; }
+.cons-tab th { background: var(--panel2); color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .3px; }
+.cons-tab td.cons-k { color: var(--muted); white-space: nowrap; width: 40%; }
+.cons-tab td.cons-v { color: var(--text); font-family: var(--mono); word-break: break-word; }
+.cons-tab tr.ruim td { color: var(--red); font-weight: 700; }
+.cons-tab tr.aviso td { color: var(--yellow); font-weight: 600; }
+.cons-sub { margin: 14px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.cons-lista { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.cons-item { padding: 6px 10px; background: var(--panel2); border-radius: 6px; font-size: 13px; word-break: break-all; }
+.cons-tab td.ps-aberta { color: var(--green, #2ea043); font-weight: 700; }
+.cons-tab td.ps-fechada { color: var(--muted); }
+.cons-tab td.ps-filtrada { color: var(--yellow); }
+.cons-tab tr.ps-aberta { background: color-mix(in srgb, var(--green, #2ea043) 12%, transparent); }
+
 .modal-root {
   display: none;
   position: fixed;

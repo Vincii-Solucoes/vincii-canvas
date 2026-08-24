@@ -11,6 +11,8 @@ const backup = require('./lib/backup');
 const serialbridge = require('./lib/serialbridge');
 const monitor = require('./lib/monitor');
 const mtr = require('./lib/mtr');
+const tcpping = require('./lib/tcpping');
+const redetools = require('./lib/redetools');
 const relatoriopdf = require('./lib/relatoriopdf');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
@@ -1104,6 +1106,52 @@ app.post('/api/tools/mtr/relatorio-pdf', async (req, res) => {
   } catch (e) {
     fail(res, 500, `Não foi possível gerar o PDF: ${e.message}`);
   }
+});
+
+// ---------- Ferramentas: TCP ping (handshake até host:porta) ----------
+app.post('/api/tools/tcpping/start', (req, res) => {
+  const b = req.body || {};
+  const r = tcpping.iniciar(b.host, b.porta);
+  if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível iniciar.');
+  res.json({ ok: true });
+});
+app.post('/api/tools/tcpping/remove', (req, res) => {
+  const b = req.body || {};
+  tcpping.remover(b.host, b.porta);
+  res.json({ ok: true });
+});
+app.get('/api/tools/tcpping/detalhe', (req, res) => {
+  const d = tcpping.detalhe(req.query.host, req.query.porta, req.query.desde);
+  if (!d) return fail(res, 404, 'Este alvo não está sendo medido.');
+  res.json(d);
+});
+app.post('/api/tools/tcpping/relatorio-pdf', async (req, res) => {
+  const dados = relatoriopdf.normalizarDadosTcpping(req.body);
+  if (!dados) return fail(res, 400, 'Dados do relatório inválidos.');
+  if (!relatoriopdf.disponivel()) return fail(res, 501, 'PDF disponível apenas no app instalado.');
+  try {
+    const pdf = await relatoriopdf.gerarPdf(relatoriopdf.htmlRelatorioTcpping(dados));
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(pdf);
+  } catch (e) { fail(res, 500, `Não foi possível gerar o PDF: ${e.message}`); }
+});
+
+// ---------- Ferramentas: consultas de uma vez (DNS, HTTP/TLS, portas) ----------
+app.get('/api/tools/dns', async (req, res) => {
+  const d = await redetools.dnsLookup(req.query.host, req.query.tipo);
+  if (d.erro) return fail(res, 400, d.erro);
+  res.json(d);
+});
+app.get('/api/tools/http', async (req, res) => {
+  const d = await redetools.httpCheck(req.query.url);
+  if (d.erro && !d.url) return fail(res, 400, d.erro);
+  res.json(d);
+});
+app.post('/api/tools/portscan', async (req, res) => {
+  const b = req.body || {};
+  const d = await redetools.portScan(b.host, b.portas);
+  if (d.erro) return fail(res, 400, d.erro);
+  res.json(d);
 });
 
 // O relatório do monitor em PDF — como o relatório de comandos, um arquivo

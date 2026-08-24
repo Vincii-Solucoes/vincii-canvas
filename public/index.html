@@ -30,6 +30,7 @@ try {
 <script src="comando.js" defer></script>
 <script src="serial.js" defer></script>
 <script src="host-icons.js" defer></script>
+<script src="subnet.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
 </head>
@@ -389,6 +390,46 @@ try {
         </span>
         <span class="tool-abrir">Abrir&nbsp;↗</span>
       </button>
+      <button id="tileTcpping" type="button" class="tool-tile" data-tipo="tcpping">
+        <span class="tool-ico">🔌</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">TCP ping</span>
+          <span class="tool-desc">Mede o handshake TCP até um host:porta ao vivo — checa se o serviço (443, 22, 3306…) está de pé mesmo quando o ICMP é bloqueado. Com PDF.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tilePortscan" type="button" class="tool-tile" data-tipo="portscan">
+        <span class="tool-ico">🚪</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Varredura de portas</span>
+          <span class="tool-desc">Checa quais portas de um host estão abertas, fechadas ou filtradas — as comuns ou uma lista sua.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tileDns" type="button" class="tool-tile" data-tipo="dns">
+        <span class="tool-ico">🌐</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Consulta DNS</span>
+          <span class="tool-desc">Resolve A, AAAA, MX, TXT, NS, CNAME, SOA e PTR — e compara três resolvers públicos para ver a propagação.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tileHttp" type="button" class="tool-tile" data-tipo="http">
+        <span class="tool-ico">🔒</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Checagem HTTP/TLS</span>
+          <span class="tool-desc">Status, tempo de resposta e — no https — a validade do certificado (dias até expirar), para não ser pego por cert vencido.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tileSubnet" type="button" class="tool-tile" data-tipo="subnet">
+        <span class="tool-ico">🧮</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Calculadora de sub-rede</span>
+          <span class="tool-desc">IPv4 e IPv6: de um endereço/prefixo (CIDR) calcula rede, broadcast, faixa de hosts, máscara e total de endereços. Offline.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
@@ -466,6 +507,55 @@ try {
         </div>
       </div>
     </div><!-- #toolsMtr -->
+
+    <!-- TCP ping: contínuo, host:porta. Janela solta ?solo=1&tipo=tcpping. -->
+    <div id="toolsTcpping" hidden>
+      <div id="tpEntrada" class="mon-entrada">
+        <h2>🔌 TCP ping</h2>
+        <p class="hint">Mede o tempo do handshake TCP até <strong>um host e porta</strong>. Útil quando o ping (ICMP) é bloqueado mas o serviço responde.</p>
+        <div class="input-row" style="max-width:460px">
+          <input id="tpHost" placeholder="IP ou host — ex.: 192.168.0.1, roteador.local" spellcheck="false" autofocus>
+          <input id="tpPorta" type="number" min="1" max="65535" placeholder="porta" style="max-width:110px">
+          <button id="tpIniciar" type="button" class="btn primary">Iniciar</button>
+        </div>
+      </div>
+      <div id="tpPainel" hidden>
+        <div class="mon-cab">
+          <span id="tpDot" class="mon-dot"></span>
+          <span id="tpHostLbl" class="mon-host"></span>
+          <div class="mon-cab-dir">
+            <span id="tpTempo" class="mon-bloqueio">00:00:00</span>
+            <button id="tpParar" type="button" class="btn small">⏹ Parar e gerar relatório</button>
+            <button id="tpRetomar" type="button" class="btn small" hidden>▶ Retomar</button>
+            <button id="tpPdf" type="button" class="btn small primary" hidden>📄 Baixar PDF</button>
+            <button id="tpCopiar" type="button" class="btn small" hidden>📋 Copiar</button>
+          </div>
+        </div>
+        <div class="mon-stats">
+          <div class="mon-stat"><span class="mon-stat-num" id="tpTempoS">00:00:00</span><span class="mon-stat-rot">tempo</span></div>
+          <div class="mon-stat"><span class="mon-stat-num" id="tpTotal">0</span><span class="mon-stat-rot">tentativas</span></div>
+          <div class="mon-stat"><span class="mon-stat-num" id="tpPerdidos">0</span><span class="mon-stat-rot">sem resp.</span></div>
+          <div class="mon-stat"><span class="mon-stat-num" id="tpFalha">0%</span><span class="mon-stat-rot">falha</span></div>
+          <div class="mon-stat"><span class="mon-stat-num" id="tpMedia">—</span><span class="mon-stat-rot">média</span></div>
+          <div class="mon-stat"><span class="mon-stat-num" id="tpUlt">—</span><span class="mon-stat-rot">último</span></div>
+        </div>
+        <div id="tpTerm" class="mon-term"></div>
+      </div>
+    </div><!-- #toolsTcpping -->
+
+    <!-- Genérico de CONSULTA (uma vez): DNS, HTTP/TLS, portas, sub-rede.
+         Configurado por JS conforme o tipo. -->
+    <div id="toolsConsulta" hidden>
+      <h2 id="consTitulo"></h2>
+      <p id="consHint" class="hint"></p>
+      <div class="input-row" style="max-width:560px">
+        <input id="consEntrada" spellcheck="false" autofocus>
+        <select id="consTipo" hidden></select>
+        <button id="consBtn" type="button" class="btn primary">Consultar</button>
+        <button id="consCopiar" type="button" class="btn" hidden>📋 Copiar</button>
+      </div>
+      <div id="consResultado" class="cons-resultado"></div>
+    </div><!-- #toolsConsulta -->
   </section>
 
   <section id="tab-config" class="tab-panel">
