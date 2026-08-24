@@ -131,20 +131,31 @@ if (!electronApp.requestSingleInstanceLock()) {
   // zero dependência). A janela é efêmera e não acessa nada além do HTML.
   try {
     const relatoriopdf = require('../lib/relatoriopdf');
+    const fsPdf = require('fs');
+    const osPdf = require('os');
+    const pathPdf = require('path');
     relatoriopdf.definirGerador((html) => new Promise((resolve, reject) => {
+      // O Chromium recusa `data:` como navegação principal (ERR_FAILED) —
+      // então o HTML vai para um arquivo temporário e entra via loadFile.
+      const tmp = pathPdf.join(osPdf.tmpdir(), `vc-relatorio-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
+      try { fsPdf.writeFileSync(tmp, html); } catch (e) { reject(e); return; }
       let win = new BrowserWindow({
         show: false, width: 800, height: 1100,
         webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true },
       });
-      const fim = (fn, arg) => { try { win.destroy(); } catch { /* já foi */ } win = null; fn(arg); };
+      const fim = (fn, arg) => {
+        try { win.destroy(); } catch { /* já foi */ }
+        win = null;
+        try { fsPdf.unlinkSync(tmp); } catch { /* já saiu */ }
+        fn(arg);
+      };
       win.webContents.once('did-finish-load', () => {
         win.webContents.printToPDF({ pageSize: 'A4', printBackground: true })
           .then((buf) => fim(resolve, buf))
           .catch((e) => fim(reject, e));
       });
       win.webContents.once('did-fail-load', (_e, code, desc) => fim(reject, new Error(`carregamento falhou: ${desc || code}`)));
-      win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
-        .catch((e) => fim(reject, e));
+      win.loadFile(tmp).catch((e) => fim(reject, e));
     }));
   } catch (e) {
     console.error('[relatorio] printToPDF indisponível:', e && e.message);
