@@ -66,6 +66,23 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   igual(s.calcular('2001:db8::/129').erro !== undefined, true, 'prefixo IPv6 > 128 é recusado');
   igual(s.calcular('gggg::/64').erro !== undefined, true, 'hexadecimal inválido é recusado');
   igual(s.calcular('2001::db8::1/64').erro !== undefined, true, 'dois "::" é recusado');
+
+  // má-formação que o filter() cego aceitava (auditoria)
+  igual(s.calcular(':1:2:3:4:5:6:7:8/64').erro !== undefined, true, '":" no início é recusado');
+  igual(s.calcular('2001:db8::1:/64').erro !== undefined, true, '":" no fim é recusado');
+  igual(s.calcular('2001:db8:::1/64').erro !== undefined, true, '":::" é recusado');
+
+  // IPv4 embutido (RFC 4291): forma legítima, deve ser aceita
+  const mapped = s.calcular('::ffff:192.168.1.1/128');
+  igual(mapped.erro, undefined, 'IPv4-mapped ::ffff:a.b.c.d é aceito');
+  igual(mapped.rede, '::ffff:c0a8:101', '::ffff:192.168.1.1 vira ::ffff:c0a8:101');
+  igual(s.calcular('64:ff9b::192.0.2.33/96').erro, undefined, 'NAT64 com IPv4 embutido é aceito');
+  igual(s.calcular('::ffff:999.1.1.1/128').erro !== undefined, true, 'IPv4 embutido inválido é recusado');
+
+  // classificação de tipo (auditoria)
+  igual(s.calcular('fc00::/7').tipo, 'ULA (privado, fc00::/7)', 'fc00::/7 (o próprio bloco) é ULA, não global');
+  igual(s.calcular('::1/128').tipo, 'loopback (::1)', '::1/128 é loopback, não global unicast');
+  igual(s.calcular('::/128').tipo, 'não especificado (::)', ':: é não especificado');
 }
 
 // ---------- compressão ida-e-volta ----------

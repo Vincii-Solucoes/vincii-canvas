@@ -37,6 +37,7 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
 {
   ok(mon._ipValido('192.168.0.1') && mon._ipValido('roteador.local') && mon._ipValido('fe80::1'), 'IPv4/host/IPv6 valem');
   ok(!mon._ipValido('8.8.8.8; rm -rf /') && !mon._ipValido('8.8.8.8 && x') && !mon._ipValido(''), 'metacaractere/espaço/vazio não valem');
+  ok(!mon._ipValido('-c5') && !mon._ipValido('-i0.2'), 'hífen inicial (flag do ping) não vale — injeção de argumento');
 }
 
 // ---------- 4. motor por host: contadores, log, alarme, refcount ----------

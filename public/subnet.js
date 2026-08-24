@@ -68,24 +68,48 @@ function calcularV4(entrada) {
 
 // ---------- IPv6 ----------
 
+// "a.b.c.d" (IPv4 embutido, RFC 4291 §2.2) → dois grupos de 16 bits, ou null.
+function ipv4ParaGrupos(s) {
+  if (!ehIPv4(s)) return null;
+  const o = String(s).split('.').map(Number);
+  return [(((o[0] << 8) | o[1]) >>> 0).toString(16), (((o[2] << 8) | o[3]) >>> 0).toString(16)];
+}
+
 // Expande "2001:db8::1" para os 8 grupos completos e devolve BigInt.
+// Rejeita má-formação de verdade: um grupo vazio só é legítimo NA fronteira do
+// "::". Antes, `.filter(x => x !== '')` engolia ":" solto na ponta e ":::",
+// aceitando ":1:2:..:8" e "2001:db8:::1" como se fossem válidos.
 function v6ParaBig(ip) {
-  let s = String(ip || '').trim();
+  const s = String(ip || '').trim();
   if (!s.includes(':')) return null;
-  let cabeca = s;
-  let cauda = '';
-  if (s.includes('::')) {
-    const partes = s.split('::');
-    if (partes.length > 2) return null;
-    cabeca = partes[0];
-    cauda = partes[1] || '';
+  const temComp = s.includes('::');
+  if (temComp && s.split('::').length > 2) return null; // dois "::" não valem
+  const [cabecaStr, caudaStr] = temComp ? s.split('::') : [s, ''];
+  // Cada lado vira grupos; vazio no meio (=> ":" na ponta ou ":::") é inválido.
+  const tok = (lado) => {
+    if (lado === '') return [];
+    const gs = lado.split(':');
+    return gs.some((g) => g === '') ? null : gs;
+  };
+  let gc = tok(cabecaStr);
+  let gt = tok(caudaStr);
+  if (gc === null || gt === null) return null;
+  // IPv4 embutido só pode ser o ÚLTIMO grupo do endereço inteiro.
+  const todos = [...gc, ...gt];
+  for (let i = 0; i < todos.length; i++) {
+    if (todos[i].includes('.') && i !== todos.length - 1) return null;
   }
-  const gc = cabeca ? cabeca.split(':').filter((x) => x !== '') : [];
-  const gt = cauda ? cauda.split(':').filter((x) => x !== '') : [];
-  if (!s.includes('::') && gc.length !== 8) return null;
+  const expandir = (arr) => {
+    if (!arr.length || !arr[arr.length - 1].includes('.')) return arr;
+    const par = ipv4ParaGrupos(arr[arr.length - 1]);
+    return par ? [...arr.slice(0, -1), ...par] : null;
+  };
+  if (gt.length) { gt = expandir(gt); if (gt === null) return null; }
+  else { gc = expandir(gc); if (gc === null) return null; }
+  if (!temComp && gc.length !== 8) return null;
   const faltam = 8 - (gc.length + gt.length);
-  if (s.includes('::')) { if (faltam < 1) return null; } else if (faltam !== 0) return null;
-  const grupos = [...gc, ...Array(s.includes('::') ? faltam : 0).fill('0'), ...gt];
+  if (temComp) { if (faltam < 1) return null; } else if (faltam !== 0) return null;
+  const grupos = [...gc, ...Array(temComp ? faltam : 0).fill('0'), ...gt];
   if (grupos.length !== 8) return null;
   let n = 0n;
   for (const g of grupos) {
@@ -132,10 +156,13 @@ function calcularV6(entrada) {
   const gUlt = bigParaV6(ultimo);
   const tipo = (() => {
     const primeiro = Number((rede >> 120n) & 0xffn);
-    if (prefixo >= 8 && (rede >> 121n) === 0b1111110n) return 'ULA (privado, fc00::/7)';
+    if (rede === 0n && prefixo === 128) return 'não especificado (::)';
+    if (rede === 1n && prefixo === 128) return 'loopback (::1)';
+    // a checagem de bits basta; o antigo `prefixo >= 8` classificava o próprio
+    // fc00::/7 (prefixo 7) errado como global unicast.
+    if ((rede >> 121n) === 0b1111110n) return 'ULA (privado, fc00::/7)';
     if ((rede >> 118n) === 0b1111111010n) return 'link-local (fe80::/10)';
     if (primeiro === 0xff) return 'multicast (ff00::/8)';
-    if (rede === 0n && prefixo === 128) return 'não especificado (::)';
     return 'global unicast';
   })();
   return {

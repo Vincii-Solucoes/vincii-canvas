@@ -6153,7 +6153,9 @@ function iniciarMonitor(ip) {
 
   api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
     .then(() => {
+      if (monParado) return; // Parar clicado durante o /add em voo: não vazar timer
       monTermLinha(`Iniciando ping em ${monIp}…`, 'info');
+      clearInterval(monTimerRelogio);
       monTimerRelogio = setInterval(atualizarRelogio, 1000);
       monPollDetalhe();
     })
@@ -6266,7 +6268,9 @@ function retomarMonitoramento() {
   document.title = monIp + ' — Monitor';
   api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
     .then(() => {
+      if (monParado) return;
       monTermLinha(`Retomando ping em ${monIp}…`, 'info');
+      clearInterval(monTimerRelogio);
       monTimerRelogio = setInterval(atualizarRelogio, 1000);
       monPollDetalhe();
     })
@@ -6422,6 +6426,8 @@ function iniciarMtr(host) {
   });
   api('/api/tools/mtr/start', { method: 'POST', body: { host } })
     .then(() => {
+      if (mtrParado) return; // Parar clicado durante o /start em voo: não vazar timer
+      clearInterval(mtrTimerRelogio);
       mtrTimerRelogio = setInterval(mtrRelogio, 1000);
       mtrPoll();
     })
@@ -6481,7 +6487,7 @@ function retomarMtr() {
   $('#mtrParar').hidden = false; $('#mtrRetomar').hidden = true; $('#mtrPdf').hidden = true; $('#mtrCopiar').hidden = true;
   document.title = mtrHost + ' — MTR';
   api('/api/tools/mtr/start', { method: 'POST', body: { host: mtrHost } })
-    .then(() => { $('#mtrStatus').textContent = 'Traçando a rota até ' + mtrHost + '…'; mtrTimerRelogio = setInterval(mtrRelogio, 1000); mtrPoll(); })
+    .then(() => { if (mtrParado) return; $('#mtrStatus').textContent = 'Traçando a rota até ' + mtrHost + '…'; clearInterval(mtrTimerRelogio); mtrTimerRelogio = setInterval(mtrRelogio, 1000); mtrPoll(); })
     .catch((e) => toast('Não foi possível retomar: ' + e.message, 'erro'));
 }
 
@@ -6571,7 +6577,10 @@ function iniciarTcpping(host, porta) {
     try { navigator.sendBeacon('/api/tools/tcpping/remove', new Blob([JSON.stringify({ host: tpHost, porta: tpPorta })], { type: 'application/json' })); } catch {}
   });
   api('/api/tools/tcpping/start', { method: 'POST', body: { host, porta } })
-    .then(() => { tpTermLinha(`Conectando em ${host}:${porta}…`, 'info'); tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
+    // se o usuário já clicou Parar durante o /start em voo (duplo-clique,
+    // latência), NÃO instalar relógio/poll: senão o setInterval fica órfão
+    // rodando na tela "parada" e cada Retomar acumula mais um.
+    .then(() => { if (tpParado) return; tpTermLinha(`Conectando em ${host}:${porta}…`, 'info'); clearInterval(tpTimerRelogio); tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
     .catch((e) => { $('#tpEntrada').hidden = false; $('#tpPainel').hidden = true; toast('Não foi possível iniciar: ' + e.message, 'erro'); });
 }
 
@@ -6629,7 +6638,7 @@ function retomarTcpping() {
   $('#tpDot').className = 'mon-dot checando';
   $('#tpParar').hidden = false; $('#tpRetomar').hidden = true; $('#tpPdf').hidden = true; $('#tpCopiar').hidden = true;
   api('/api/tools/tcpping/start', { method: 'POST', body: { host: tpHost, porta: tpPorta } })
-    .then(() => { tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
+    .then(() => { if (tpParado) return; clearInterval(tpTimerRelogio); tpTimerRelogio = setInterval(tpRelogio, 1000); tpPoll(); })
     .catch((e) => toast('Não foi possível retomar: ' + e.message, 'erro'));
 }
 
