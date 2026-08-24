@@ -66,6 +66,59 @@ function agruparHostsPlano(hosts) {
   return out;
 }
 
+// Rótulo do grupo principal de um host, para desambiguar homônimos: "Infra",
+// "Infra › Web" quando há subgrupo, ou "Sem grupo" quando não tem grupo.
+function rotuloDoGrupo(h) {
+  const g = ((h && h.group) || '').trim();
+  const s = g ? ((h.subgroup || '').trim()) : '';
+  if (g && s) return `${g} › ${s}`;
+  if (g) return g;
+  return SEM_GRUPO;
+}
+
+// Endereço enxuto, só para o desempate final entre dois homônimos do MESMO
+// grupo — não precisa ser bonito, precisa ser único.
+function enderecoCurto(h) {
+  if (!h) return '';
+  if (h.host) return String(h.host);
+  if (h.url) return String(h.url);
+  return '';
+}
+
+// Desambiguação de nomes repetidos. Dois hosts chamados "teampass" viram
+// "teampass (Infra)" e "teampass (Clientes)": o nome sozinho não diz qual é.
+// Devolve um Map id->sufixo (SEM parênteses); nomes ÚNICOS não entram no mapa —
+// ficam limpos, sem poluição. Entre homônimos, o grupo principal costuma bastar;
+// quando nem ele separa (dois "teampass" no mesmo grupo), entra o endereço.
+function desambiguarHosts(hosts) {
+  const porNome = new Map();
+  for (const h of hosts || []) {
+    const n = ((h && h.name) || '').trim().toLowerCase();
+    if (!n) continue;
+    if (!porNome.has(n)) porNome.set(n, []);
+    porNome.get(n).push(h);
+  }
+  const suf = new Map();
+  for (const lista of porNome.values()) {
+    if (lista.length < 2) continue; // nome único: sem sufixo
+    const porTag = new Map();
+    for (const h of lista) {
+      const tag = rotuloDoGrupo(h);
+      if (!porTag.has(tag)) porTag.set(tag, []);
+      porTag.get(tag).push(h);
+    }
+    for (const [tag, mesmos] of porTag) {
+      if (mesmos.length === 1) { suf.set(mesmos[0].id, tag); continue; }
+      // homônimos no MESMO grupo: o grupo não basta, o endereço desempata
+      for (const h of mesmos) {
+        const addr = enderecoCurto(h);
+        suf.set(h.id, addr ? `${tag} · ${addr}` : tag);
+      }
+    }
+  }
+  return suf;
+}
+
 // Subgrupos que já existem DENTRO de um grupo, para o datalist do formulário —
 // sugerir os de outro grupo espalharia nomes de um cliente no cadastro de outro.
 function subgruposDe(hosts, grupo) {
@@ -81,8 +134,10 @@ if (typeof window !== 'undefined') {
   window.agruparHosts = agruparHosts;
   window.agruparHostsPlano = agruparHostsPlano;
   window.subgruposDe = subgruposDe;
+  window.desambiguarHosts = desambiguarHosts;
+  window.rotuloDoGrupo = rotuloDoGrupo;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { agruparHosts, agruparHostsPlano, subgruposDe };
+  module.exports = { agruparHosts, agruparHostsPlano, subgruposDe, desambiguarHosts, rotuloDoGrupo };
 }

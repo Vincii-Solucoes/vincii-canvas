@@ -1295,6 +1295,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   background: color-mix(in srgb, var(--yellow) 9%, transparent);
 }
 .host-item .hname { display: flex; align-items: center; gap: 2px; }
+/* "(grupo)" de desambiguação: secundário, para o nome repetido não confundir */
+.hname-grupo { color: var(--muted); font-weight: 400; font-size: .92em; white-space: nowrap; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- aba Favoritos ---------- */
 .fav-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }

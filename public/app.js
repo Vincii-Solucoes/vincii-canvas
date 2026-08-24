@@ -167,6 +167,22 @@ function existingGroups() {
 }
 function existingSubgroups(grupo) { return subgruposDe(state.hosts, grupo); }
 
+// Desambiguação de nomes repetidos (id -> sufixo tipo "Infra"): só nomes que se
+// repetem ganham "(grupo)". Recalculado a cada leitura do estado (loadState).
+let desambiguacaoHosts = new Map();
+function sufixoDesambiguacao(h) { return (h && desambiguacaoHosts.get(h.id)) || ''; }
+// Para textos simples (option, toast, título): "teampass (Infra)" ou só o nome.
+function nomeHostCompleto(h) {
+  const suf = sufixoDesambiguacao(h);
+  return suf ? `${(h && h.name) || ''} (${suf})` : ((h && h.name) || '');
+}
+// Para as listas: escreve o nome e, quando repetido, um "(grupo)" secundário.
+function anexarNomeHost(alvo, h) {
+  el(alvo, 'span', null, (h && h.name) || '');
+  const suf = sufixoDesambiguacao(h);
+  if (suf) el(alvo, 'span', 'hname-grupo', ` (${suf})`);
+}
+
 // ---------- abas ----------
 function initTabs() {
   $$('.tabs button').forEach((btn) => btn.addEventListener('click', () => {
@@ -196,6 +212,7 @@ let assinaturaDoEstado = null;
 
 async function loadState(sePrecisar) {
   const novo = await api('/api/state');
+  desambiguacaoHosts = desambiguarHosts(novo.hosts); // nomes repetidos → "(grupo)"
   const assinatura = JSON.stringify(novo);
   // `sePrecisar` é o modo do tique periódico: sai calado quando nada mudou.
   // Quem chama depois de salvar alguma coisa NÃO passa a flag, e redesenha
@@ -1600,7 +1617,8 @@ function fillHistHostFilter() {
   for (const h of state.hosts) {
     const o = document.createElement('option');
     o.value = h.id;
-    o.textContent = `${h.name} (${h.host})`;
+    const suf = sufixoDesambiguacao(h);
+    o.textContent = suf ? `${h.name} (${suf}) — ${h.host}` : `${h.name} (${h.host})`;
     sel.appendChild(o);
   }
   sel.value = cur;
@@ -3312,7 +3330,7 @@ function renderExecControls() {
       label.appendChild(cb);
       makeAvatar(label, h, 'avatar-sm');
       const info = el(label, 'div', 'info');
-      el(info, 'div', 'hname', h.name);
+      anexarNomeHost(el(info, 'div', 'hname'), h);
       el(info, 'div', 'haddr', hostAddrLabel(h));
     }
   }
@@ -3633,7 +3651,7 @@ function renderHostSidebar() {
     makeAvatar(item, h);
     const info = el(item, 'div', 'info');
     const nameRow = el(info, 'div', 'hname');
-    el(nameRow, 'span', null, h.name);
+    anexarNomeHost(nameRow, h);
     if (h.protocol === 'telnet') el(nameRow, 'span', 'proto-badge', 'TELNET');
     else if (h.protocol === 'ftp') el(nameRow, 'span', 'proto-badge', 'FTP');
     else if (h.protocol === 'vnc') el(nameRow, 'span', 'proto-badge', 'VNC');
