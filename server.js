@@ -298,9 +298,18 @@ app.get('/api/janelas', (req, res) => {
 // segredo ao navegador. A leitura do valor acontece só no momento da conexão,
 // dentro do processo (lib/credenciais.js), e para RDP/VNC pela rota própria.
 
-function cofrePublico(c) {
+function cofrePublico(c, detalhado) {
   const adapt = cofres.pegar(c.tipo);
-  const guardados = segredosDeCofre.pegar(c.apelido);
+  // Descriptografar o cofre abre o Keychain no macOS. safeStorage é SÍNCRONO,
+  // então isso CONGELA o event loop (e o app inteiro) enquanto o diálogo de
+  // senha espera. Ler o segredo só para desenhar a lista travava toda janela no
+  // arranque. Só lê quando: (a) a tela pede explicitamente o detalhe (editar um
+  // cofre — momento legítimo de pedir), ou (b) o Keychain já foi autorizado
+  // nesta sessão / não há proteção de sistema (aí `pegar` não abre diálogo).
+  const semPrompt = segredosDeCofre.estadoDaProtecao() !== 'ainda-nao-perguntado';
+  const lerSegredo = detalhado || semPrompt;
+  const guardados = lerSegredo ? segredosDeCofre.pegar(c.apelido) : null;
+  const chavesSecretas = adapt ? adapt.config.filter((f) => f.segredo).map((f) => f.chave) : [];
   return {
     apelido: c.apelido,
     tipo: c.tipo,
@@ -309,8 +318,10 @@ function cofrePublico(c) {
     // Nunca o valor: só se existe. É o que a tela precisa para mostrar
     // "(preenchido — deixe em branco para manter)".
     espelharSistemas: c.espelharSistemas !== false,
-    preenchidos: (adapt ? adapt.config.filter((f) => f.segredo).map((f) => f.chave) : [])
-      .filter((k) => !!guardados[k]),
+    preenchidos: guardados ? chavesSecretas.filter((k) => !!guardados[k]) : [],
+    // A tela distingue "sei que está vazio" de "não li ainda (Keychain fechado)":
+    // sem isto, um cofre com senha salva pareceria vazio no arranque.
+    segredoIndeterminado: !lerSegredo && chavesSecretas.length > 0,
     certificadoFixado: c.certificadoFixado || null,
     desconhecido: !adapt,
   };
@@ -318,9 +329,13 @@ function cofrePublico(c) {
 
 app.get('/api/cofres', (req, res) => {
   dadosDeCofre.renovarSeVencido();
+  // ?detalhado=1: a tela está gerenciando cofres (aba Configurações, editar) e
+  // aceita o custo/prompt do Keychain para saber os campos preenchidos. Sem ele
+  // (arranque, redesenho comum), a listagem NÃO abre o Keychain — não congela.
+  const detalhado = req.query.detalhado === '1' || req.query.detalhado === 'true';
   res.json({
     catalogo: cofres.catalogo(),
-    cofres: credenciais.listaDeCofres().map(cofrePublico),
+    cofres: credenciais.listaDeCofres().map((c) => cofrePublico(c, detalhado)),
     // Estado descritivo, e NÃO um booleano obtido perguntando ao sistema: a
     // pergunta abre o Keychain, e desenhar tela não é motivo para isso.
     protecao: segredosDeCofre.estadoDaProtecao(),
@@ -419,7 +434,7 @@ app.post('/api/cofres', (req, res) => {
   // pessoa mais quer ver o resultado é justamente o segundo depois de salvar.
   // Segue sem esperar: a resposta do formulário não fica presa no tempo do ERP.
   dadosDeCofre.renovarAgora(apelido).catch(() => {});
-  res.json({ cofre: cofrePublico(credenciais.cofrePorApelido(apelido)) });
+  res.json({ cofre: cofrePublico(credenciais.cofrePorApelido(apelido), true) });
 });
 
 app.delete('/api/cofres/:apelido', (req, res) => {

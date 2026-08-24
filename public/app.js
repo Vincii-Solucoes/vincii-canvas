@@ -456,8 +456,13 @@ function mostrarCampo(elemento, visivel) {
 
 let cofresEmCache = { catalogo: [], cofres: [], chavesProtegidas: false };
 
-async function carregarCofres() {
-  try { cofresEmCache = await api('/api/cofres'); } catch { /* tela offline: mantém o que tinha */ }
+// `detalhado` só quando a tela está gerenciando cofres (editar, abrir a aba
+// Configurações): aí o servidor pode abrir o Keychain para saber os campos
+// preenchidos. No arranque e nos redesenhos comuns fica false — senão a
+// descriptografia síncrona do cofre congelaria o app no diálogo de senha.
+async function carregarCofres(detalhado) {
+  const url = detalhado ? '/api/cofres?detalhado=1' : '/api/cofres';
+  try { cofresEmCache = await api(url); } catch { /* tela offline: mantém o que tinha */ }
   return cofresEmCache;
 }
 
@@ -515,6 +520,7 @@ function renderCofres() {
     const meta = el(card, 'div', 'meta');
     el(meta, 'span', 'tag', c.config.baseUrl || '(sem endereço)');
     if (c.preenchidos.length) el(meta, 'span', 'tag', 'chave configurada');
+    else if (c.segredoIndeterminado) el(meta, 'span', 'tag', '🔒 protegido (abra para ver)');
     else el(meta, 'span', 'tag tag-warn', 'sem chave');
     if (c.certificadoFixado) el(meta, 'span', 'tag', 'certificado fixado');
     // Quantos hosts dependem deste cofre: é o número que decide se remover dói.
@@ -650,7 +656,14 @@ async function abrirMesaDeTrabalho(cofre) {
   buscar();
 }
 
-function abrirModalDeCofre(existente) {
+async function abrirModalDeCofre(existente) {
+  if (existente) {
+    // Editar um cofre é o momento legítimo de tocar o Keychain: recarrega o
+    // estado DETALHADO para saber quais campos-segredo estão preenchidos (o
+    // arranque não lê isso, para não congelar o app no diálogo de senha).
+    await carregarCofres(true);
+    existente = cofresEmCache.cofres.find((c) => c.apelido === existente.apelido) || existente;
+  }
   const cat = cofresEmCache.catalogo;
   if (!cat.length) { toast('Nenhum tipo de cofre disponível.', 'erro'); return; }
   openModal(existente ? `Cofre "${existente.apelido}"` : 'Novo cofre de credenciais', `
