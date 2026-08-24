@@ -114,6 +114,10 @@ function stripAnsi(text) {
   return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r(?!\n)/g, '\n');
 }
 
+// Teto de saída POR HOST na tela de Execução, para uma execução grande não
+// estourar a memória do renderer acumulando <span> por chunk.
+const MAX_SAIDA_POR_HOST = 2 * 1024 * 1024;
+
 function fmtMs(ms) {
   return ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : ms + ' ms';
 }
@@ -3453,7 +3457,7 @@ function handleEvent(evt) {
       el(head, 'strong', null, evt.name);
       el(head, 'span', 'mono muted small', evt.address);
       const pre = el(box, 'pre', 'console');
-      currentRun.panels.set(evt.host, { chip, pre });
+      currentRun.panels.set(evt.host, { chip, pre, bytes: 0, truncado: false });
       break;
     }
     case 'notice': {
@@ -3477,7 +3481,20 @@ function handleEvent(evt) {
     case 'data': {
       const p = panelFor(evt.host);
       if (!p) break;
-      el(p.pre, 'span', evt.kind === 'err' ? 'line-err' : 'line-out', stripAnsi(evt.text));
+      // Teto por host: sem isto, uma execução longa (muitos comandos × muitos
+      // hosts) acumulava um <span> por chunk até estourar a memória do renderer.
+      // Passado o limite, para de anexar e escreve UM aviso — o resultado
+      // completo segue no servidor (e cada comando lá já é cortado em 512 KB).
+      if (p.truncado) break;
+      const txt = stripAnsi(evt.text);
+      p.bytes += txt.length;
+      if (p.bytes > MAX_SAIDA_POR_HOST) {
+        p.truncado = true;
+        el(p.pre, 'span', 'line-notice', `\n· saída deste host truncada na tela (passou de ${Math.round(MAX_SAIDA_POR_HOST / 1024 / 1024)} MB) — o restante rodou normalmente.\n`);
+        autoscroll(p.pre);
+        break;
+      }
+      el(p.pre, 'span', evt.kind === 'err' ? 'line-err' : 'line-out', txt);
       autoscroll(p.pre);
       break;
     }
@@ -6381,7 +6398,11 @@ async function loadBackupCard() {
   // O aviso de corrupção do arranque: era MUDO, e é o meio do achado da
   // auditoria. Aparece uma vez, com o caminho da cópia preservada.
   const aviso = $('#bkAviso');
-  if (s.arranque && s.arranque.tipo === 'corrompido') {
+  // 'apagado' (o data.json sumiu) precisa aparecer TANTO quanto 'corrompido':
+  // é o mesmo desastre de perda total, e sem isto o aviso voltava a ser mudo
+  // justo no caso em que o usuário mais precisa ver a lista de cópias e o botão
+  // Restaurar. O store monta a mensagem certa para os dois tipos.
+  if (s.arranque && (s.arranque.tipo === 'corrompido' || s.arranque.tipo === 'apagado')) {
     aviso.hidden = false;
     aviso.textContent = `⚠ ${s.arranque.mensagem}`;
   } else if (s.erro) {

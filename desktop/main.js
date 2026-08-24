@@ -83,6 +83,17 @@ if (!electronApp.requestSingleInstanceLock()) {
   const quickhosts = require('../lib/quickhosts');
 
   let win = null;
+  // O servidor Express sobe UMA vez, na inicialização — não dentro de
+  // createWindow. Antes, reativar o app pelo dock (macOS) com a principal
+  // fechada mas uma janela solta viva chamava createWindow() de novo, subia um
+  // SEGUNDO Express e trocava o ALLOWED_ORIGINS: a janela solta (na porta
+  // antiga) passava a levar 403 no heartbeat e nas reconexões. Uma porta só,
+  // para a vida toda do app.
+  let servidorPort = null;
+  // O handler de certificate-error é do electronApp (global), não da janela —
+  // registrá-lo dentro de createWindow acumulava um listener por reativação
+  // (MaxListenersExceededWarning). Registra uma vez só.
+  let certRegistrado = false;
 
   // O seletor de pasta do backup: só existe sob Electron (dialog nativo). O
   // motor de backup guarda esta função e a chama quando o usuário clica em
@@ -247,13 +258,21 @@ if (!electronApp.requestSingleInstanceLock()) {
     });
   }
 
-  async function createWindow() {
+  // Sobe o servidor uma única vez e guarda a porta. Idempotente: chamadas
+  // seguintes reusam o mesmo servidor.
+  async function iniciarServidor() {
+    if (servidorPort != null) return servidorPort;
     const server = await start(0, '127.0.0.1');
-    const port = server.address().port;
+    servidorPort = server.address().port;
     // No macOS o ícone do dock não vem da janela — precisa ser definido no app.
     if (process.platform === 'darwin' && electronApp.dock) {
       try { electronApp.dock.setIcon(iconPath); } catch {}
     }
+    return servidorPort;
+  }
+
+  async function createWindow() {
+    const port = await iniciarServidor();
     win = new BrowserWindow({
       width: 1280,
       height: 840,
@@ -338,6 +357,7 @@ if (!electronApp.requestSingleInstanceLock()) {
     // o Chromium REJEITA o certificado. Um certificado que encadeia numa CA
     // confiável nunca chega aqui e nunca é fixado — daí a etiqueta na interface
     // dizer "certificado autoassinado fixado", e não "certificado verificado".
+    if (!certRegistrado) { certRegistrado = true;
     electronApp.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
       let alvo;
       try { alvo = new URL(url); } catch { return callback(false); }
@@ -397,6 +417,7 @@ if (!electronApp.requestSingleInstanceLock()) {
         + ` Fixado: ${host.webCert} / apresentado: ${impressao}`);
       callback(false);
     });
+    }
 
     win.on('closed', () => { win = null; });
     await win.loadURL(`http://127.0.0.1:${port}`);

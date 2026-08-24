@@ -184,6 +184,19 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   }
 
   {
+    // Host AVULSO (conexão rápida): a senha vive só no quickhosts, nunca no
+    // data.json. Sem a varredura do quickhosts, ela iria em claro para a API.
+    const quickhosts = require('../lib/quickhosts');
+    quickhosts.add({ host: '10.9.9.9', port: 23, protocol: 'telnet', username: 'admin',
+      auth: { type: 'password', password: 'senhaAvulsaDoRoteador' } });
+    const tela = redigir('Password: senhaAvulsaDoRoteador\r\nlogin ok');
+    naoOk(tela.includes('senhaAvulsaDoRoteador'),
+      'a senha de host avulso (conexão rápida) também é redigida — ela vive só na '
+      + 'memória do quickhosts e escaparia para a API da IA pelo retrato da tela');
+    ok(tela.includes(MARCA), 'trocada pelo marcador');
+  }
+
+  {
     igual(redigir(''), '', 'texto vazio passa');
     igual(redigir(null), null, 'e o que não é texto volta como veio');
   }

@@ -98,7 +98,16 @@ const baixar = (servidor) => new Promise((r) => {
     // ser apresentado, e o teste passaria a medir o socket em vez do pino. O
     // que importa é o invariante — "a config tem o pino A, o servidor apresenta
     // o B, recusa" — e ele não depende da porta.
-    const outro = https.createServer(doImpostor, responder);
+    // O impostor GRAVA todo request que chegar. O pino é conferido no
+    // HANDSHAKE, antes de qualquer byte de aplicação sair — então o impostor
+    // não pode nem ver o token. (Antes, a conferência era no callback da
+    // resposta, depois de req.end() já ter mandado o Authorization: o token
+    // vazava e SÓ ENTÃO a chamada era recusada.)
+    const recebidosImpostor = [];
+    const outro = https.createServer(doImpostor, (q, r) => {
+      recebidosImpostor.push(q.headers.authorization || '(sem auth)');
+      responder(q, r);
+    });
     const portaImpostor = await subir(outro);
     const cfgImpostor = { ...cfg(), baseUrl: `https://127.0.0.1:${portaImpostor}/v1` };
 
@@ -110,6 +119,9 @@ const baixar = (servidor) => new Promise((r) => {
     ok(/certificado do cofre mudou/i.test(e.message),
       'com mensagem que diz o que houve, e o que fazer se a troca foi legítima');
     igual(fixado, primeiro, 'e o pino NÃO é sobrescrito pelo impostor');
+    igual(recebidosImpostor, [],
+      'e o impostor NÃO recebeu request nenhum — o token nunca saiu por um socket '
+      + 'não verificado (a conferência é no handshake, antes de o Authorization ir)');
 
     await baixar(outro);
     await baixar(s);

@@ -92,6 +92,25 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   mon.remover('127.0.0.1');
   mon._pararLoop();
 
+  // ---------- 4b. TTL de órfão: janela que morre por crash não pinga eterno ----------
+  {
+    mon.limpar();
+    let t = 100000;
+    mon._setAgora(() => t);
+    mon.adicionar('127.0.0.1');
+    mon._pararLoop();
+    // a janela "bate ponto" pelo /detalhe: enquanto bate, o alvo fica
+    t += 10000; mon.detalhe('127.0.0.1', 0); // batida em +10s
+    await mon._rodada();
+    ok(mon.detalhe('127.0.0.1', 0) !== null, 'com batida recente, o alvo permanece');
+    // a janela some (crash): passa o TTL sem nova batida
+    t += mon.TTL_ORFAO_MS + 5000;
+    await mon._rodada(); // a varredura no início da rodada solta o órfão
+    igual(mon.estado().ips.length, 0, 'passado o TTL sem batida, o alvo órfão é solto');
+    mon._pararLoop();
+    mon._setAgora(() => Date.now());
+  }
+
   // ---------- 5. bloqueio de tela honesto ----------
   {
     igual(mon.estado().bloqueio, false, 'sem função injetada (navegador), nunca reporta bloqueio');
