@@ -1,7 +1,7 @@
 {
   "name": "vincii-canvas",
   "productName": "Vincii Canvas",
-  "version": "1.63.0",
+  "version": "1.63.1",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
   "author": "Vincii <contato@vincii.com.br>",
@@ -62,7 +62,10 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "O Vincii Canvas precisa da rede local para alcançar seus servidores, roteadores e dispositivos (SSH, TCP ping, varredura de portas, monitor)."
+      }
     },
     "win": {
       "target": [

@@ -6532,6 +6532,13 @@ async function baixarPdfMtr() {
 // ---------- Ferramentas: TCP ping (contínuo, host:porta) ----------
 let tpHost = null, tpPorta = null, tpDesde = 0, tpUltSeq = 0, tpParado = false;
 let tpTimerPoll = null, tpTimerRelogio = null, tpUltimo = null, tpRelatorio = '';
+let tpAvisouRedeLocal = false;
+
+// EHOSTUNREACH num IP de casa/escritório quase sempre é o macOS bloqueando a
+// permissão de Rede Local do app — sem esta dica a ferramenta parece quebrada.
+const DICA_REDE_LOCAL = 'Sem rota até o host. Se ele está na sua rede local, '
+  + 'permita o Vincii Canvas em Ajustes › Privacidade e Segurança › Rede Local '
+  + 'e tente de novo.';
 
 function abrirTcppingSolo() {
   if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
@@ -6581,7 +6588,10 @@ function tpAplicar(d) {
     tpUltSeq = Math.max(tpUltSeq, e.seq);
     if (e.estado === 'aberta') tpTermLinha(`${tpHost}:${tpPorta} aberta — conexão em ${e.latencia != null ? e.latencia : '<1'} ms`, 'ok');
     else if (e.estado === 'fechada') tpTermLinha(`${tpHost}:${tpPorta} recusada (porta fechada)`, 'perda');
-    else tpTermLinha(`${tpHost}:${tpPorta} sem resposta (tempo esgotado)`, 'perda');
+    else if (e.estado === 'inacessivel') {
+      tpTermLinha(`${tpHost}:${tpPorta} inacessível (sem rota até o host)`, 'perda');
+      if (!tpAvisouRedeLocal) { tpAvisouRedeLocal = true; tpTermLinha('⚠ ' + DICA_REDE_LOCAL, 'info'); }
+    } else tpTermLinha(`${tpHost}:${tpPorta} sem resposta (tempo esgotado)`, 'perda');
   }
   $('#tpTotal').textContent = d.total;
   $('#tpPerdidos').textContent = d.perdidos;
@@ -6614,7 +6624,7 @@ function pararTcpping() {
 }
 
 function retomarTcpping() {
-  if (!tpParado) return; tpParado = false; tpDesde = Date.now(); tpUltSeq = 0; tpUltimo = null; tpRelatorio = '';
+  if (!tpParado) return; tpParado = false; tpDesde = Date.now(); tpUltSeq = 0; tpUltimo = null; tpRelatorio = ''; tpAvisouRedeLocal = false;
   $('#tpTerm').innerHTML = ''; $('#tpTotal').textContent = '0'; $('#tpPerdidos').textContent = '0'; $('#tpFalha').textContent = '0%'; $('#tpFalha').classList.remove('ruim'); $('#tpMedia').textContent = '—'; $('#tpUlt').textContent = '…'; $('#tpTempo').textContent = '00:00:00'; $('#tpTempoS').textContent = '00:00:00';
   $('#tpDot').className = 'mon-dot checando';
   $('#tpParar').hidden = false; $('#tpRetomar').hidden = true; $('#tpPdf').hidden = true; $('#tpCopiar').hidden = true;
@@ -6734,7 +6744,11 @@ function renderDns(d) {
 
 function renderHttp(d) {
   const alvo = $('#consResultado'); alvo.innerHTML = '';
-  if (d.erro) { el(alvo, 'p', 'hint', '⚠ ' + d.erro); return; }
+  if (d.erro) {
+    const semRota = d.erro === 'EHOSTUNREACH' || d.erro === 'ENETUNREACH' || d.erro === 'EHOSTDOWN';
+    el(alvo, 'p', 'hint', '⚠ ' + (semRota ? DICA_REDE_LOCAL : d.erro));
+    return;
+  }
   const linhas = [
     ['URL', d.url], ['Status', `${d.status} ${d.mensagem || ''}`], ['Tempo', d.tempoMs + ' ms'],
     ['Servidor', d.servidor || '—'],
@@ -6757,7 +6771,9 @@ function renderHttp(d) {
 
 function renderPortscan(d) {
   const alvo = $('#consResultado'); alvo.innerHTML = '';
-  el(alvo, 'p', 'hint', `${d.host} — ${d.resumo.abertas} aberta(s), ${d.resumo.fechadas} fechada(s), ${d.resumo.filtradas} filtrada(s)`);
+  const extras = d.resumo.inacessiveis ? `, ${d.resumo.inacessiveis} inacessível(is)` : '';
+  el(alvo, 'p', 'hint', `${d.host} — ${d.resumo.abertas} aberta(s), ${d.resumo.fechadas} fechada(s), ${d.resumo.filtradas} filtrada(s)${extras}`);
+  if (d.resumo.inacessiveis) el(alvo, 'p', 'hint', '⚠ ' + DICA_REDE_LOCAL);
   const t = el(alvo, 'table', 'cons-tab'); const cab = el(t, 'tr'); ['Porta', 'Serviço', 'Estado', 'Tempo'].forEach((h) => el(cab, 'th', null, h));
   for (const p of d.portas) {
     const tr = el(t, 'tr', p.estado === 'aberta' ? 'ps-aberta' : '');

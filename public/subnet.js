@@ -6,6 +6,11 @@
 //
 // Placeholder padrão dos campos de endereço das ferramentas fica aqui também,
 // para uma frase só valer em todas.
+//
+// Tudo dentro de uma IIFE: scripts clássicos dividem o escopo global da
+// página, e um `const` repetido (serial.js também tem `API`) mata o arquivo
+// inteiro com SyntaxError antes de exportar qualquer coisa.
+(function () {
 
 // A frase padrão dos campos onde se digita um alvo. Uma fonte, todas as telas.
 const PLACEHOLDER_HOST = 'IP ou host — ex.: 192.168.0.1, roteador.local';
@@ -158,3 +163,5 @@ const API = {
 };
 if (typeof window !== 'undefined') window.subnetLib = API;
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
+
+})();

@@ -428,6 +428,11 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .switch input { width: auto; margin: 0; }
 .input-row { display: flex; gap: 8px; align-items: center; }
 .input-row input { flex: 1; min-width: 0; }
+/* o display:block/width:100% do select global vence o [hidden] do navegador e
+   esmagava o input das consultas — o select só ocupa o próprio tamanho aqui */
+.input-row select { width: auto; flex: 0 0 auto; margin-top: 0; }
+.input-row select[hidden] { display: none !important; }
+.input-row input { margin-top: 0; }
 .banner-warn {
   border: 1px solid var(--yellow, #b8860b); background: color-mix(in srgb, var(--yellow, #b8860b) 12%, transparent);
   border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 10px 0 4px; color: var(--text);
@@ -573,6 +578,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .cons-tab td.ps-aberta { color: var(--green, #2ea043); font-weight: 700; }
 .cons-tab td.ps-fechada { color: var(--muted); }
 .cons-tab td.ps-filtrada { color: var(--yellow); }
+.cons-tab td.ps-inacessivel { color: var(--red); font-weight: 600; }
 .cons-tab tr.ps-aberta { background: color-mix(in srgb, var(--green, #2ea043) 12%, transparent); }
 
 .modal-root {

@@ -27,6 +27,14 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   igual(rt._achatarDns('MX', [{ priority: 10, exchange: 'mail.x.com' }]), ['10 mail.x.com'], 'MX vira "prioridade servidor"');
   igual(rt._achatarDns('TXT', [['v=spf1', ' -all']]), ['v=spf1 -all'], 'TXT junta os pedaços');
   igual(rt._achatarDns('A', ['1.2.3.4']), ['1.2.3.4'], 'A passa direto');
+
+  // classificação de erro de socket: recusa ≠ sem rota (permissão de Rede
+  // Local do macOS negada aparece como EHOSTUNREACH e NÃO pode virar timeout)
+  igual(rt.estadoDeErro('ECONNREFUSED'), 'fechada', 'recusada → fechada');
+  igual(rt.estadoDeErro('EHOSTUNREACH'), 'inacessivel', 'sem rota → inacessível');
+  igual(rt.estadoDeErro('ENETUNREACH'), 'inacessivel', 'rede fora de alcance → inacessível');
+  igual(rt.estadoDeErro('EPERM'), 'inacessivel', 'bloqueio do sistema → inacessível');
+  igual(rt.estadoDeErro('ETIMEDOUT'), null, 'desconhecido → cada ferramenta decide');
 }
 
 // ---------- varredura de portas contra sockets locais ----------
