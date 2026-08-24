@@ -542,6 +542,19 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-alarme button { margin-left: auto; }
 @keyframes mon-pulsa-alarme { 0%,100% { border-color: var(--red); } 50% { border-color: color-mix(in srgb, var(--red) 35%, transparent); } }
 
+/* ---------- MTR: tabela de saltos ---------- */
+.modo-solo #tab-tools #toolsMtr { max-width: none; }
+.mtr-tabela-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.mtr-tabela { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12.5px; }
+.mtr-tabela th, .mtr-tabela td { padding: 6px 10px; text-align: right; white-space: nowrap; }
+.mtr-tabela th { background: var(--panel2); color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .3px; position: sticky; top: 0; }
+.mtr-tabela th:nth-child(1), .mtr-tabela td:nth-child(1) { text-align: center; color: var(--muted); }
+.mtr-tabela th:nth-child(2), .mtr-tabela td.mtr-ip { text-align: left; color: var(--text); font-weight: 600; }
+.mtr-tabela tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--panel2) 45%, transparent); }
+.mtr-tabela tr.mtr-perda td.mtr-num:nth-child(3) { color: var(--red); font-weight: 700; }
+.mtr-tabela tr.mtr-perda { background: color-mix(in srgb, var(--red) 12%, transparent) !important; }
+.mtr-tabela tr.mtr-mudo td.mtr-ip { color: var(--muted); font-style: italic; }
+
 .modal-root {
   display: none;
   position: fixed;

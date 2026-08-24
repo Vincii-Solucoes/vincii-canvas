@@ -381,6 +381,14 @@ try {
         </span>
         <span class="tool-abrir">Abrir&nbsp;↗</span>
       </button>
+      <button id="tileMtr" type="button" class="tool-tile">
+        <span class="tool-ico">🛰️</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">MTR — rota + ping</span>
+          <span class="tool-desc">Traça a rota até um host e pinga CADA salto ao vivo: acha exatamente onde a rede perde pacote ou ganha latência. Com relatório em PDF.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
@@ -424,6 +432,40 @@ try {
       <div id="monTerm" class="mon-term"></div>
       </div><!-- #monPainel -->
     </div><!-- #toolsMonitor -->
+
+    <!-- MTR de UM host: escondido no app normal, exibido na janela solta
+         (?solo=1&tipo=mtr). O endereço é informado DENTRO da janela. -->
+    <div id="toolsMtr" hidden>
+      <div id="mtrEntrada" class="mon-entrada">
+        <h2>🛰️ MTR — rota + ping por salto</h2>
+        <p class="hint">Informe o host de destino. Esta janela traça a rota e fica pingando <strong>cada salto</strong> para achar onde a rede dói. Uma janela por destino.</p>
+        <div class="input-row" style="max-width:460px">
+          <input id="mtrHost" placeholder="IP ou host — ex.: 8.8.8.8, google.com" spellcheck="false" autofocus>
+          <button id="mtrIniciar" type="button" class="btn primary">Iniciar</button>
+        </div>
+      </div>
+
+      <div id="mtrPainel" hidden>
+        <div class="mon-cab">
+          <span id="mtrDot" class="mon-dot"></span>
+          <span id="mtrHostLbl" class="mon-host"></span>
+          <div class="mon-cab-dir">
+            <span id="mtrTempo" class="mon-bloqueio">00:00:00</span>
+            <button id="mtrParar" type="button" class="btn small">⏹ Parar e gerar relatório</button>
+            <button id="mtrRetomar" type="button" class="btn small" hidden>▶ Retomar</button>
+            <button id="mtrPdf" type="button" class="btn small primary" hidden>📄 Baixar PDF</button>
+            <button id="mtrCopiar" type="button" class="btn small" hidden>📋 Copiar</button>
+          </div>
+        </div>
+        <p id="mtrStatus" class="hint" style="margin:4px 0 8px"></p>
+        <div class="mtr-tabela-wrap">
+          <table class="mtr-tabela">
+            <thead><tr><th>#</th><th>Endereço</th><th>Perda</th><th>Env.</th><th>Últ.</th><th>Méd.</th><th>Melhor</th><th>Pior</th></tr></thead>
+            <tbody id="mtrCorpo"></tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- #toolsMtr -->
   </section>
 
   <section id="tab-config" class="tab-panel">

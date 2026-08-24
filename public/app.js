@@ -5198,6 +5198,7 @@ function abrirSolo() {
   if (rotulo) rotulo.textContent = p.nome;
   // O monitor não é uma sessão de host: tem caminho próprio e não bate ponto.
   if (p.tipo === 'monitor') { abrirMonitorSolo(); return; }
+  if (p.tipo === 'mtr') { abrirMtrSolo(); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
   } else if (p.tipo === 'desk') {
@@ -6058,6 +6059,12 @@ function onToolsTabShown() {
   monLauncherLigado = true;
   const tile = $('#tileMonitor');
   if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
+  const tileM = $('#tileMtr');
+  if (tileM) tileM.addEventListener('click', () => {
+    const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'mtr', nome: 'MTR' }).toString();
+    const j = window.open(url, '_blank', 'width=720,height=600');
+    try { if (j) j.focus(); } catch { /* ok */ }
+  });
 }
 
 // O tile abre o monitor numa janela própria (SEM host ainda — o endereço é
@@ -6358,6 +6365,156 @@ function tocarSirene() {
 function pararSirene() {
   if (monVarredura) { clearInterval(monVarredura); monVarredura = null; }
   if (monOsc) { try { monOsc.osc.stop(); } catch {} try { monOsc.osc.disconnect(); monOsc.g.disconnect(); } catch {} monOsc = null; }
+}
+
+// ---------- Ferramentas: MTR (rota + ping por salto) ----------
+let mtrHost = null;
+let mtrDesde = 0;
+let mtrTimerPoll = null;
+let mtrTimerRelogio = null;
+let mtrParado = false;
+let mtrUltimo = null;
+let mtrRelatorioTexto = '';
+
+function abrirMtrSolo() {
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  if ($('#toolsMtr')) $('#toolsMtr').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  const iniciar = () => {
+    const h = $('#mtrHost').value.trim();
+    if (!h) { toast('Informe um IP ou host.', 'erro'); return; }
+    iniciarMtr(h);
+  };
+  $('#mtrIniciar').addEventListener('click', iniciar);
+  $('#mtrHost').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
+  $('#mtrParar').addEventListener('click', pararMtr);
+  $('#mtrRetomar').addEventListener('click', retomarMtr);
+  $('#mtrPdf').addEventListener('click', baixarPdfMtr);
+  $('#mtrCopiar').addEventListener('click', () => { copiarParaClipboard(mtrRelatorioTexto); toast('Relatório copiado.'); });
+  setTimeout(() => { try { $('#mtrHost').focus(); } catch {} }, 40);
+  const hUrl = new URLSearchParams(location.search).get('host');
+  if (hUrl) { $('#mtrHost').value = hUrl; iniciarMtr(hUrl); }
+}
+
+function iniciarMtr(host) {
+  mtrHost = host; mtrParado = false; mtrDesde = Date.now();
+  $('#mtrEntrada').hidden = true;
+  $('#mtrPainel').hidden = false;
+  $('#mtrHostLbl').textContent = host;
+  $('#mtrStatus').textContent = 'Traçando a rota até ' + host + '…';
+  $('#mtrDot').className = 'mon-dot checando';
+  document.title = host + ' — MTR';
+  window.addEventListener('pagehide', () => {
+    try { navigator.sendBeacon('/api/tools/mtr/remove', new Blob([JSON.stringify({ host: mtrHost })], { type: 'application/json' })); } catch {}
+  });
+  api('/api/tools/mtr/start', { method: 'POST', body: { host } })
+    .then(() => {
+      mtrTimerRelogio = setInterval(mtrRelogio, 1000);
+      mtrPoll();
+    })
+    .catch((e) => { $('#mtrEntrada').hidden = false; $('#mtrPainel').hidden = true; toast('Não foi possível iniciar: ' + e.message, 'erro'); });
+}
+
+async function mtrPoll() {
+  if (mtrParado) return;
+  try { const d = await api(`/api/tools/mtr/detalhe?host=${encodeURIComponent(mtrHost)}`); if (!mtrParado) mtrAplicar(d); }
+  catch { /* servidor reiniciou/host removido: para em silêncio */ }
+  if (!mtrParado) mtrTimerPoll = setTimeout(mtrPoll, 1000);
+}
+
+function mtrAplicar(d) {
+  mtrUltimo = d;
+  if (d.tracando) { $('#mtrStatus').textContent = 'Traçando a rota até ' + d.host + '…'; return; }
+  if (d.erro) { $('#mtrStatus').textContent = '⚠ ' + d.erro; $('#mtrDot').className = 'mon-dot timeout'; return; }
+  const piorPerda = d.hops.reduce((m, h) => Math.max(m, h.ip ? h.perda : 0), 0);
+  $('#mtrDot').className = 'mon-dot ' + (piorPerda >= 100 ? 'timeout' : piorPerda > 0 ? 'checando' : 'ok');
+  $('#mtrStatus').textContent = `${d.hops.length} saltos até ${d.host}` + (piorPerda > 0 ? ` · maior perda num salto: ${piorPerda}%` : ' · sem perdas');
+  const corpo = $('#mtrCorpo');
+  corpo.innerHTML = '';
+  for (const h of d.hops) {
+    const tr = el(corpo, 'tr', h.ip && h.perda > 0 ? 'mtr-perda' : (!h.ip ? 'mtr-mudo' : ''));
+    el(tr, 'td', null, String(h.n));
+    el(tr, 'td', 'mtr-ip', h.ip || '???');
+    el(tr, 'td', 'mtr-num', h.ip ? h.perda + '%' : '—');
+    el(tr, 'td', 'mtr-num', h.ip ? String(h.total) : '—');
+    el(tr, 'td', 'mtr-num', h.ultima != null ? h.ultima.toFixed(1) : (h.ip ? '—' : ''));
+    el(tr, 'td', 'mtr-num', h.media != null ? h.media.toFixed(1) : (h.ip ? '—' : ''));
+    el(tr, 'td', 'mtr-num', h.melhor != null ? h.melhor.toFixed(1) : (h.ip ? '—' : ''));
+    el(tr, 'td', 'mtr-num', h.pior != null ? h.pior.toFixed(1) : (h.ip ? '—' : ''));
+  }
+}
+
+function mtrRelogio() {
+  const s = Math.max(0, Math.floor((Date.now() - mtrDesde) / 1000));
+  const p = (n) => String(n).padStart(2, '0');
+  $('#mtrTempo').textContent = `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
+}
+
+function pararMtr() {
+  if (mtrParado) return;
+  mtrParado = true;
+  clearTimeout(mtrTimerPoll); clearInterval(mtrTimerRelogio);
+  $('#mtrParar').hidden = true; $('#mtrRetomar').hidden = false; $('#mtrPdf').hidden = false; $('#mtrCopiar').hidden = false;
+  document.title = '⏹ ' + mtrHost + ' — MTR';
+  api('/api/tools/mtr/remove', { method: 'POST', body: { host: mtrHost } }).catch(() => {});
+  gerarRelatorioMtr();
+}
+
+function retomarMtr() {
+  if (!mtrParado) return;
+  mtrParado = false; mtrDesde = Date.now(); mtrUltimo = null; mtrRelatorioTexto = '';
+  $('#mtrCorpo').innerHTML = ''; $('#mtrTempo').textContent = '00:00:00';
+  $('#mtrDot').className = 'mon-dot checando';
+  $('#mtrParar').hidden = false; $('#mtrRetomar').hidden = true; $('#mtrPdf').hidden = true; $('#mtrCopiar').hidden = true;
+  document.title = mtrHost + ' — MTR';
+  api('/api/tools/mtr/start', { method: 'POST', body: { host: mtrHost } })
+    .then(() => { $('#mtrStatus').textContent = 'Traçando a rota até ' + mtrHost + '…'; mtrTimerRelogio = setInterval(mtrRelogio, 1000); mtrPoll(); })
+    .catch((e) => toast('Não foi possível retomar: ' + e.message, 'erro'));
+}
+
+function gerarRelatorioMtr() {
+  const d = mtrUltimo || { hops: [] };
+  const dur = Math.max(0, Math.round((Date.now() - mtrDesde) / 1000));
+  const p = (n) => String(n).padStart(2, '0');
+  const ms = (v) => (v != null ? v.toFixed(1) + 'ms' : '—');
+  const linhas = [
+    `Relatório de MTR — Vincii Canvas`,
+    `Destino: ${mtrHost}`,
+    `Duração: ${p(Math.floor(dur / 3600))}:${p(Math.floor((dur % 3600) / 60))}:${p(dur % 60)} · ${d.hops.length} saltos`,
+    ``,
+    `#   Endereço            Perda  Env   Melhor   Média    Pior`,
+    ...d.hops.map((h) => {
+      const ip = (h.ip || '???').padEnd(18).slice(0, 18);
+      const perda = (h.ip ? h.perda + '%' : '—').padStart(5);
+      return `${String(h.n).padStart(2)}  ${ip}  ${perda}  ${String(h.ip ? h.total : '—').padStart(4)}  ${ms(h.melhor).padStart(7)}  ${ms(h.media).padStart(7)}  ${ms(h.pior).padStart(7)}`;
+    }),
+  ];
+  mtrRelatorioTexto = linhas.join('\n');
+}
+
+async function baixarPdfMtr() {
+  const d = mtrUltimo || { hops: [] };
+  const btn = $('#mtrPdf'); btn.disabled = true;
+  try {
+    const resp = await fetch('/api/tools/mtr/relatorio-pdf', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host: mtrHost, inicio: mtrDesde, fim: Date.now(), hops: d.hops }),
+    });
+    if (!resp.ok) {
+      let msg = 'Não foi possível gerar o PDF.';
+      try { msg = (await resp.json()).error || msg; } catch {}
+      toast(msg, resp.status === 501 ? 'aviso' : 'erro'); return;
+    }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `relatorio-mtr-${mtrHost.replace(/[^a-zA-Z0-9.-]/g, '_')}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Relatório MTR em PDF baixado.');
+  } catch (e) { toast('Não foi possível gerar o PDF: ' + e.message, 'erro'); }
+  finally { btn.disabled = false; }
 }
 
 // ---------- backup automático ----------
@@ -6780,10 +6937,11 @@ function init() {
       iniciarAgenda();
       // Janela solta: vai direto para a sessão pedida, sem mais nada na tela.
       if (MODO_SOLO) {
-        // O monitor de IP não é uma sessão de terminal — não ativa a aba
-        // Terminal (que criaria um shell local à toa nesta janela).
-        const soloMonitor = new URLSearchParams(location.search).get('tipo') === 'monitor';
-        if (!soloMonitor) {
+        // Monitor e MTR não são sessão de terminal — não ativam a aba Terminal
+        // (que criaria um shell local à toa nesta janela).
+        const tipoSolo = new URLSearchParams(location.search).get('tipo');
+        const soloFerramenta = tipoSolo === 'monitor' || tipoSolo === 'mtr';
+        if (!soloFerramenta) {
           try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
           onTerminalTabShown();
         }

@@ -10,6 +10,7 @@ const store = require('./lib/store');
 const backup = require('./lib/backup');
 const serialbridge = require('./lib/serialbridge');
 const monitor = require('./lib/monitor');
+const mtr = require('./lib/mtr');
 const relatoriopdf = require('./lib/relatoriopdf');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
@@ -1075,6 +1076,34 @@ app.get('/api/tools/monitor/detalhe', (req, res) => {
   const d = monitor.detalhe(req.query.ip, req.query.desde);
   if (!d) return fail(res, 404, 'Este endereço não está sendo monitorado.');
   res.json(d);
+});
+
+// ---------- Ferramentas: MTR (rota + ping por salto) ----------
+app.post('/api/tools/mtr/start', (req, res) => {
+  const r = mtr.iniciar((req.body || {}).host);
+  if (!r.ok) return fail(res, 400, r.erro || 'Não foi possível iniciar.');
+  res.json({ ok: true });
+});
+app.post('/api/tools/mtr/remove', (req, res) => {
+  mtr.remover((req.body || {}).host);
+  res.json({ ok: true });
+});
+app.get('/api/tools/mtr/detalhe', (req, res) => {
+  const d = mtr.detalhe(req.query.host);
+  if (!d) return fail(res, 404, 'Este host não está sendo traçado.');
+  res.json(d);
+});
+app.post('/api/tools/mtr/relatorio-pdf', async (req, res) => {
+  const dados = relatoriopdf.normalizarDadosMtr(req.body);
+  if (!dados) return fail(res, 400, 'Dados do relatório inválidos.');
+  if (!relatoriopdf.disponivel()) return fail(res, 501, 'PDF disponível apenas no app instalado.');
+  try {
+    const pdf = await relatoriopdf.gerarPdf(relatoriopdf.htmlRelatorioMtr(dados));
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(pdf);
+  } catch (e) {
+    fail(res, 500, `Não foi possível gerar o PDF: ${e.message}`);
+  }
 });
 
 // O relatório do monitor em PDF — como o relatório de comandos, um arquivo
