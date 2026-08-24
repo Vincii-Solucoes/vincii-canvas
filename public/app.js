@@ -4657,6 +4657,11 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
   session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
   term.onData((d) => {
     if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'i', d }));
+    // Terminal morto + Enter = reconectar, o gesto que a mão já faz sozinha.
+    // A carência de 800ms evita o acidente clássico: digitar "exit", o shell
+    // morrer, e o Enter por hábito reabrir a sessão que acabou de ser fechada.
+    else if (session.status === 'encerrado' && (d === '\r' || d === '\n')
+      && Date.now() - (session.encerradaEm || 0) > 800) { reconectarSessao(session.id); return; }
     captureTyped(session, d);
   });
   term.onResize(({ cols, rows }) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'r', cols, rows })); });
@@ -4719,11 +4724,16 @@ function connectSession(session) {
   const ws = new WebSocket(url);
   session.ws = ws;
   ws.onmessage = (ev) => {
+    // Reconectar troca session.ws por um socket novo; o antigo ainda pode
+    // cuspir um 'x' ou o close atrasado — sem esta guarda ele marcava a sessão
+    // NOVA como encerrada e anulava o socket errado.
+    if (session.ws !== ws) return;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
     if (m.t === 'o') session.term.write(m.d);
     else if (m.t === 'ready') {
       session.status = 'conectado';
+      session.reatarFalhouVaiDoZero = false;
       renderTermTabs();
       renderHostSidebar();
       if (activeSessionId === session.id) { setTimeout(() => { sendResize(session); focusActive(); }, 30); }
@@ -4733,16 +4743,96 @@ function connectSession(session) {
     }
     // O servidor manda o id assim que a sessão existe. É por ele que outra
     // janela reata ao MESMO shell, sem perder diretório nem o que está rodando.
-    else if (m.t === 'sessao') { session.sessaoId = m.id; renderTermTabs(); }
-    else if (m.t === 'x') { session.status = 'encerrado'; renderTermTabs(); }
+    else if (m.t === 'sessao') {
+      // Reatar CONFIRMADO (a falha manda só 'e'+'x', nunca 'sessao'): o buffer
+      // da sessão vem logo atrás repintando a tela inteira — limpa AGORA, e não
+      // antes de conectar, para o scrollback não se perder se o reatar falhasse.
+      if (session.reatarFalhouVaiDoZero) { try { session.term.reset(); } catch {} }
+      session.sessaoId = m.id; renderTermTabs();
+    }
+    else if (m.t === 'x') {
+      // A reconexão tentou reatar à sessão órfã, mas ela já tinha morrido no
+      // servidor (foi o SSH que caiu, não só a janela): cai direto para uma
+      // conexão NOVA ao mesmo host, sem obrigar um segundo clique.
+      if (session.reatarFalhouVaiDoZero && session.status === 'conectando') {
+        session.reatarFalhouVaiDoZero = false;
+        session.sessaoId = null;
+        session.status = 'encerrado';
+        setTimeout(() => reconectarSessao(session.id), 0);
+        return;
+      }
+      session.sessaoId = null; // o servidor encerrou: não há mais o que reatar
+      session.status = 'encerrado';
+      marcarEncerrada(session);
+      renderTermTabs();
+    }
   };
   ws.onclose = () => {
-    if (session.status === 'conectando' || session.status === 'conectado') session.status = 'encerrado';
+    if (session.ws !== ws) return; // socket antigo de uma reconexão: ignora
+    // O socket morreu sem 'ready' nem 'x': a flag do reatar não pode sobrar
+    // armada — numa conexão NOVA futura, um 'x' de falha de autenticação seria
+    // lido como "reatar falhou" e dispararia retentativa automática indevida.
+    session.reatarFalhouVaiDoZero = false;
+    if (session.status === 'conectando' || session.status === 'conectado') {
+      session.status = 'encerrado';
+      marcarEncerrada(session);
+    }
     session.ws = null;
     renderTermTabs();
     renderHostSidebar();
   };
   ws.onerror = () => {};
+}
+
+// A conexão morreu (timeout do SSH, rede, shell encerrado), mas a ABA fica —
+// com o histórico da tela. Este aviso aparece UMA vez e dá o caminho de volta.
+function marcarEncerrada(session) {
+  // o carimbo alimenta a carência do Enter-reconecta (ver term.onData)
+  session.encerradaEm = Date.now();
+  if (session.avisoEncerrada) return;        // 'x' e o onclose disparam os dois
+  if (!sessions.includes(session)) return;   // aba fechada de propósito: já era
+  session.avisoEncerrada = true;
+  try {
+    session.term.write('\r\n\x1b[90m— conexão encerrada · Enter (ou ↻ na aba) para reconectar —\x1b[0m\r\n');
+  } catch {}
+}
+
+// Reconecta NA MESMA ABA, reaproveitando o xterm. Dois caminhos:
+//   - se a sessão ficou ÓRFÃ no servidor (só o socket caiu), reata ao MESMO
+//     shell: diretório e programa rodando sobrevivem;
+//   - senão, abre uma conexão nova ao mesmo host, preservando o scrollback.
+// O reatar só acontece se o servidor LISTAR a sessão como órfã: reatar pelo id
+// guardado, às cegas, ROUBARIA o shell se outra janela já o tivesse assumido
+// (atacar é "uma janela por vez"). E se a órfã morrer entre a consulta e o
+// upgrade, o handler de 'x' acima cai para a conexão nova sozinho.
+async function reconectarSessao(id) {
+  const s = sessions.find((x) => x.id === id);
+  if (!s || s.kind !== 'term') return;
+  if (s.status === 'conectando' || s.status === 'conectado') return;
+  try { if (s.ws) s.ws.close(); } catch {}
+  s.ws = null;
+  s.avisoEncerrada = false;
+  s.status = 'conectando'; // já: fecha a porta para Enter duplo durante a consulta
+  renderTermTabs();
+  let reatavel = false;
+  if (s.sessaoId) {
+    try {
+      const d = await api('/api/janelas');
+      reatavel = (d.sessoes || []).some((x) => x.orfa && x.id === s.sessaoId);
+    } catch { /* consulta falhou: segue para conexão nova */ }
+  }
+  if (reatavel) {
+    s.reatarId = s.sessaoId;
+    s.reatarFalhouVaiDoZero = true;
+    // o term.reset() fica para a confirmação (mensagem 'sessao'): resetar aqui
+    // apagaria o scrollback à toa se a órfã morresse nesse meio-tempo
+  } else {
+    s.reatarId = null;
+    s.reatarFalhouVaiDoZero = false;
+    try { s.term.write('\x1b[36m— reconectando…\x1b[0m\r\n'); } catch {}
+  }
+  s.sessaoId = null;
+  waitSizedThenConnect(s, 0);
 }
 
 function setActiveSession(id) {
@@ -5275,6 +5365,13 @@ function renderTermTabs() {
         const solta = el(tab, 'span', 'tab-solta', '↗');
         solta.title = 'Abrir esta aba numa janela própria';
         solta.addEventListener('click', (e) => { e.stopPropagation(); soltarEmJanela(s.id); });
+      }
+      // Conexão caiu (timeout, rede, shell encerrado): o ↻ reconecta NA MESMA
+      // aba, sem perder o histórico da tela. Só em sessões de terminal.
+      if (s.kind === 'term' && s.status === 'encerrado') {
+        const rec = el(tab, 'span', 'tab-reconectar', '↻');
+        rec.title = 'Reconectar (ou aperte Enter no terminal)';
+        rec.addEventListener('click', (e) => { e.stopPropagation(); reconectarSessao(s.id); });
       }
       const pen = el(tab, 'span', 'tab-edit', '✎');
       pen.title = 'Renomear esta aba';

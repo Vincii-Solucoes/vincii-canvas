@@ -941,6 +941,10 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 /* Ocupa o lugar do "×" enquanto a agenda do host está valendo. Cursor de ajuda
    e não de clique: ele não fecha nada, só explica (no title) por que não dá. */
 .term-tab .tab-trava { font-size: 11px; line-height: 1; padding: 0 3px; cursor: help; opacity: .8; }
+/* ↻ de reconectar: só existe em aba com a conexão encerrada — fica sempre
+   visível (ao contrário do ✎), porque é a ação que a aba morta está pedindo */
+.term-tab .tab-reconectar { color: var(--accent-text); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 4px; cursor: pointer; }
+.term-tab .tab-reconectar:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 /* lápis de renomear: discreto, aparece ao passar o mouse ou na aba ativa */
 .term-tab .tab-edit {
   color: var(--muted); font-size: 11px; line-height: 1; padding: 2px 3px; border-radius: 4px;
