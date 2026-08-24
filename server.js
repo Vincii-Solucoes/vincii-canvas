@@ -10,6 +10,7 @@ const store = require('./lib/store');
 const backup = require('./lib/backup');
 const serialbridge = require('./lib/serialbridge');
 const monitor = require('./lib/monitor');
+const relatoriopdf = require('./lib/relatoriopdf');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
@@ -1074,6 +1075,22 @@ app.get('/api/tools/monitor/detalhe', (req, res) => {
   const d = monitor.detalhe(req.query.ip, req.query.desde);
   if (!d) return fail(res, 404, 'Este endereço não está sendo monitorado.');
   res.json(d);
+});
+
+// O relatório do monitor em PDF — como o relatório de comandos, um arquivo
+// baixado. A tela manda os dados; aqui o HTML é montado e o Electron imprime
+// (lib/relatoriopdf). Fora do app instalado devolve 501 e a tela avisa.
+app.post('/api/tools/monitor/relatorio-pdf', async (req, res) => {
+  const dados = relatoriopdf.normalizarDados(req.body);
+  if (!dados) return fail(res, 400, 'Dados do relatório inválidos.');
+  if (!relatoriopdf.disponivel()) return fail(res, 501, 'PDF disponível apenas no app instalado.');
+  try {
+    const pdf = await relatoriopdf.gerarPdf(relatoriopdf.htmlRelatorioMonitor(dados));
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(pdf);
+  } catch (e) {
+    fail(res, 500, `Não foi possível gerar o PDF: ${e.message}`);
+  }
 });
 
 // Clipboard do Electron — fallback do copiar/colar por botão direito quando o

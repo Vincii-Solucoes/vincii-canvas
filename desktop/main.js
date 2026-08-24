@@ -126,6 +126,30 @@ if (!electronApp.requestSingleInstanceLock()) {
     console.error('[monitor] powerSaveBlocker indisponível:', e && e.message);
   }
 
+  // Relatório do monitor em PDF: o renderer manda os dados, o servidor monta o
+  // HTML, e AQUI uma janela invisível imprime em PDF (printToPDF do Electron —
+  // zero dependência). A janela é efêmera e não acessa nada além do HTML.
+  try {
+    const relatoriopdf = require('../lib/relatoriopdf');
+    relatoriopdf.definirGerador((html) => new Promise((resolve, reject) => {
+      let win = new BrowserWindow({
+        show: false, width: 800, height: 1100,
+        webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true },
+      });
+      const fim = (fn, arg) => { try { win.destroy(); } catch { /* já foi */ } win = null; fn(arg); };
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.printToPDF({ pageSize: 'A4', printBackground: true })
+          .then((buf) => fim(resolve, buf))
+          .catch((e) => fim(reject, e));
+      });
+      win.webContents.once('did-fail-load', (_e, code, desc) => fim(reject, new Error(`carregamento falhou: ${desc || code}`)));
+      win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+        .catch((e) => fim(reject, e));
+    }));
+  } catch (e) {
+    console.error('[relatorio] printToPDF indisponível:', e && e.message);
+  }
+
   // Travas de TODO conteúdo web do app, registradas ANTES de existir janela
   // alguma.
   //

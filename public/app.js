@@ -6104,6 +6104,7 @@ function iniciarMonitor(ip) {
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
   $('#monParar').addEventListener('click', pararMonitoramento);
   $('#monRetomar').addEventListener('click', retomarMonitoramento);
+  $('#monPdf').addEventListener('click', baixarPdfMonitor);
   $('#monCopiar').addEventListener('click', () => {
     copiarParaClipboard(monRelatorioTexto);
     toast('Relatório copiado — cole no chamado ou no chat.');
@@ -6194,6 +6195,7 @@ function pararMonitoramento() {
   $('#monDot').className = 'mon-dot';
   $('#monParar').hidden = true;
   $('#monRetomar').hidden = false;
+  $('#monPdf').hidden = false;
   $('#monCopiar').hidden = false;
   document.title = '⏹ ' + monIp + ' — Monitor';
   // solta o host no servidor (o refcount libera o powerSaveBlocker se for o último)
@@ -6223,6 +6225,7 @@ function retomarMonitoramento() {
   $('#monDot').className = 'mon-dot checando';
   $('#monParar').hidden = false;
   $('#monRetomar').hidden = true;
+  $('#monPdf').hidden = true;
   $('#monCopiar').hidden = true;
   document.title = monIp + ' — Monitor';
   api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
@@ -6268,7 +6271,46 @@ function gerarRelatorioMonitor() {
   monRelatorioTexto = `Relatório de monitoramento — Vincii Canvas\n` + linhas.filter((l) => !l.startsWith('─')).join('\n');
   monTermLinha('', 'rel');
   for (const l of linhas) monTermLinha(l, 'rel');
-  monTermLinha('Monitoramento parado. Use "Copiar relatório" para levar este resumo.', 'info');
+  monTermLinha('Monitoramento parado. Baixe o PDF ou copie o resumo.', 'info');
+}
+
+// Baixa o relatório em PDF — como o relatório de comandos, um arquivo salvo.
+// O servidor monta o HTML e o Electron imprime; fora do app instalado a rota
+// devolve 501 e o aviso explica (o Copiar continua servindo).
+async function baixarPdfMonitor() {
+  const d = monUltimoDetalhe || {};
+  const btn = $('#monPdf');
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/tools/monitor/relatorio-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ip: monIp, inicio: d.desde || monDesde, fim: Date.now(),
+        total: d.total || 0, perdidos: d.perdidos || 0,
+        media: d.media != null ? d.media : null, min: d.min != null ? d.min : null, max: d.max != null ? d.max : null,
+        quedas: d.quedas || [],
+      }),
+    });
+    if (!resp.ok) {
+      let msg = 'Não foi possível gerar o PDF.';
+      try { msg = (await resp.json()).error || msg; } catch { /* corpo não-json */ }
+      toast(msg, resp.status === 501 ? 'aviso' : 'erro');
+      return;
+    }
+    const blob = await resp.blob();
+    const nome = `relatorio-monitor-${monIp.replace(/[^a-zA-Z0-9.-]/g, '_')}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nome;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast('Relatório em PDF baixado.');
+  } catch (e) {
+    toast('Não foi possível gerar o PDF: ' + e.message, 'erro');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---- sirene: dois tons alternados, chatos de propósito, em loop ----
