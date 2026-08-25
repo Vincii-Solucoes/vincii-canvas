@@ -78,6 +78,12 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   igual(mapped.rede, '::ffff:c0a8:101', '::ffff:192.168.1.1 vira ::ffff:c0a8:101');
   igual(s.calcular('64:ff9b::192.0.2.33/96').erro, undefined, 'NAT64 com IPv4 embutido é aceito');
   igual(s.calcular('::ffff:999.1.1.1/128').erro !== undefined, true, 'IPv4 embutido inválido é recusado');
+  // IPv4 embutido forma os 32 bits FINAIS: antes do "::" (bits altos) é malformado
+  // (RFC 4291 §2.2). "1.2.3.4::" era aceito em silêncio como 102:304:: — regressão.
+  igual(s.calcular('1.2.3.4::/48').erro !== undefined, true, 'IPv4 na cabeça com "::" é recusado (não vira 102:304::)');
+  igual(s.calcular('1.2.3.4::5/64').erro !== undefined, true, 'IPv4 na cabeça com cauda também é recusado');
+  igual(s.calcular('::1.2.3.4/120').rede, '::102:300', 'IPv4 na cauda (bits baixos) segue válido');
+  igual(s.calcular('2001:db8::1.2.3.4/64').erro, undefined, 'IPv4 na cauda após grupos altos é válido');
 
   // classificação de tipo (auditoria)
   igual(s.calcular('fc00::/7').tipo, 'ULA (privado, fc00::/7)', 'fc00::/7 (o próprio bloco) é ULA, não global');

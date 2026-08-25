@@ -94,10 +94,17 @@ function v6ParaBig(ip) {
   let gc = tok(cabecaStr);
   let gt = tok(caudaStr);
   if (gc === null || gt === null) return null;
-  // IPv4 embutido só pode ser o ÚLTIMO grupo do endereço inteiro.
-  const todos = [...gc, ...gt];
-  for (let i = 0; i < todos.length; i++) {
-    if (todos[i].includes('.') && i !== todos.length - 1) return null;
+  // IPv4 embutido forma os 32 bits FINAIS (RFC 4291 §2.2). Com "::", ele só
+  // pode estar na CAUDA e ser o último grupo dela — nunca na cabeça: em
+  // "1.2.3.4::" os zeros do "::" viriam DEPOIS do IPv4, jogando-o para os bits
+  // altos e reinterpretando o endereço em silêncio. Sem "::", só pode ser o
+  // último de todos.
+  const temPonto = (g) => g.includes('.');
+  if (temComp) {
+    if (gc.some(temPonto)) return null;                                    // IPv4 antes do "::" não vale
+    if (gt.some((g, i) => temPonto(g) && i !== gt.length - 1)) return null; // só no fim da cauda
+  } else if (gc.some((g, i) => temPonto(g) && i !== gc.length - 1)) {
+    return null;                                                            // sem "::": só no fim
   }
   const expandir = (arr) => {
     if (!arr.length || !arr[arr.length - 1].includes('.')) return arr;
