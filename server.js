@@ -1476,14 +1476,13 @@ app.post('/api/import', (req, res) => {
       else { d.playbooks.push({ id: crypto.randomUUID(), name, description, commands }); summary.playbooks.added++; }
     }
 
-    // Scripts (bloco de notas). Upsert por nome+grupo+subgrupo: o mesmo arquivo
-    // reimportado não duplica, mas "deploy" em grupos diferentes coexistem.
-    for (const raw of asArray(body.scripts)) {
-      const v = scripts.normalizar(raw);
-      if (v.erro) { summary.skipped.push('script inválido: ' + String((raw && raw.name) || '')); continue; }
-      const ex = d.scripts.find((x) => x.name === v.name && (x.group || '') === v.group && (x.subgroup || '') === v.subgroup);
-      if (ex) { Object.assign(ex, v, { updatedAt: Date.now() }); summary.scripts.updated++; }
-      else { d.scripts.push({ id: crypto.randomUUID(), ...v, updatedAt: Date.now() }); summary.scripts.added++; }
+    // Scripts (bloco de notas). A fusão (casa por id, evita colapsar homônimos)
+    // mora em lib/scripts.js, pura e testada.
+    {
+      const r = scripts.fundirImportados(d.scripts, asArray(body.scripts), () => crypto.randomUUID());
+      summary.scripts.added += r.added;
+      summary.scripts.updated += r.updated;
+      for (const n of r.invalidos) summary.skipped.push('script inválido: ' + n);
     }
 
     // Configurações da IA

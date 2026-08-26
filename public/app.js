@@ -1775,6 +1775,7 @@ async function abrirScriptSolo() {
   const via = [sc.group, sc.subgroup].filter(Boolean).join(' › ');
   $('#ssMeta').textContent = via ? '· ' + via : '';
   renderScriptSoloLinhas(sc.body || '');
+  $('#ssLinhas').addEventListener('click', onSsLinhasClick); // delegação: 1 listener
   $('#ssCopiarTudo').addEventListener('click', () => { copiarParaClipboard(sc.body || ''); toast('Script inteiro copiado.'); });
   $('#ssCopiarSel').addEventListener('click', () => {
     const idxs = [...ssSelecionadas].sort((a, b) => a - b);
@@ -1784,14 +1785,27 @@ async function abrirScriptSolo() {
   });
 }
 
+// Teto de linhas RENDERIZADAS na janela: um script pode ter até 100 000 chars,
+// e uma linha-por-nó sem limite viraria centenas de milhares de nós, travando a
+// janela ao abrir. Acima disto, mostra as primeiras e avisa — "Copiar tudo"
+// segue levando o script inteiro (usa ssLinhasArr, não o DOM).
+const MAX_LINHAS_SOLO = 4000;
+let ssRows = []; // índice -> elemento da linha, para alternar só o que muda
+
 function renderScriptSoloLinhas(body) {
   ssLinhasArr = String(body).split('\n');
   ssSelecionadas = new Set();
   ssUltima = -1;
+  ssRows = [];
   const wrap = $('#ssLinhas');
   wrap.innerHTML = '';
-  ssLinhasArr.forEach((linha, i) => {
-    const row = el(wrap, 'div', 'ss-linha');
+  const total = ssLinhasArr.length;
+  const mostrar = Math.min(total, MAX_LINHAS_SOLO);
+  const frag = document.createDocumentFragment(); // um reflow só, não um por linha
+  for (let i = 0; i < mostrar; i++) {
+    const linha = ssLinhasArr[i];
+    const row = document.createElement('div');
+    row.className = 'ss-linha';
     row.dataset.i = String(i);
     const t = linha.trim();
     if (t === '' || t.startsWith('#')) row.classList.add('ss-coment');
@@ -1799,19 +1813,35 @@ function renderScriptSoloLinhas(body) {
     el(row, 'span', 'ss-txt', linha === '' ? ' ' : linha);
     const cp = el(row, 'button', 'ss-copy', '📋');
     cp.type = 'button'; cp.title = 'Copiar esta linha';
-    cp.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      copiarParaClipboard(linha);
-      toast('Linha copiada.');
-      row.classList.add('ss-flash');
-      setTimeout(() => row.classList.remove('ss-flash'), 500);
-    });
-    row.addEventListener('click', (ev) => ssToggleLinha(i, ev.shiftKey));
-  });
+    frag.appendChild(row);
+    ssRows[i] = row;
+  }
+  wrap.appendChild(frag);
+  if (total > mostrar) {
+    el(wrap, 'div', 'ss-truncado',
+      `… script muito grande: mostrando ${mostrar} de ${total} linhas. Use "Copiar tudo" para o script inteiro.`);
+  }
   ssRefletirSelecao();
 }
 
+// Delegação: UM clique no contêiner cobre todas as linhas (em vez de 2 listeners
+// por linha). O 📋 copia só a sua linha; o resto da linha seleciona.
+function onSsLinhasClick(ev) {
+  const row = ev.target.closest('.ss-linha');
+  if (!row) return;
+  const i = Number(row.dataset.i);
+  if (ev.target.closest('.ss-copy')) {
+    copiarParaClipboard(ssLinhasArr[i] || '');
+    toast('Linha copiada.');
+    row.classList.add('ss-flash');
+    setTimeout(() => row.classList.remove('ss-flash'), 500);
+    return;
+  }
+  ssToggleLinha(i, ev.shiftKey);
+}
+
 function ssToggleLinha(i, shift) {
+  const antes = new Set(ssSelecionadas);
   if (shift && ssUltima >= 0) {
     const a = Math.min(ssUltima, i), b = Math.max(ssUltima, i);
     for (let k = a; k <= b; k++) ssSelecionadas.add(k);
@@ -1819,11 +1849,18 @@ function ssToggleLinha(i, shift) {
     if (ssSelecionadas.has(i)) ssSelecionadas.delete(i); else ssSelecionadas.add(i);
     ssUltima = i;
   }
-  ssRefletirSelecao();
+  // alterna só as linhas que MUDARAM de estado (não re-varre o DOM inteiro)
+  for (const k of new Set([...antes, ...ssSelecionadas])) {
+    const r = ssRows[k]; if (r) r.classList.toggle('sel', ssSelecionadas.has(k));
+  }
+  ssAtualizarBotaoSel();
 }
 
 function ssRefletirSelecao() {
-  $$('#ssLinhas .ss-linha').forEach((row) => row.classList.toggle('sel', ssSelecionadas.has(Number(row.dataset.i))));
+  for (const r of ssRows) if (r) r.classList.toggle('sel', ssSelecionadas.has(Number(r.dataset.i)));
+  ssAtualizarBotaoSel();
+}
+function ssAtualizarBotaoSel() {
   const n = ssSelecionadas.size;
   const b = $('#ssCopiarSel');
   if (b) { b.disabled = n === 0; b.textContent = n ? `📋 Copiar ${n} linha(s)` : '📋 Copiar selecionadas'; }
@@ -3396,6 +3433,7 @@ function xmlToConfig(text) {
         commands: [...pb.querySelectorAll(':scope > command')].map((c) => c.textContent),
       })),
       scripts: [...root.querySelectorAll(':scope > scripts > script')].map((sc) => ({
+        id: sc.getAttribute('id') || '',
         name: sc.getAttribute('name') || '',
         group: sc.getAttribute('group') || '',
         subgroup: sc.getAttribute('subgroup') || '',
@@ -7617,7 +7655,14 @@ function init() {
   $('#btnNewScript').addEventListener('click', novoScript);
   $('#btnImportScript').addEventListener('click', importarScriptArquivo);
   $('#btnScriptAi').addEventListener('click', openScriptAiModal);
-  $('#scriptSearch').addEventListener('input', () => { scriptQuery = $('#scriptSearch').value.toLowerCase().trim(); renderScripts(); });
+  // debounce: scriptCasa varre o corpo inteiro de cada script; a cada TECLA
+  // sairia caro com muitos scripts grandes. Espera a digitação parar (como a
+  // busca do histórico).
+  let scriptSearchTimer = null;
+  $('#scriptSearch').addEventListener('input', () => {
+    clearTimeout(scriptSearchTimer);
+    scriptSearchTimer = setTimeout(() => { scriptQuery = $('#scriptSearch').value.toLowerCase().trim(); renderScripts(); }, 140);
+  });
   initHistoryControls();
   initFavorites();
   initFavoritesTab();

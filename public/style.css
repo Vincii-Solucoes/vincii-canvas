@@ -518,6 +518,7 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .ss-num { flex: 0 0 auto; width: 34px; text-align: right; color: var(--muted); user-select: none; opacity: .7; }
 .ss-txt { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 .ss-coment .ss-txt { color: var(--muted); }
+.ss-truncado { padding: 10px 6px; color: var(--yellow); font-size: 12.5px; font-style: italic; }
 .ss-copy { flex: 0 0 auto; background: transparent; border: none; cursor: pointer; opacity: 0; font-size: 12px; padding: 0 4px; line-height: 1.5; }
 .ss-linha:hover .ss-copy { opacity: .8; }
 .ss-copy:hover { opacity: 1 !important; }
