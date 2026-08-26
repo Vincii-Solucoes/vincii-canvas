@@ -2127,6 +2127,15 @@ app.post('/api/ai/script/edit', async (req, res) => {
   } catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
 });
 
+app.post('/api/ai/script/review', async (req, res) => {
+  const body = String((req.body || {}).body || '');
+  if (!body.trim()) return fail(res, 400, 'Não há script para verificar.');
+  if (body.length > 100000) return fail(res, 400, 'Script grande demais para verificar.');
+  try {
+    res.json(await ai.reviewScript({ body }));
+  } catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+});
+
 // ---------- agente autônomo (IA age sozinha, analista acompanha) ----------
 app.post('/api/agent/start', async (req, res) => {
   const body = req.body || {};

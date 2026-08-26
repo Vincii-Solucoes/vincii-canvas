@@ -1029,6 +1029,34 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .script-ia #f_scAiHint { color: var(--green); font-size: 12px; white-space: nowrap; }
 .script-editor-acoes { display: flex; align-items: center; gap: 8px; }
 .script-editor-acoes #f_scStatus { margin-left: auto; }
+
+/* Parecer da IA (verificar) — painel de leitura abaixo da barra de IA */
+.script-review { border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; max-height: 40vh; overflow-y: auto; background: var(--panel2); }
+.script-review.ver-seguro { border-left-color: var(--green); }
+.script-review.ver-atencao { border-left-color: var(--yellow); }
+.script-review.ver-perigoso { border-left-color: var(--red); }
+.sr-cab { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sr-veredito { font-weight: 700; font-size: 13px; }
+.ver-seguro .sr-veredito { color: var(--green); }
+.ver-atencao .sr-veredito { color: var(--yellow); }
+.ver-perigoso .sr-veredito { color: var(--red); }
+.sr-fechar { margin-left: auto; background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.sr-fechar:hover { color: var(--text); }
+.sr-resumo { margin: 2px 0 10px; font-size: 13px; color: var(--text); }
+.sr-titulo { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--muted); margin: 10px 0 6px; }
+.sr-vazio { font-size: 13px; color: var(--muted); }
+.sr-lista { display: flex; flex-direction: column; gap: 8px; }
+.sr-achado { padding: 8px 10px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border); }
+.sr-achado-tit { display: flex; align-items: center; gap: 8px; }
+.sr-grav { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; color: #fff; }
+.grav-alta .sr-grav { background: var(--red); }
+.grav-media .sr-grav { background: var(--yellow); color: #000; }
+.grav-baixa .sr-grav { background: var(--muted); }
+.sr-achado-nome { font-weight: 600; font-size: 13px; }
+.sr-achado-det { font-size: 12.5px; color: var(--muted); margin-top: 4px; white-space: pre-wrap; }
+.sr-sugestoes { margin: 0; padding-left: 20px; font-size: 13px; }
+.sr-sugestoes li { margin: 3px 0; }
+.sr-dica { font-size: 11.5px; color: var(--muted); margin: 10px 0 0; }
 @media (max-width: 760px) { .script-notebook { flex-direction: column; height: auto; } .script-list-pane { flex-basis: auto; max-height: 220px; } .script-papel { min-height: 260px; } }
 .host-card {
   display: flex;

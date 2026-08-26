@@ -1562,10 +1562,12 @@ function renderScriptEditor() {
   box.hidden = false;
   const aiBox = aiEnabled ? `
     <div class="script-ia">
-      <input id="f_scAiInstr" placeholder="✨ Pedir à IA: descreva a mudança — ex.: adicione tratamento de erro; troque apt por yum">
-      <button type="button" id="f_scAiApply" class="btn small primary">Aplicar</button>
+      <input id="f_scAiInstr" placeholder="✨ Descreva a mudança e clique Alterar — ou clique Verificar para um parecer da IA">
+      <button type="button" id="f_scAiApply" class="btn small primary">✎ Alterar</button>
+      <button type="button" id="f_scReview" class="btn small">🔍 Verificar</button>
       <span class="hint" id="f_scAiHint"></span>
-    </div>` : '';
+    </div>
+    <div id="scriptReview" class="script-review" hidden></div>` : '';
   // Estrutura estática (sem dado do usuário no innerHTML); os valores entram por
   // .value logo abaixo, que não interpreta HTML.
   box.innerHTML = `
@@ -1614,18 +1616,68 @@ function renderScriptEditor() {
     bApply.addEventListener('click', async () => {
       const instruction = $('#f_scAiInstr').value.trim();
       if (!instruction) { toast('Diga o que a IA deve mudar.', 'erro'); return; }
-      bApply.disabled = true; bApply.textContent = 'Aplicando…';
+      bApply.disabled = true; bApply.textContent = 'Alterando…';
       $('#f_scAiHint').textContent = '';
       try {
         const out = await api('/api/ai/script/edit', { method: 'POST', body: { body: $('#f_scBody').value, instruction } });
         $('#f_scBody').value = out.body;
         $('#f_scAiInstr').value = '';
-        $('#f_scAiHint').textContent = '✓ revisado pela IA — confira e salve';
+        $('#f_scAiHint').textContent = '✓ alterado pela IA — confira e salve';
         marcarSujo();
       } catch (err) { toast(err.message, 'erro'); }
-      finally { bApply.disabled = false; bApply.textContent = 'Aplicar'; }
+      finally { bApply.disabled = false; bApply.textContent = '✎ Alterar'; }
+    });
+
+    const bReview = $('#f_scReview');
+    bReview.addEventListener('click', async () => {
+      const corpo = $('#f_scBody').value;
+      if (!corpo.trim()) { toast('Não há script para verificar.', 'erro'); return; }
+      bReview.disabled = true; bReview.textContent = 'Verificando…';
+      $('#f_scAiHint').textContent = '';
+      try {
+        const rev = await api('/api/ai/script/review', { method: 'POST', body: { body: corpo } });
+        renderScriptReview(rev);
+      } catch (err) { toast(err.message, 'erro'); }
+      finally { bReview.disabled = false; bReview.textContent = '🔍 Verificar'; }
     });
   }
+}
+
+// Parecer da IA: só LEITURA — todo texto vem da IA, então entra por textContent
+// (nunca innerHTML), como o resto do renderer.
+const VER_ROTULO = { seguro: '✓ Sem problemas', atencao: '⚠ Atenção', perigoso: '⛔ Perigoso' };
+function renderScriptReview(rev) {
+  const box = $('#scriptReview');
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = '';
+  box.className = 'script-review ver-' + rev.veredito;
+  const cab = el(box, 'div', 'sr-cab');
+  el(cab, 'span', 'sr-veredito', VER_ROTULO[rev.veredito] || rev.veredito);
+  const fechar = el(cab, 'button', 'sr-fechar', '✕');
+  fechar.type = 'button'; fechar.title = 'Fechar parecer';
+  fechar.addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; });
+  if (rev.resumo) el(box, 'p', 'sr-resumo', rev.resumo);
+  if (rev.achados.length) {
+    el(box, 'div', 'sr-titulo', 'Problemas encontrados');
+    const ul = el(box, 'div', 'sr-lista');
+    for (const a of rev.achados) {
+      const item = el(ul, 'div', 'sr-achado grav-' + a.gravidade);
+      const t = el(item, 'div', 'sr-achado-tit');
+      el(t, 'span', 'sr-grav', a.gravidade);
+      el(t, 'span', 'sr-achado-nome', a.titulo);
+      if (a.detalhe) el(item, 'div', 'sr-achado-det', a.detalhe);
+    }
+  } else {
+    el(box, 'p', 'sr-vazio', 'Nenhum problema apontado pela IA.');
+  }
+  if (rev.sugestoes.length) {
+    el(box, 'div', 'sr-titulo', 'Sugestões');
+    const ul = el(box, 'ul', 'sr-sugestoes');
+    for (const s of rev.sugestoes) el(ul, 'li', null, s);
+  }
+  const dica = el(box, 'p', 'sr-dica', 'Para aplicar uma mudança, escreva na barra acima e clique ✎ Alterar.');
+  dica.hidden = !aiEnabled;
 }
 
 async function salvarScriptEditor() {
