@@ -1770,6 +1770,12 @@ app.post('/api/scripts', (req, res) => {
   res.json(sc);
 });
 
+app.get('/api/scripts/:id', (req, res) => {
+  const sc = (store.get().scripts || []).find((s) => s.id === req.params.id);
+  if (!sc) return fail(res, 404, 'Script não encontrado.');
+  res.json(sc);
+});
+
 app.put('/api/scripts/:id', (req, res) => {
   const d = store.get();
   const sc = garantirScripts(d).find((s) => s.id === req.params.id);

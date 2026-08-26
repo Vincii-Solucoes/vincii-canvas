@@ -500,6 +500,27 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-cab-dir { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 /* a janela solta do monitor: sem o teto de largura das outras abas */
 .modo-solo #tab-tools { max-width: none; padding: 12px 14px; }
+.modo-solo #tab-scriptsolo { max-width: none; padding: 0; height: 100vh; display: flex; }
+
+/* ---------- Janela solta de um script (linhas selecionáveis) ---------- */
+.scriptsolo { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0; }
+.scriptsolo-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.scriptsolo-titulo { flex: 1; min-width: 0; }
+.scriptsolo-titulo strong { font-size: 15px; }
+.scriptsolo-titulo #ssMeta { margin-left: 8px; }
+.scriptsolo-acoes { display: flex; gap: 8px; flex-shrink: 0; }
+.scriptsolo-dica { margin: 8px 16px 0; }
+.scriptsolo-linhas { flex: 1; overflow-y: auto; padding: 10px 16px 16px; font-family: var(--mono); font-size: 13px; }
+.ss-linha { display: flex; align-items: flex-start; gap: 10px; padding: 1px 6px; border-radius: 5px; cursor: pointer; border: 1px solid transparent; }
+.ss-linha:hover { background: var(--panel2); }
+.ss-linha.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.ss-linha.ss-flash { background: color-mix(in srgb, var(--green) 30%, transparent); }
+.ss-num { flex: 0 0 auto; width: 34px; text-align: right; color: var(--muted); user-select: none; opacity: .7; }
+.ss-txt { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.ss-coment .ss-txt { color: var(--muted); }
+.ss-copy { flex: 0 0 auto; background: transparent; border: none; cursor: pointer; opacity: 0; font-size: 12px; padding: 0 4px; line-height: 1.5; }
+.ss-linha:hover .ss-copy { opacity: .8; }
+.ss-copy:hover { opacity: 1 !important; }
 .mon-entrada { padding: 8px 2px; }
 .mon-entrada h2 { margin: 0 0 6px; }
 #monPainel { display: flex; flex-direction: column; height: calc(100vh - 24px); gap: 10px; }

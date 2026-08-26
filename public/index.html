@@ -272,6 +272,25 @@ try {
     </div>
   </section>
 
+  <!-- Janela solta de um script (?solo=1&tipo=script&id=…): as linhas viram
+       selecionáveis para copiar comando a comando no terminal. -->
+  <section id="tab-scriptsolo" class="tab-panel">
+    <div class="scriptsolo">
+      <div class="scriptsolo-head">
+        <div class="scriptsolo-titulo">
+          <strong id="ssNome"></strong>
+          <span id="ssMeta" class="muted small"></span>
+        </div>
+        <div class="scriptsolo-acoes">
+          <button id="ssCopiarSel" class="btn small" disabled>📋 Copiar selecionadas</button>
+          <button id="ssCopiarTudo" class="btn small">📋 Copiar tudo</button>
+        </div>
+      </div>
+      <p class="hint scriptsolo-dica">Clique numa linha para selecionar (Shift para um intervalo). O 📋 de cada linha copia só ela. Feito para colar comando a comando no terminal.</p>
+      <div id="ssLinhas" class="scriptsolo-linhas"></div>
+    </div>
+  </section>
+
   <section id="tab-files" class="tab-panel">
     <div class="files-bar card">
       <label class="inline files-host">Servidor

@@ -1606,6 +1606,7 @@ function renderScriptEditor() {
       <button type="button" id="f_scSave" class="btn primary">💾 Salvar</button>
       <button type="button" id="f_scCopy" class="btn">📋 Copiar</button>
       <button type="button" id="f_scExport" class="btn">⬇ Exportar .txt</button>
+      ${isEdit ? '<button type="button" id="f_scJanela" class="btn">↗ Abrir em janela</button>' : ''}
       ${isEdit ? '<button type="button" id="f_scDel" class="btn danger">Excluir</button>' : ''}
       <span id="f_scStatus" class="muted small"></span>
     </div>`;
@@ -1629,6 +1630,7 @@ function renderScriptEditor() {
   });
   $('#f_scCopy').addEventListener('click', () => { copiarParaClipboard($('#f_scBody').value); toast('Script copiado.'); });
   $('#f_scExport').addEventListener('click', () => exportarScriptTxt($('#f_scName').value, $('#f_scBody').value));
+  if (isEdit) $('#f_scJanela').addEventListener('click', () => abrirScriptEmJanela(e.id, $('#f_scName').value || e.name));
   if (isEdit) $('#f_scDel').addEventListener('click', async () => {
     if (!confirm(`Excluir o script "${e.name}"?`)) return;
     try { await api(`/api/scripts/${e.id}`, { method: 'DELETE' }); fecharEditorScript(); toast('Script excluído.'); await loadState(); }
@@ -1744,6 +1746,87 @@ function exportarScriptTxt(nome, corpo) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('Exportado como ' + a.download + '.');
+}
+
+// Abre o script numa janela própria, leve, com as linhas selecionáveis — para
+// copiar comando a comando no terminal sem ter o editor no caminho. Só para
+// script SALVO (a janela busca pelo id).
+function abrirScriptEmJanela(id, nome) {
+  if (!id) { toast('Salve o script antes de abrir em janela.', 'erro'); return; }
+  const url = '/?' + new URLSearchParams({ solo: '1', tipo: 'script', id, nome: nome || 'Script' }).toString();
+  const j = window.open(url, '_blank', 'width=720,height=680');
+  try { if (j) j.focus(); } catch { /* ok */ }
+}
+
+// ---------- janela solta de um script (linhas selecionáveis) ----------
+let ssLinhasArr = [];
+let ssSelecionadas = new Set();
+let ssUltima = -1;
+
+async function abrirScriptSolo() {
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-scriptsolo'));
+  document.body.classList.remove('term-full');
+  const id = new URLSearchParams(location.search).get('id');
+  let sc;
+  try { sc = await api('/api/scripts/' + encodeURIComponent(id || '')); }
+  catch (e) { $('#ssNome').textContent = 'Script não encontrado'; $('#ssLinhas').textContent = ''; toast(e.message, 'erro'); return; }
+  document.title = (sc.name || 'Script') + ' — Vincii Canvas';
+  $('#ssNome').textContent = sc.name || '(sem nome)';
+  const via = [sc.group, sc.subgroup].filter(Boolean).join(' › ');
+  $('#ssMeta').textContent = via ? '· ' + via : '';
+  renderScriptSoloLinhas(sc.body || '');
+  $('#ssCopiarTudo').addEventListener('click', () => { copiarParaClipboard(sc.body || ''); toast('Script inteiro copiado.'); });
+  $('#ssCopiarSel').addEventListener('click', () => {
+    const idxs = [...ssSelecionadas].sort((a, b) => a - b);
+    if (!idxs.length) return;
+    copiarParaClipboard(idxs.map((i) => ssLinhasArr[i]).join('\n'));
+    toast(`${idxs.length} linha(s) copiada(s).`);
+  });
+}
+
+function renderScriptSoloLinhas(body) {
+  ssLinhasArr = String(body).split('\n');
+  ssSelecionadas = new Set();
+  ssUltima = -1;
+  const wrap = $('#ssLinhas');
+  wrap.innerHTML = '';
+  ssLinhasArr.forEach((linha, i) => {
+    const row = el(wrap, 'div', 'ss-linha');
+    row.dataset.i = String(i);
+    const t = linha.trim();
+    if (t === '' || t.startsWith('#')) row.classList.add('ss-coment');
+    el(row, 'span', 'ss-num', String(i + 1));
+    el(row, 'span', 'ss-txt', linha === '' ? ' ' : linha);
+    const cp = el(row, 'button', 'ss-copy', '📋');
+    cp.type = 'button'; cp.title = 'Copiar esta linha';
+    cp.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      copiarParaClipboard(linha);
+      toast('Linha copiada.');
+      row.classList.add('ss-flash');
+      setTimeout(() => row.classList.remove('ss-flash'), 500);
+    });
+    row.addEventListener('click', (ev) => ssToggleLinha(i, ev.shiftKey));
+  });
+  ssRefletirSelecao();
+}
+
+function ssToggleLinha(i, shift) {
+  if (shift && ssUltima >= 0) {
+    const a = Math.min(ssUltima, i), b = Math.max(ssUltima, i);
+    for (let k = a; k <= b; k++) ssSelecionadas.add(k);
+  } else {
+    if (ssSelecionadas.has(i)) ssSelecionadas.delete(i); else ssSelecionadas.add(i);
+    ssUltima = i;
+  }
+  ssRefletirSelecao();
+}
+
+function ssRefletirSelecao() {
+  $$('#ssLinhas .ss-linha').forEach((row) => row.classList.toggle('sel', ssSelecionadas.has(Number(row.dataset.i))));
+  const n = ssSelecionadas.size;
+  const b = $('#ssCopiarSel');
+  if (b) { b.disabled = n === 0; b.textContent = n ? `📋 Copiar ${n} linha(s)` : '📋 Copiar selecionadas'; }
 }
 
 function openScriptAiModal() {
@@ -5635,6 +5718,7 @@ function abrirSolo() {
   if (p.tipo === 'mtr') { abrirMtrSolo(); return; }
   if (p.tipo === 'tcpping') { abrirTcppingSolo(); return; }
   if (['portscan', 'dns', 'http', 'subnet'].includes(p.tipo)) { abrirConsultaSolo(p.tipo); return; }
+  if (p.tipo === 'script') { abrirScriptSolo(); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
   } else if (p.tipo === 'desk') {
@@ -7673,7 +7757,7 @@ function init() {
         // Monitor e MTR não são sessão de terminal — não ativam a aba Terminal
         // (que criaria um shell local à toa nesta janela).
         const tipoSolo = new URLSearchParams(location.search).get('tipo');
-        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet'].includes(tipoSolo);
+        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'script'].includes(tipoSolo);
         if (!soloFerramenta) {
           try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
           onTerminalTabShown();
