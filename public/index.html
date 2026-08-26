@@ -61,6 +61,7 @@ try {
       <button data-tab="exec">Executar</button>
       <button data-tab="hosts">Hosts</button>
       <button data-tab="playbooks">Playbooks</button>
+      <button data-tab="scripts">Scripts</button>
       <button data-tab="files">Arquivos</button>
       <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
@@ -242,6 +243,31 @@ try {
         </div>
       </div>
       <div id="playbooksList" class="items"></div>
+    </div>
+  </section>
+
+  <section id="tab-scripts" class="tab-panel">
+    <div class="script-notebook">
+      <aside class="script-list-pane">
+        <div class="script-list-head">
+          <input id="scriptSearch" type="text" placeholder="Buscar…" autocomplete="off">
+          <div class="btn-row">
+            <button id="btnNewScript" class="btn small" title="Novo script">＋ Novo</button>
+            <button id="btnScriptAi" class="btn small primary" title="Criar com IA" hidden>✨ IA</button>
+          </div>
+        </div>
+        <div id="scriptsList" class="script-list"></div>
+      </aside>
+      <section class="script-editor">
+        <div id="scriptEditorEmpty" class="script-editor-empty">
+          <div class="script-editor-empty-inner">
+            <div class="see-ico">🗒️</div>
+            <p>Seu bloco de notas de comandos.</p>
+            <p class="hint">Selecione um script à esquerda, ou crie um novo — escreva à mão ou peça para a IA. Organize por grupo e subgrupo. Para rodar em vários hosts de uma vez, use os Playbooks.</p>
+          </div>
+        </div>
+        <div id="scriptEditorForm" class="script-editor-form" hidden></div>
+      </section>
     </div>
   </section>
 

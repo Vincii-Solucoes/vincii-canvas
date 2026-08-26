@@ -18,6 +18,7 @@ const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
 const ai = require('./lib/ai');
+const scripts = require('./lib/scripts');
 const agent = require('./lib/agent');
 const history = require('./lib/history');
 const quickhosts = require('./lib/quickhosts');
@@ -1267,7 +1268,7 @@ app.post('/api/import', (req, res) => {
   const d = structuredClone(vivo);
   // Um data.json de outra versão (ou editado à mão) pode trazer coleção com
   // tipo errado. Normaliza aqui em vez de estourar no meio do laço.
-  for (const k of ['hosts', 'playbooks', 'profiles', 'favorites']) {
+  for (const k of ['hosts', 'playbooks', 'scripts', 'profiles', 'favorites']) {
     if (!Array.isArray(d[k])) d[k] = [];
   }
   if (!d.globals || typeof d.globals !== 'object' || Array.isArray(d.globals)) d.globals = {};
@@ -1277,6 +1278,7 @@ app.post('/api/import', (req, res) => {
     profiles: { added: 0, updated: 0 },
     hosts: { added: 0, updated: 0 },
     playbooks: { added: 0, updated: 0 },
+    scripts: { added: 0, updated: 0 },
     settings: false,
     skipped: [],
     favorites: { added: 0, updated: 0 },
@@ -1474,6 +1476,16 @@ app.post('/api/import', (req, res) => {
       else { d.playbooks.push({ id: crypto.randomUUID(), name, description, commands }); summary.playbooks.added++; }
     }
 
+    // Scripts (bloco de notas). Upsert por nome+grupo+subgrupo: o mesmo arquivo
+    // reimportado não duplica, mas "deploy" em grupos diferentes coexistem.
+    for (const raw of asArray(body.scripts)) {
+      const v = scripts.normalizar(raw);
+      if (v.erro) { summary.skipped.push('script inválido: ' + String((raw && raw.name) || '')); continue; }
+      const ex = d.scripts.find((x) => x.name === v.name && (x.group || '') === v.group && (x.subgroup || '') === v.subgroup);
+      if (ex) { Object.assign(ex, v, { updatedAt: Date.now() }); summary.scripts.updated++; }
+      else { d.scripts.push({ id: crypto.randomUUID(), ...v, updatedAt: Date.now() }); summary.scripts.added++; }
+    }
+
     // Configurações da IA
     const s = body.settings;
     if (s && typeof s === 'object') {
@@ -1556,6 +1568,7 @@ app.get('/api/state', (req, res) => {
     // ERP tirava os sistemas do cliente da lista sem uma palavra na tela.
     avisosDeCofre: dadosDeCofre.avisos(),
     playbooks: d.playbooks,
+    scripts: d.scripts || [],
     profiles: d.profiles,
     favorites: d.favorites || [],
     globals: d.globals,
@@ -1738,6 +1751,42 @@ app.delete('/api/playbooks/:id', (req, res) => {
   const idx = d.playbooks.findIndex((p) => p.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Playbook não encontrado.');
   d.playbooks.splice(idx, 1);
+  store.save();
+  res.json({ ok: true });
+});
+
+// ---------- scripts (bloco de notas de comandos) ----------
+// Biblioteca pessoal de scripts, por grupo/subgrupo. NÃO roda em lote — é
+// guardar, organizar, copiar e editar (à mão ou pela IA).
+function garantirScripts(d) { if (!Array.isArray(d.scripts)) d.scripts = []; return d.scripts; }
+
+app.post('/api/scripts', (req, res) => {
+  const v = scripts.normalizar(req.body);
+  if (v.erro) return fail(res, 400, v.erro);
+  const d = store.get();
+  const sc = { id: crypto.randomUUID(), ...v, updatedAt: Date.now() };
+  garantirScripts(d).push(sc);
+  store.save();
+  res.json(sc);
+});
+
+app.put('/api/scripts/:id', (req, res) => {
+  const d = store.get();
+  const sc = garantirScripts(d).find((s) => s.id === req.params.id);
+  if (!sc) return fail(res, 404, 'Script não encontrado.');
+  const v = scripts.normalizar(req.body);
+  if (v.erro) return fail(res, 400, v.erro);
+  Object.assign(sc, v, { updatedAt: Date.now() });
+  store.save();
+  res.json(sc);
+});
+
+app.delete('/api/scripts/:id', (req, res) => {
+  const d = store.get();
+  const arr = garantirScripts(d);
+  const idx = arr.findIndex((s) => s.id === req.params.id);
+  if (idx < 0) return fail(res, 404, 'Script não encontrado.');
+  arr.splice(idx, 1);
   store.save();
   res.json({ ok: true });
 });
@@ -2051,6 +2100,31 @@ app.post('/api/ai/playbook', async (req, res) => {
   } catch (err) {
     fail(res, 400, err && err.message ? err.message : String(err));
   }
+});
+
+// ---------- scripts com IA: criar do zero e editar por instrução ----------
+app.post('/api/ai/script', async (req, res) => {
+  const description = String((req.body || {}).description || '').trim();
+  if (!description) return fail(res, 400, 'Descreva o que o script deve fazer.');
+  if (description.length > 4000) return fail(res, 400, 'Descrição longa demais.');
+  try {
+    const sc = await ai.generateScript({ description });
+    if (!sc.body.trim()) return fail(res, 400, 'A IA não gerou nenhum script. Tente detalhar melhor a tarefa.');
+    res.json(sc);
+  } catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
+});
+
+app.post('/api/ai/script/edit', async (req, res) => {
+  const body = String((req.body || {}).body || '');
+  const instruction = String((req.body || {}).instruction || '').trim();
+  if (!instruction) return fail(res, 400, 'Diga o que a IA deve mudar no script.');
+  if (instruction.length > 4000) return fail(res, 400, 'Instrução longa demais.');
+  if (body.length > 100000) return fail(res, 400, 'Script grande demais para editar.');
+  try {
+    const out = await ai.editScript({ body, instruction });
+    if (!out.body.trim()) return fail(res, 400, 'A IA devolveu um script vazio. Tente reformular a instrução.');
+    res.json(out);
+  } catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
 });
 
 // ---------- agente autônomo (IA age sozinha, analista acompanha) ----------

@@ -3,7 +3,7 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-let state = { hosts: [], playbooks: [], profiles: [], favorites: [], globals: {} };
+let state = { hosts: [], playbooks: [], scripts: [], profiles: [], favorites: [], globals: {} };
 let currentRun = null;
 
 // ---------- preferências da interface ----------
@@ -222,6 +222,7 @@ async function loadState(sePrecisar) {
   state = novo;
   renderHosts();
   renderPlaybooks();
+  renderScripts();
   renderFavoritesTab();
   renderFileHostSelect();
   renderProfiles();
@@ -1464,6 +1465,217 @@ function openPlaybookAiModal() {
       btn.disabled = false;
       btn.textContent = 'Gerar';
     }
+  };
+}
+
+// ---------- scripts (bloco de notas de comandos) ----------
+// Reusa o mesmo agrupamento grupo>subgrupo dos hosts (agrupar.js só lê .group e
+// .subgroup — serve para qualquer coleção com esses campos).
+let scriptQuery = '';
+function scriptGroups() { return [...new Set(state.scripts.map((s) => (s.group || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')); }
+function scriptSubgroups(grupo) {
+  const g = (grupo || '').trim();
+  if (!g) return [];
+  return [...new Set(state.scripts.filter((s) => (s.group || '').trim() === g).map((s) => (s.subgroup || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+function scriptCasa(sc, q) {
+  if (!q) return true;
+  return `${sc.name} ${sc.group || ''} ${sc.subgroup || ''} ${sc.description || ''} ${sc.body || ''}`.toLowerCase().includes(q);
+}
+
+// O caderno tem dois lados: a LISTA (esquerda, agrupada) e o EDITOR (direita, o
+// "papel"). O que está sendo editado vive em `scriptEditando` — um rascunho sem
+// id é criação; com id é edição. O poll (renderScripts) só redesenha a LISTA;
+// o editor não é tocado por trás, senão apagaria o que o usuário está digitando.
+let scriptSelId = null;      // id do item destacado na lista
+let scriptEditando = null;   // { id?, name, group, subgroup, description, body }
+
+function renderScripts() {
+  const wrap = $('#scriptsList');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!state.scripts.length) {
+    el(wrap, 'p', 'script-list-vazio', 'Nenhum script ainda.');
+  } else {
+    const filtrados = state.scripts.filter((s) => scriptCasa(s, scriptQuery));
+    if (!filtrados.length) el(wrap, 'p', 'script-list-vazio', 'Nada encontrado.');
+    else for (const g of agruparHosts(filtrados)) {
+      el(wrap, 'div', 'script-list-group', g.nome);
+      for (const sc of g.diretos) wrap.appendChild(scriptListItem(sc));
+      for (const [sub, lista] of g.subgrupos) {
+        el(wrap, 'div', 'script-list-subgroup', sub);
+        for (const sc of lista) wrap.appendChild(scriptListItem(sc));
+      }
+    }
+  }
+  // O item aberto foi excluído em outra janela: fecha o editor para não salvar
+  // por cima de um fantasma. Um rascunho novo (sem id) é preservado.
+  if (scriptSelId && !state.scripts.some((s) => s.id === scriptSelId)) fecharEditorScript();
+}
+
+function scriptListItem(sc) {
+  const it = document.createElement('div');
+  it.className = 'script-list-item' + (sc.id === scriptSelId ? ' active' : '');
+  const nm = el(it, 'div', 'sli-nome'); nm.textContent = sc.name || '(sem nome)';
+  if (sc.description) { const d = el(it, 'div', 'sli-desc'); d.textContent = sc.description; }
+  it.addEventListener('click', () => abrirScript(sc.id));
+  return it;
+}
+
+function abrirScript(id) {
+  const sc = state.scripts.find((s) => s.id === id);
+  if (!sc) return;
+  scriptSelId = id;
+  scriptEditando = { id: sc.id, name: sc.name, group: sc.group || '', subgroup: sc.subgroup || '', description: sc.description || '', body: sc.body || '' };
+  renderScripts();
+  renderScriptEditor();
+}
+
+function novoScript() {
+  scriptSelId = null;
+  scriptEditando = { name: '', group: '', subgroup: '', description: '', body: '' };
+  renderScripts();
+  renderScriptEditor();
+  setTimeout(() => { try { $('#f_scName').focus(); } catch {} }, 30);
+}
+
+// Rascunho vindo da IA (sem id): entra no editor como criação, para revisar.
+function abrirRascunhoIA(sc) {
+  scriptSelId = null;
+  scriptEditando = { name: sc.name || '', group: '', subgroup: '', description: sc.description || '', body: sc.body || '' };
+  renderScripts();
+  renderScriptEditor();
+}
+
+function fecharEditorScript() {
+  scriptSelId = null; scriptEditando = null;
+  $('#scriptEditorForm').hidden = true;
+  $('#scriptEditorEmpty').hidden = false;
+}
+
+function renderScriptEditor() {
+  const box = $('#scriptEditorForm');
+  if (!box || !scriptEditando) return;
+  const e = scriptEditando;
+  const isEdit = !!e.id;
+  $('#scriptEditorEmpty').hidden = true;
+  box.hidden = false;
+  const aiBox = aiEnabled ? `
+    <div class="script-ia">
+      <input id="f_scAiInstr" placeholder="✨ Pedir à IA: descreva a mudança — ex.: adicione tratamento de erro; troque apt por yum">
+      <button type="button" id="f_scAiApply" class="btn small primary">Aplicar</button>
+      <span class="hint" id="f_scAiHint"></span>
+    </div>` : '';
+  // Estrutura estática (sem dado do usuário no innerHTML); os valores entram por
+  // .value logo abaixo, que não interpreta HTML.
+  box.innerHTML = `
+    <input id="f_scName" class="script-titulo" placeholder="Título do script">
+    <div class="script-meta">
+      <input id="f_scGroup" list="scGroupList" placeholder="Grupo"><datalist id="scGroupList"></datalist>
+      <span class="script-meta-sep">›</span>
+      <input id="f_scSubgroup" list="scSubgroupList" placeholder="Subgrupo"><datalist id="scSubgroupList"></datalist>
+      <input id="f_scDesc" class="script-desc" placeholder="Descrição (opcional)">
+    </div>
+    <textarea id="f_scBody" class="script-papel mono" spellcheck="false" placeholder="#!/usr/bin/env bash&#10;set -euo pipefail&#10;# escreva ou cole seu script aqui…"></textarea>
+    ${aiBox}
+    <div class="script-editor-acoes">
+      <button type="button" id="f_scSave" class="btn primary">💾 Salvar</button>
+      <button type="button" id="f_scCopy" class="btn">📋 Copiar</button>
+      ${isEdit ? '<button type="button" id="f_scDel" class="btn danger">Excluir</button>' : ''}
+      <span id="f_scStatus" class="muted small"></span>
+    </div>`;
+  $('#f_scName').value = e.name;
+  $('#f_scGroup').value = e.group;
+  $('#f_scSubgroup').value = e.subgroup;
+  $('#f_scDesc').value = e.description;
+  $('#f_scBody').value = e.body;
+  const esc = (v) => v.replace(/"/g, '&quot;');
+  $('#scGroupList').innerHTML = scriptGroups().map((g) => `<option value="${esc(g)}"></option>`).join('');
+  const syncSub = () => { $('#scSubgroupList').innerHTML = scriptSubgroups($('#f_scGroup').value.trim()).map((s) => `<option value="${esc(s)}"></option>`).join(''); };
+  syncSub();
+  $('#f_scGroup').addEventListener('input', syncSub);
+
+  const marcarSujo = () => { const st = $('#f_scStatus'); if (st) st.textContent = 'alterações não salvas'; };
+  ['#f_scName', '#f_scGroup', '#f_scSubgroup', '#f_scDesc', '#f_scBody'].forEach((sel) => $(sel).addEventListener('input', marcarSujo));
+
+  $('#f_scSave').addEventListener('click', salvarScriptEditor);
+  $('#f_scBody').addEventListener('keydown', (ev) => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); salvarScriptEditor(); }
+  });
+  $('#f_scCopy').addEventListener('click', () => { copiarParaClipboard($('#f_scBody').value); toast('Script copiado.'); });
+  if (isEdit) $('#f_scDel').addEventListener('click', async () => {
+    if (!confirm(`Excluir o script "${e.name}"?`)) return;
+    try { await api(`/api/scripts/${e.id}`, { method: 'DELETE' }); fecharEditorScript(); toast('Script excluído.'); await loadState(); }
+    catch (err) { toast(err.message, 'erro'); }
+  });
+
+  if (aiEnabled) {
+    const bApply = $('#f_scAiApply');
+    bApply.addEventListener('click', async () => {
+      const instruction = $('#f_scAiInstr').value.trim();
+      if (!instruction) { toast('Diga o que a IA deve mudar.', 'erro'); return; }
+      bApply.disabled = true; bApply.textContent = 'Aplicando…';
+      $('#f_scAiHint').textContent = '';
+      try {
+        const out = await api('/api/ai/script/edit', { method: 'POST', body: { body: $('#f_scBody').value, instruction } });
+        $('#f_scBody').value = out.body;
+        $('#f_scAiInstr').value = '';
+        $('#f_scAiHint').textContent = '✓ revisado pela IA — confira e salve';
+        marcarSujo();
+      } catch (err) { toast(err.message, 'erro'); }
+      finally { bApply.disabled = false; bApply.textContent = 'Aplicar'; }
+    });
+  }
+}
+
+async function salvarScriptEditor() {
+  if (!scriptEditando) return;
+  const body = {
+    name: $('#f_scName').value.trim(),
+    group: $('#f_scGroup').value.trim(),
+    subgroup: $('#f_scSubgroup').value.trim(),
+    description: $('#f_scDesc').value.trim(),
+    body: $('#f_scBody').value,
+  };
+  if (!body.name) { toast('Dê um título ao script.', 'erro'); try { $('#f_scName').focus(); } catch {} return; }
+  const btn = $('#f_scSave'); if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+  try {
+    const salvo = scriptEditando.id
+      ? await api(`/api/scripts/${scriptEditando.id}`, { method: 'PUT', body })
+      : await api('/api/scripts', { method: 'POST', body });
+    scriptEditando = { id: salvo.id, name: salvo.name, group: salvo.group || '', subgroup: salvo.subgroup || '', description: salvo.description || '', body: salvo.body || '' };
+    scriptSelId = salvo.id;
+    toast('Script salvo.');
+    await loadState();          // redesenha a lista (destaca o salvo)
+    renderScriptEditor();       // reflete o estado limpo (some o "não salvas" e aparece Excluir)
+  } catch (e) {
+    toast(e.message, 'erro');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar'; }
+  }
+}
+
+function openScriptAiModal() {
+  openModal('Criar script com IA', `
+    <p class="hint">Descreva em linguagem natural o que o script deve fazer. A IA escreve o script completo (bash por padrão, ou a linguagem que você indicar) e você revisa, edita e salva. Requer chave da API em "Config. IA".</p>
+    <label>O que o script deve fazer?
+      <textarea id="f_scAiDesc" rows="5" placeholder="ex.: um script bash que faz backup de /etc e /var/www num .tar.gz com a data, guarda os últimos 7 e apaga os mais velhos"></textarea>
+    </label>
+  `);
+  $('#modalForm button[type=submit]').textContent = 'Gerar';
+  const ta = $('#f_scAiDesc');
+  setTimeout(() => ta.focus(), 30);
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const description = ta.value.trim();
+    if (!description) { toast('Descreva o que o script deve fazer.', 'erro'); return; }
+    const btn = $('#modalForm button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Gerando…';
+    try {
+      const sc = await api('/api/ai/script', { method: 'POST', body: { description } });
+      closeModal();
+      toast('Script gerado — revise e salve.');
+      abrirRascunhoIA(sc);
+    } catch (e) { toast(e.message, 'erro'); btn.disabled = false; btn.textContent = 'Gerar'; }
   };
 }
 
@@ -3008,6 +3220,13 @@ function xmlToConfig(text) {
         description: pb.getAttribute('description') || '',
         commands: [...pb.querySelectorAll(':scope > command')].map((c) => c.textContent),
       })),
+      scripts: [...root.querySelectorAll(':scope > scripts > script')].map((sc) => ({
+        name: sc.getAttribute('name') || '',
+        group: sc.getAttribute('group') || '',
+        subgroup: sc.getAttribute('subgroup') || '',
+        description: sc.getAttribute('description') || '',
+        body: sc.textContent,
+      })),
       favorites: [...root.querySelectorAll(':scope > favorites > favorite')].map((f) => ({
         label: f.getAttribute('label') || '',
         hostName: f.getAttribute('host') || '',
@@ -3063,6 +3282,7 @@ async function importFromText(text) {
   const conta = (n, sing, plur) => { if (n) linhas.push(`• ${n} ${n === 1 ? sing : plur}`); };
   conta(c.hosts.length, 'host', 'hosts');
   conta(c.playbooks.length, 'playbook', 'playbooks');
+  conta((c.scripts || []).length, 'script', 'scripts');
   conta(c.profiles.length, 'perfil', 'perfis');
   conta((c.favorites || []).length, 'favorito', 'favoritos');
   conta(Object.keys(c.globals).length, 'variável global', 'variáveis globais');
@@ -3178,7 +3398,8 @@ async function importFromText(text) {
     const extras = [];
     if (r.settings) extras.push('configurações');
     if (r.prefs) extras.push('preferências');
-    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}; perfis: ${p(r.profiles)}`
+    toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}`
+      + `${r.scripts ? '; scripts: ' + p(r.scripts) : ''}; perfis: ${p(r.profiles)}`
       + `${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}${extras.length ? '; ' + extras.join(' e ') + ' aplicadas' : ''}.`);
     // A lista de ignorados vinha cortada em 3 num toast de 7 s, sem onde revê-la.
     if (r.skipped && r.skipped.length) mostrarIgnorados(r.skipped);
@@ -5890,6 +6111,10 @@ function applyAiVisibility(hasKey) {
   aiEnabled = !!hasKey;
   const pbAi = $('#btnPlaybookAi');
   if (pbAi) pbAi.hidden = !aiEnabled;
+  const scAi = $('#btnScriptAi');
+  if (scAi) scAi.hidden = !aiEnabled;
+  renderScripts();
+  if (scriptEditando) renderScriptEditor(); // o bloco "Pedir à IA" aparece/some conforme a chave
   if (aiEnabled) mountAiForActive(); // (re)monta a IA da aba ativa ao exibir o painel
   updateTermLayout();
 }
@@ -7213,6 +7438,9 @@ function init() {
   $('#btnNewHost').addEventListener('click', () => openHostModal(null));
   $('#btnNewPlaybook').addEventListener('click', () => openPlaybookModal(null));
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
+  $('#btnNewScript').addEventListener('click', novoScript);
+  $('#btnScriptAi').addEventListener('click', openScriptAiModal);
+  $('#scriptSearch').addEventListener('input', () => { scriptQuery = $('#scriptSearch').value.toLowerCase().trim(); renderScripts(); });
   initHistoryControls();
   initFavorites();
   initFavoritesTab();
