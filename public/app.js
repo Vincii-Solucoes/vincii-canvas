@@ -1583,6 +1583,7 @@ function renderScriptEditor() {
     <div class="script-editor-acoes">
       <button type="button" id="f_scSave" class="btn primary">💾 Salvar</button>
       <button type="button" id="f_scCopy" class="btn">📋 Copiar</button>
+      <button type="button" id="f_scExport" class="btn">⬇ Exportar .txt</button>
       ${isEdit ? '<button type="button" id="f_scDel" class="btn danger">Excluir</button>' : ''}
       <span id="f_scStatus" class="muted small"></span>
     </div>`;
@@ -1605,6 +1606,7 @@ function renderScriptEditor() {
     if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); salvarScriptEditor(); }
   });
   $('#f_scCopy').addEventListener('click', () => { copiarParaClipboard($('#f_scBody').value); toast('Script copiado.'); });
+  $('#f_scExport').addEventListener('click', () => exportarScriptTxt($('#f_scName').value, $('#f_scBody').value));
   if (isEdit) $('#f_scDel').addEventListener('click', async () => {
     if (!confirm(`Excluir o script "${e.name}"?`)) return;
     try { await api(`/api/scripts/${e.id}`, { method: 'DELETE' }); fecharEditorScript(); toast('Script excluído.'); await loadState(); }
@@ -1704,6 +1706,22 @@ async function salvarScriptEditor() {
     toast(e.message, 'erro');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar'; }
   }
+}
+
+// Salva o script como um arquivo .txt na máquina — o mesmo caminho de download
+// por blob usado nos relatórios PDF (funciona no app instalado). Exporta o que
+// está NO EDITOR (o que você vê), salvo ou não.
+function exportarScriptTxt(nome, corpo) {
+  if (!corpo || !corpo.trim()) { toast('Não há script para exportar.', 'erro'); return; }
+  // nome de arquivo seguro a partir do título; sem título, "script"
+  const base = String(nome || '').trim().replace(/[^\w .()\-À-ÿ]/g, '').replace(/\s+/g, '-').slice(0, 80) || 'script';
+  const blob = new Blob([corpo], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = base + '.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('Exportado como ' + a.download + '.');
 }
 
 function openScriptAiModal() {
