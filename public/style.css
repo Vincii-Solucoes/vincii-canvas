@@ -992,8 +992,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .script-list-pane { flex: 0 0 260px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
 .script-list-head { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
 .script-list-head input { width: 100%; }
-.script-list-head .btn-row { display: flex; gap: 6px; }
-.script-list-head .btn-row .btn { flex: 1; }
+.script-list-head .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.script-list-head .btn-row .btn { flex: 1 1 auto; white-space: nowrap; }
 .script-list { flex: 1; overflow-y: auto; padding: 6px; }
 .script-list-vazio { color: var(--muted); font-size: 13px; padding: 14px 8px; text-align: center; }
 .script-list-group { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); padding: 10px 8px 4px; }

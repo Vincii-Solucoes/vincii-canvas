@@ -1539,12 +1539,34 @@ function novoScript() {
   setTimeout(() => { try { $('#f_scName').focus(); } catch {} }, 30);
 }
 
-// Rascunho vindo da IA (sem id): entra no editor como criação, para revisar.
-function abrirRascunhoIA(sc) {
+// Rascunho (sem id): entra no editor como CRIAÇÃO, para revisar antes de salvar.
+// Usado pela IA (geração) e pela importação de arquivo.
+function abrirRascunhoScript(sc) {
   scriptSelId = null;
-  scriptEditando = { name: sc.name || '', group: '', subgroup: '', description: sc.description || '', body: sc.body || '' };
+  scriptEditando = { name: sc.name || '', group: '', subgroup: '', description: sc.description || '', body: (sc.body || '').replace(/\r\n/g, '\n') };
   renderScripts();
   renderScriptEditor();
+  setTimeout(() => { try { $('#f_scName').focus(); } catch {} }, 30);
+}
+
+// Importa um arquivo de texto da máquina como um NOVO script: o nome vem do
+// arquivo (sem a extensão), o conteúdo vai para o "papel". Fica como rascunho
+// para você pôr grupo/subgrupo e salvar. Espelho do "Exportar .txt".
+function importarScriptArquivo() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.txt,.sh,.bash,.zsh,.ps1,.py,.sql,.conf,.yaml,.yml,.env,text/plain';
+  inp.addEventListener('change', async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (f.size > 100000) { toast('Arquivo grande demais (máximo 100 KB).', 'erro'); return; }
+    let texto;
+    try { texto = await f.text(); } catch { toast('Não foi possível ler o arquivo.', 'erro'); return; }
+    const nome = f.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Importado';
+    abrirRascunhoScript({ name: nome, body: texto });
+    toast(`"${f.name}" carregado — revise, categorize e salve.`);
+  });
+  inp.click();
 }
 
 function fecharEditorScript() {
@@ -1744,7 +1766,7 @@ function openScriptAiModal() {
       const sc = await api('/api/ai/script', { method: 'POST', body: { description } });
       closeModal();
       toast('Script gerado — revise e salve.');
-      abrirRascunhoIA(sc);
+      abrirRascunhoScript(sc);
     } catch (e) { toast(e.message, 'erro'); btn.disabled = false; btn.textContent = 'Gerar'; }
   };
 }
@@ -7509,6 +7531,7 @@ function init() {
   $('#btnNewPlaybook').addEventListener('click', () => openPlaybookModal(null));
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
   $('#btnNewScript').addEventListener('click', novoScript);
+  $('#btnImportScript').addEventListener('click', importarScriptArquivo);
   $('#btnScriptAi').addEventListener('click', openScriptAiModal);
   $('#scriptSearch').addEventListener('input', () => { scriptQuery = $('#scriptSearch').value.toLowerCase().trim(); renderScripts(); });
   initHistoryControls();
