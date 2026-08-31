@@ -6130,14 +6130,17 @@ function renderAiMessage(ai, role, text, opts = {}) {
   const msg = el(box, 'div', 'ai-msg ' + role + (opts.error ? ' error' : ''));
   el(msg, 'div', 'role', role === 'user' ? 'você' : opts.error ? 'erro' : 'IA');
   const body = el(msg, 'div', 'body');
-  if (role === 'assistant' && !opts.error) renderAssistantBody(body, text);
+  if (role === 'assistant' && !opts.error) renderAssistantBody(body, text, opts.sessao);
   else el(body, 'p', null, text);
   aiScroll(ai);
   return { msg, body };
 }
 
-// Renderiza texto com blocos ```bash``` como código + botões de inserir
-function renderAssistantBody(container, text) {
+// Renderiza texto com blocos ```bash``` como código + botões de inserir.
+// `sessaoDona` é a sessão DONA da conversa: cada delta do stream re-renderiza o
+// corpo, e decidir os botões pela aba ATIVA no momento do delta congelava o
+// estado da aba errada quando o usuário trocava de aba durante o streaming.
+function renderAssistantBody(container, text, sessaoDona) {
   container.innerHTML = '';
   const parts = String(text).split(/```/);
   parts.forEach((part, i) => {
@@ -6149,7 +6152,7 @@ function renderAssistantBody(container, text) {
       el(wrap, 'pre').textContent = code;
       // Numa aba de área de trabalho não existe terminal onde inserir: mostrar
       // os botões seria oferecer algo que não funciona.
-      if (!semTerminal(activeSession())) {
+      if (!semTerminal(sessaoDona || activeSession())) {
         const actions = el(wrap, 'div', 'code-actions');
         const bInsert = el(actions, 'button', 'btn small', 'Inserir');
         bInsert.addEventListener('click', () => insertCommand(code, false));
@@ -6178,7 +6181,7 @@ async function aiSend(question) {
   renderAiMessage(ai, 'user', q);
   ai.history.push({ role: 'user', content: q });
 
-  const { body } = renderAiMessage(ai, 'assistant', '…');
+  const { body } = renderAiMessage(ai, 'assistant', '…', { sessao: s });
   let acc = '';
   try {
     const res = await fetch('/api/ai/chat', {
@@ -6209,7 +6212,7 @@ async function aiSend(question) {
         const evt = JSON.parse(line.slice(5).trim());
         if (evt.type === 'delta') {
           acc += evt.text;
-          renderAssistantBody(body, acc);
+          renderAssistantBody(body, acc, s);
           aiScroll(ai);
         } else if (evt.type === 'error') {
           errored = true;
@@ -6322,13 +6325,28 @@ function updateTermLayout() {
 }
 
 function applyAiVisibility(hasKey) {
+  const mudou = aiEnabled !== !!hasKey;
   aiEnabled = !!hasKey;
   const pbAi = $('#btnPlaybookAi');
   if (pbAi) pbAi.hidden = !aiEnabled;
   const scAi = $('#btnScriptAi');
   if (scAi) scAi.hidden = !aiEnabled;
   renderScripts();
-  if (scriptEditando) renderScriptEditor(); // o bloco "Pedir à IA" aparece/some conforme a chave
+  // O editor só é reconstruído quando a chave realmente MUDOU (o bloco "Pedir à
+  // IA" aparece/some). Reconstruir sempre — a aba Config chama isto ao abrir —
+  // descartava o texto que o usuário estava digitando e fechava o parecer.
+  // Antes de reconstruir, o que está nos campos vira o rascunho, para nada se
+  // perder nem na mudança real.
+  if (mudou && scriptEditando) {
+    if ($('#f_scName')) {
+      scriptEditando.name = $('#f_scName').value;
+      scriptEditando.group = $('#f_scGroup').value;
+      scriptEditando.subgroup = $('#f_scSubgroup').value;
+      scriptEditando.description = $('#f_scDesc').value;
+      scriptEditando.body = $('#f_scBody').value;
+    }
+    renderScriptEditor();
+  }
   if (aiEnabled) mountAiForActive(); // (re)monta a IA da aba ativa ao exibir o painel
   updateTermLayout();
 }
