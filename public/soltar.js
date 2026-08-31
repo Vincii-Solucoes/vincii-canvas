@@ -13,7 +13,7 @@
 // — canvas, wasm, webview — e a janela nova reconecta. Como não há estado de
 // shell do outro lado, a diferença não aparece para quem usa.
 
-const CHAVES = ['tipo', 'hostId', 'nome', 'protocolo', 'url', 'local', 'sessao'];
+const CHAVES = ['tipo', 'hostId', 'nome', 'protocolo', 'url', 'local', 'sessao', 'agente'];
 
 // Aba -> query string da janela nova.
 function montarParamsSoltos(s) {
@@ -25,6 +25,13 @@ function montarParamsSoltos(s) {
   if (s.isLocal) p.local = '1';
   // um id de sessão só faz sentido para terminal, e só se o servidor mandou um
   if (s.kind === 'term' && s.sessaoId) p.sessao = s.sessaoId;
+  // Agente autônomo RODANDO viaja junto: a execução vive no servidor e a janela
+  // nova reanexa pelo id (o stream reenvia o histórico inteiro). Sem isto, o
+  // agente sumia da tela ao soltar a aba — e pior, era parado.
+  if (s.kind === 'term' && s.ai && s.ai.agent && s.ai.agent.id
+    && (s.ai.agent.status === 'running' || s.ai.agent.status === 'starting')) {
+    p.agente = s.ai.agent.id;
+  }
   return p;
 }
 
@@ -46,6 +53,7 @@ function lerParamsSoltos(busca) {
     url: lido.url || null,
     isLocal: lido.local === '1',
     sessaoId: lido.sessao || null,
+    agenteId: lido.agente || null,
   };
 }
 

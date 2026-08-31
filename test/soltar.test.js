@@ -104,4 +104,27 @@ const idaEVolta = (aba) => lerParamsSoltos(montarUrlSolta(aba).split('?')[1]);
   igual(r.tipo, 'term', 'na dúvida, terminal');
 }
 
+// ---------- agente autônomo viaja com a aba (o bug do "comando some") ----------
+// Soltar a aba com o agente RODANDO transferia a sessão mas matava o agente e a
+// janela nova abria sem saber dele. O id do run agora viaja na query string.
+{
+  const s = { kind: 'term', hostId: 'h1', hostName: 'web01', sessaoId: 'ts_1',
+    ai: { agent: { id: 'run_abc', status: 'running' } } };
+  const p = montarParamsSoltos(s);
+  igual(p.agente, 'run_abc', 'agente rodando vai na URL');
+  const lido = lerParamsSoltos('?' + new URLSearchParams(p).toString());
+  igual(lido.agenteId, 'run_abc', 'a janela nova lê o id do agente');
+
+  // agente que já terminou NÃO viaja (reanexar num run morto não faz sentido)
+  const done = montarParamsSoltos({ kind: 'term', hostName: 'x', ai: { agent: { id: 'r', status: 'done' } } });
+  igual(done.agente, undefined, 'agente encerrado não viaja');
+  // starting (ainda sem resposta do servidor mas com id) viaja
+  const starting = montarParamsSoltos({ kind: 'term', hostName: 'x', ai: { agent: { id: 'r2', status: 'starting' } } });
+  igual(starting.agente, 'r2', 'agente starting com id viaja');
+  // sessão sem IA nenhuma não estoura
+  igual(montarParamsSoltos({ kind: 'term', hostName: 'x' }).agente, undefined, 'sem ai não estoura');
+  // ausência vira null na leitura
+  igual(lerParamsSoltos('?solo=1&tipo=term').agenteId, null, 'agente ausente é null');
+}
+
 console.log(`\n${n} verificações passaram`);

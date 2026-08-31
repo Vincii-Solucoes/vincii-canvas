@@ -5309,9 +5309,12 @@ function closeSession(id, opts = {}) {
   // preso ao app e nenhum outro programa (nem o próprio app) reabre a porta.
   if (s.serial) { try { s.serial.fechar(); } catch {} s.serial = null; }
   // fechar a aba precisa PARAR o agente daquela sessão: sem isto ele seguia
-  // rodando no servidor e o EventSource ficava aberto para sempre
+  // rodando no servidor e o EventSource ficava aberto para sempre.
+  // EXCETO ao soltar em janela própria (manterSessao): a execução vive no
+  // servidor e é TRANSFERIDA — a janela nova reanexa pelo id via query string.
+  // Parar aqui matava o agente que acabamos de entregar.
   if (s.ai && s.ai.agent) {
-    if (s.ai.agent.id) api(`/api/agent/${s.ai.agent.id}/stop`, { method: 'POST' }).catch(() => {});
+    if (!opts.manterSessao && s.ai.agent.id) api(`/api/agent/${s.ai.agent.id}/stop`, { method: 'POST' }).catch(() => {});
     if (s.ai.agent.es) { try { s.ai.agent.es.close(); } catch {} }
     s.ai.agent = null;
   }
@@ -5762,11 +5765,14 @@ function abrirSolo() {
   } else if (p.tipo === 'desk') {
     createDeskSession({ hostId: p.hostId, hostName: p.nome, protocol: p.protocolo });
   } else {
-    createSession({
+    const sess = createSession({
       hostId: p.hostId, hostName: p.nome,
       isLocal: p.isLocal,
       reatarId: p.sessaoId,
     });
+    // A aba veio com um agente autônomo RODANDO: reanexa ao mesmo run — o
+    // stream reenvia o histórico inteiro e o feed se reconstrói sozinho.
+    if (p.agenteId) reatarAgente(sess, p.agenteId);
   }
   // Anuncia na hora, sem esperar o próximo intervalo: até esta batida chegar, a
   // janela principal não sabe que este host tem dono.
@@ -6435,6 +6441,23 @@ function agentStart(auto) {
       if (activeSession() === s) updateAgentControls(s);
       renderTermTabs();
     });
+}
+
+// Reanexa esta janela a um agente que JÁ está rodando no servidor (aba solta
+// em janela própria com o agente vivo). O subscribe do servidor reenvia todos
+// os eventos desde o início, então handleAgentEvent reconstrói o feed, os
+// comandos e o estado de aprovação exatamente como estavam.
+function reatarAgente(s, runId) {
+  if (!s || !s.ai) return;
+  const ai = s.ai;
+  ai.mode = 'agent'; // a janela abre já mostrando o feed do agente
+  ai.feedEl.replaceChildren();
+  ai.agent = { id: runId, es: null, cmds: new Map(), text: null, auto: false, status: 'running', needsApproval: false };
+  ai.agent.es = new EventSource(`/api/agent/${runId}/stream`);
+  ai.agent.es.onmessage = (m) => handleAgentEvent(s, JSON.parse(m.data));
+  ai.agent.es.onerror = () => {};
+  if (activeSession() === s) { mountAiForActive(); updateAgentControls(s); }
+  renderTermTabs();
 }
 
 function agentStop() {
