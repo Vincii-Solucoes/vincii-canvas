@@ -1539,6 +1539,27 @@ function novoScript() {
   setTimeout(() => { try { $('#f_scName').focus(); } catch {} }, 30);
 }
 
+// Clona o script ABERTO como um rascunho novo: o que está NA TELA (inclusive
+// edições não salvas) vira "nome (cópia)", mantendo grupo/subgrupo — diferente
+// do rascunho de IA/import, que nasce sem categoria. Nada é gravado até Salvar.
+function clonarScriptEditor() {
+  if (!scriptEditando || !$('#f_scName')) return;
+  const nome = ($('#f_scName').value.trim() || scriptEditando.name || 'Script');
+  scriptSelId = null;
+  scriptEditando = {
+    name: `${nome} (cópia)`,
+    group: $('#f_scGroup').value.trim(),
+    subgroup: $('#f_scSubgroup').value.trim(),
+    description: $('#f_scDesc').value.trim(),
+    body: $('#f_scBody').value,
+  };
+  renderScripts();       // tira o destaque do original na lista
+  renderScriptEditor();  // vira criação: sem Excluir/Clonar, com "não salvas"
+  const st = $('#f_scStatus'); if (st) st.textContent = 'cópia não salva';
+  toast('Clone criado — ajuste o que quiser e salve.');
+  setTimeout(() => { try { const n = $('#f_scName'); n.focus(); n.select(); } catch {} }, 30);
+}
+
 // Rascunho (sem id): entra no editor como CRIAÇÃO, para revisar antes de salvar.
 // Usado pela IA (geração) e pela importação de arquivo.
 function abrirRascunhoScript(sc) {
@@ -1607,6 +1628,7 @@ function renderScriptEditor() {
       <button type="button" id="f_scCopy" class="btn">📋 Copiar</button>
       <button type="button" id="f_scExport" class="btn">⬇ Exportar .txt</button>
       ${isEdit ? '<button type="button" id="f_scJanela" class="btn">↗ Abrir em janela</button>' : ''}
+      ${isEdit ? '<button type="button" id="f_scClone" class="btn">⧉ Clonar</button>' : ''}
       ${isEdit ? '<button type="button" id="f_scDel" class="btn danger">Excluir</button>' : ''}
       <span id="f_scStatus" class="muted small"></span>
     </div>`;
@@ -1631,6 +1653,7 @@ function renderScriptEditor() {
   $('#f_scCopy').addEventListener('click', () => { copiarParaClipboard($('#f_scBody').value); toast('Script copiado.'); });
   $('#f_scExport').addEventListener('click', () => exportarScriptTxt($('#f_scName').value, $('#f_scBody').value));
   if (isEdit) $('#f_scJanela').addEventListener('click', () => abrirScriptEmJanela(e.id, $('#f_scName').value || e.name));
+  if (isEdit) $('#f_scClone').addEventListener('click', clonarScriptEditor);
   if (isEdit) $('#f_scDel').addEventListener('click', async () => {
     if (!confirm(`Excluir o script "${e.name}"?`)) return;
     try { await api(`/api/scripts/${e.id}`, { method: 'DELETE' }); fecharEditorScript(); toast('Script excluído.'); await loadState(); }
