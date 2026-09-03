@@ -31,6 +31,7 @@ try {
 <script src="serial.js" defer></script>
 <script src="host-icons.js" defer></script>
 <script src="subnet.js" defer></script>
+<script src="senha.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
 </head>
@@ -476,6 +477,14 @@ try {
         </span>
         <span class="tool-abrir">Abrir&nbsp;↗</span>
       </button>
+      <button id="tileSenha" type="button" class="tool-tile" data-tipo="senha">
+        <span class="tool-ico">🔑</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Gerador de senhas</span>
+          <span class="tool-desc">Senhas fortes com crypto seguro, geradas NESTA máquina — nada sai daqui, nada é salvo. Tamanho, conjuntos e sem-ambíguos configuráveis.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
     </div>
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
@@ -588,6 +597,34 @@ try {
         <div id="tpTerm" class="mon-term"></div>
       </div>
     </div><!-- #toolsTcpping -->
+
+    <!-- Gerador de senhas: janela solta ?solo=1&tipo=senha. Tudo no cliente. -->
+    <div id="toolsSenha" hidden>
+      <h2>🔑 Gerador de senhas</h2>
+      <p class="hint">Gerada <strong>nesta máquina</strong> com o crypto seguro do navegador — não sai daqui e não é salva. Regenere à vontade; copie só a que for usar.</p>
+      <div class="senha-display">
+        <code id="snValor" title="Clique para selecionar"></code>
+        <button id="snCopiar" type="button" class="btn primary" title="Copiar a senha">📋 Copiar</button>
+        <button id="snGerar" type="button" class="btn" title="Gerar outra">🎲 Nova</button>
+      </div>
+      <div class="senha-forca">
+        <div class="senha-forca-barra"><div id="snForcaFill"></div></div>
+        <span id="snForcaTxt" class="hint"></span>
+      </div>
+      <div class="senha-opcoes">
+        <label class="senha-tam">Tamanho
+          <input id="snTamRange" type="range" min="4" max="64" value="20">
+          <input id="snTam" type="number" min="4" max="128" value="20">
+        </label>
+        <div class="senha-checks">
+          <label><input id="snMin" type="checkbox" checked> minúsculas (a-z)</label>
+          <label><input id="snMai" type="checkbox" checked> MAIÚSCULAS (A-Z)</label>
+          <label><input id="snNum" type="checkbox" checked> números (0-9)</label>
+          <label><input id="snSim" type="checkbox" checked> símbolos (!@#$…)</label>
+          <label><input id="snAmb" type="checkbox"> excluir ambíguos (0 O 1 l I | ' ")</label>
+        </div>
+      </div>
+    </div><!-- #toolsSenha -->
 
     <!-- Genérico de CONSULTA (uma vez): DNS, HTTP/TLS, portas, sub-rede.
          Configurado por JS conforme o tipo. -->

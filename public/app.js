@@ -5782,6 +5782,7 @@ function abrirSolo() {
   if (p.tipo === 'mtr') { abrirMtrSolo(); return; }
   if (p.tipo === 'tcpping') { abrirTcppingSolo(); return; }
   if (['portscan', 'dns', 'http', 'subnet'].includes(p.tipo)) { abrirConsultaSolo(p.tipo); return; }
+  if (p.tipo === 'senha') { abrirSenhaSolo(); return; }
   if (p.tipo === 'script') { abrirScriptSolo(); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
@@ -6691,6 +6692,7 @@ let monLauncherLigado = false;
 const TAM_FERRAMENTA = {
   monitor: '600,560', mtr: '720,600', tcpping: '600,560',
   portscan: '640,640', dns: '640,600', http: '640,560', subnet: '620,640',
+  senha: '560,520',
 };
 function abrirFerramenta(tipo) {
   const url = '/?' + new URLSearchParams({ solo: '1', tipo, nome: tipo }).toString();
@@ -7432,6 +7434,67 @@ function consTexto(tipo) {
   return '';
 }
 
+// ---------- Ferramentas: gerador de senhas (tudo no cliente) ----------
+function abrirSenhaSolo() {
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  if ($('#toolsSenha')) $('#toolsSenha').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  document.title = 'Gerador de senhas — Ferramentas';
+
+  const gerar = () => {
+    const r = window.senhaLib.gerar({
+      tamanho: Number($('#snTam').value),
+      minusculas: $('#snMin').checked,
+      maiusculas: $('#snMai').checked,
+      numeros: $('#snNum').checked,
+      simbolos: $('#snSim').checked,
+      semAmbiguos: $('#snAmb').checked,
+    });
+    const fill = $('#snForcaFill');
+    if (r.erro) {
+      $('#snValor').textContent = '—';
+      $('#snForcaTxt').textContent = '⚠ ' + r.erro;
+      fill.style.width = '0%';
+      fill.className = '';
+      return;
+    }
+    $('#snValor').textContent = r.senha;
+    const f = window.senhaLib.forca(r.bits);
+    $('#snForcaTxt').textContent = `${r.bits} bits — ${f.rotulo} (pool de ${r.pool} caracteres)`;
+    fill.style.width = Math.min(100, Math.round((r.bits / 128) * 100)) + '%';
+    fill.className = 'forca-' + f.classe;
+  };
+
+  // range e número andam juntos; qualquer mudança regenera na hora
+  const range = $('#snTamRange'), num = $('#snTam');
+  range.addEventListener('input', () => { num.value = range.value; gerar(); });
+  num.addEventListener('input', () => {
+    const v = Math.max(4, Math.min(128, Number(num.value) || 20));
+    range.value = Math.min(64, v);
+    gerar();
+  });
+  for (const id of ['#snMin', '#snMai', '#snNum', '#snSim', '#snAmb']) {
+    $(id).addEventListener('change', gerar);
+  }
+  $('#snGerar').addEventListener('click', gerar);
+  $('#snCopiar').addEventListener('click', () => {
+    const v = $('#snValor').textContent;
+    if (!v || v === '—') { toast('Nada para copiar.', 'erro'); return; }
+    copiarParaClipboard(v);
+    toast('Senha copiada — cole onde precisar e limpe a área de transferência depois.');
+  });
+  // clicar na senha seleciona o texto (para copiar manualmente também)
+  $('#snValor').addEventListener('click', () => {
+    try {
+      const sel = window.getSelection(); const rng = document.createRange();
+      rng.selectNodeContents($('#snValor')); sel.removeAllRanges(); sel.addRange(rng);
+    } catch { /* ok */ }
+  });
+
+  gerar(); // já abre com uma senha pronta
+}
+
 // ---------- backup automático ----------
 let bkPodeEscolher = false;
 
@@ -7866,7 +7929,7 @@ function init() {
         // Monitor e MTR não são sessão de terminal — não ativam a aba Terminal
         // (que criaria um shell local à toa nesta janela).
         const tipoSolo = new URLSearchParams(location.search).get('tipo');
-        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'script'].includes(tipoSolo);
+        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'senha', 'script'].includes(tipoSolo);
         if (!soloFerramenta) {
           try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
           onTerminalTabShown();
