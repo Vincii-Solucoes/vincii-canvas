@@ -15,7 +15,7 @@ let currentRun = null;
 const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
-  abrirLocalSozinho: null,
+  abrirLocalSozinho: null, senha: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
@@ -50,7 +50,7 @@ let prefsFila = {};
 // grava no servidor com um pequeno atraso (agrupa mudanças seguidas)
 function prefSet(key, valor) {
   prefs[key] = valor;
-  if (Array.isArray(valor)) lsSet(key, JSON.stringify(valor));
+  if (valor !== null && typeof valor === 'object') lsSet(key, JSON.stringify(valor));
   else if (typeof valor === 'boolean') lsSet(key, valor ? '1' : '0');
   else lsSet(key, String(valor));
   prefsFila[key] = valor;
@@ -6706,9 +6706,11 @@ function onToolsTabShown() {
   if (tile) tile.addEventListener('click', abrirMonitorEmJanela);
   const tileM = $('#tileMtr');
   if (tileM) tileM.addEventListener('click', () => abrirFerramenta('mtr'));
-  // os tiles novos declaram data-tipo e abrem a janela da ferramenta
+  // os tiles novos declaram data-tipo e abrem a janela da ferramenta —
+  // exceto o gerador de senhas, que abre INLINE nesta aba (não precisa de janela).
   $$('#toolsLauncher .tool-tile[data-tipo]').forEach((t) => {
-    t.addEventListener('click', () => abrirFerramenta(t.dataset.tipo));
+    if (t.dataset.tipo === 'senha') t.addEventListener('click', abrirSenhaInline);
+    else t.addEventListener('click', () => abrirFerramenta(t.dataset.tipo));
   });
 }
 
@@ -7435,13 +7437,62 @@ function consTexto(tipo) {
 }
 
 // ---------- Ferramentas: gerador de senhas (tudo no cliente) ----------
-function abrirSenhaSolo() {
+// Mostra o painel do gerador na aba Ferramentas (usado inline E na janela solta).
+function mostrarPainelSenha() {
   if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
   if ($('#toolsSenha')) $('#toolsSenha').hidden = false;
   $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
   document.body.classList.remove('term-full');
-  document.title = 'Gerador de senhas — Ferramentas';
+  montarGeradorSenha();
+}
 
+// Aberto pelo tile, SEM janela: fica na própria aba, com um "‹ Ferramentas"
+// para voltar à lista de tiles.
+function abrirSenhaInline() {
+  mostrarPainelSenha();
+  const voltar = $('#snVoltar');
+  if (voltar) {
+    voltar.hidden = false;
+    voltar.onclick = () => { $('#toolsSenha').hidden = true; if ($('#toolsLauncher')) $('#toolsLauncher').hidden = false; };
+  }
+}
+
+// Janela solta (?solo=1&tipo=senha) — sem o botão voltar (não há launcher atrás).
+function abrirSenhaSolo() {
+  mostrarPainelSenha();
+  if ($('#snVoltar')) $('#snVoltar').hidden = true;
+  document.title = 'Gerador de senhas — Ferramentas';
+}
+
+// Aplica as prefs SALVAS aos controles (ou os padrões, na primeira vez).
+function aplicarPrefsSenha() {
+  const p = (prefs.senha && typeof prefs.senha === 'object') ? prefs.senha : {};
+  const tam = Number.isFinite(Number(p.tamanho)) && p.tamanho >= 4 && p.tamanho <= 128 ? p.tamanho : 20;
+  $('#snTam').value = tam;
+  $('#snTamRange').value = Math.min(64, tam);
+  const bool = (v, dflt) => (typeof v === 'boolean' ? v : dflt);
+  $('#snMin').checked = bool(p.minusculas, true);
+  $('#snMai').checked = bool(p.maiusculas, true);
+  $('#snNum').checked = bool(p.numeros, true);
+  $('#snSim').checked = bool(p.simbolos, true);
+  $('#snAmb').checked = bool(p.semAmbiguos, false);
+}
+
+function salvarPrefsSenha() {
+  prefSet('senha', {
+    tamanho: Number($('#snTam').value),
+    minusculas: $('#snMin').checked,
+    maiusculas: $('#snMai').checked,
+    numeros: $('#snNum').checked,
+    simbolos: $('#snSim').checked,
+    semAmbiguos: $('#snAmb').checked,
+  });
+}
+
+// Liga os controles UMA vez (idempotente: reabrir inline não duplica listeners),
+// aplica as prefs salvas e gera a primeira senha.
+let senhaLigado = false;
+function montarGeradorSenha() {
   const gerar = () => {
     const r = window.senhaLib.gerar({
       tamanho: Number($('#snTam').value),
@@ -7465,34 +7516,39 @@ function abrirSenhaSolo() {
     fill.style.width = Math.min(100, Math.round((r.bits / 128) * 100)) + '%';
     fill.className = 'forca-' + f.classe;
   };
+  // toda mudança gera de novo E salva as prefs (as opções persistem no data.json)
+  const mudou = () => { salvarPrefsSenha(); gerar(); };
 
-  // range e número andam juntos; qualquer mudança regenera na hora
-  const range = $('#snTamRange'), num = $('#snTam');
-  range.addEventListener('input', () => { num.value = range.value; gerar(); });
-  num.addEventListener('input', () => {
-    const v = Math.max(4, Math.min(128, Number(num.value) || 20));
-    range.value = Math.min(64, v);
-    gerar();
-  });
-  for (const id of ['#snMin', '#snMai', '#snNum', '#snSim', '#snAmb']) {
-    $(id).addEventListener('change', gerar);
+  aplicarPrefsSenha();
+
+  if (!senhaLigado) {
+    senhaLigado = true;
+    const range = $('#snTamRange'), num = $('#snTam');
+    range.addEventListener('input', () => { num.value = range.value; mudou(); });
+    num.addEventListener('input', () => {
+      const v = Math.max(4, Math.min(128, Number(num.value) || 20));
+      range.value = Math.min(64, v);
+      mudou();
+    });
+    for (const id of ['#snMin', '#snMai', '#snNum', '#snSim', '#snAmb']) {
+      $(id).addEventListener('change', mudou);
+    }
+    $('#snGerar').addEventListener('click', gerar); // "Nova" regenera sem mexer nas prefs
+    $('#snCopiar').addEventListener('click', () => {
+      const v = $('#snValor').textContent;
+      if (!v || v === '—') { toast('Nada para copiar.', 'erro'); return; }
+      copiarParaClipboard(v);
+      toast('Senha copiada — cole onde precisar e limpe a área de transferência depois.');
+    });
+    $('#snValor').addEventListener('click', () => {
+      try {
+        const sel = window.getSelection(); const rng = document.createRange();
+        rng.selectNodeContents($('#snValor')); sel.removeAllRanges(); sel.addRange(rng);
+      } catch { /* ok */ }
+    });
   }
-  $('#snGerar').addEventListener('click', gerar);
-  $('#snCopiar').addEventListener('click', () => {
-    const v = $('#snValor').textContent;
-    if (!v || v === '—') { toast('Nada para copiar.', 'erro'); return; }
-    copiarParaClipboard(v);
-    toast('Senha copiada — cole onde precisar e limpe a área de transferência depois.');
-  });
-  // clicar na senha seleciona o texto (para copiar manualmente também)
-  $('#snValor').addEventListener('click', () => {
-    try {
-      const sel = window.getSelection(); const rng = document.createRange();
-      rng.selectNodeContents($('#snValor')); sel.removeAllRanges(); sel.addRange(rng);
-    } catch { /* ok */ }
-  });
 
-  gerar(); // já abre com uma senha pronta
+  gerar(); // já abre com uma senha pronta, respeitando as prefs
 }
 
 // ---------- backup automático ----------

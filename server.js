@@ -534,6 +534,16 @@ app.put('/api/prefs', (req, res) => {
     if (typeof b[k] === 'boolean') ui[k] = b[k];
   }
   if (typeof b.updateDismissed === 'string') ui.updateDismissed = b.updateDismissed.slice(0, 40);
+  // preferências do gerador de senhas — só campos conhecidos e saneados
+  if (b.senha && typeof b.senha === 'object' && !Array.isArray(b.senha)) {
+    const atual = (ui.senha && typeof ui.senha === 'object') ? ui.senha : {};
+    const tam = Math.round(Number(b.senha.tamanho));
+    if (Number.isFinite(tam) && tam >= 4 && tam <= 128) atual.tamanho = tam;
+    for (const k of ['minusculas', 'maiusculas', 'numeros', 'simbolos', 'semAmbiguos']) {
+      if (typeof b.senha[k] === 'boolean') atual[k] = b.senha[k];
+    }
+    ui.senha = atual;
+  }
   store.save();
   res.json(ui);
 });

@@ -1905,6 +1905,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* ---------- Ferramentas: gerador de senhas ---------- */
 #toolsSenha { max-width: 640px; }
 #toolsSenha h2 { margin: 0 0 6px; }
+#snVoltar { margin-bottom: 10px; }
 /* A senha ocupa uma LINHA PRÓPRIA (flex-basis 100%): assim os botões nunca a
    espremem numa coluna vertical quando a janela é estreita. */
 .senha-display { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 10px; }
