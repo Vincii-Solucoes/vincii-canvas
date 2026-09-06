@@ -9,6 +9,11 @@
 // da configuração, a transformação de fim de linha no envio e o rótulo legível
 // de cada porta. Uso duplo (navegador via <script> e Node via require), como
 // protocolos.js e horario.js.
+//
+// TUDO dentro de um IIFE, como subnet.js, senha.js, diff.js e janela.js: como
+// script clássico, um `const` no topo divide o escopo global com os outros
+// arquivos de public/ — e este era o ÚLTIMO que ainda declarava `API` lá fora.
+(function () {
 
 // As opções que o Web Serial aceita — que são um subconjunto do Tera Term
 // (sem paridade mark/space, sem 5/6 data bits, sem fluxo por software Xon/Xoff).
@@ -120,3 +125,5 @@ const API = {
 
 if (typeof window !== 'undefined') window.serialLib = API;
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
+
+})();

@@ -317,7 +317,9 @@ input:focus, select:focus, textarea:focus {
 .btn.primary:hover { background: #17dcc4; border-color: #17dcc4; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 42%, transparent); }
 .btn.danger { background: #b62324; border-color: #b62324; }
 .btn.danger:hover { background: #d32f2f; box-shadow: 0 6px 18px color-mix(in srgb, #d32f2f 42%, transparent); }
-.btn.auto { background: #b8860b; border-color: #b8860b; color: #fff; font-weight: 600; }
+/* Tinta escura, não branco: branco sobre #b8860b dá 3,25:1 (2,5:1 no hover),
+   abaixo do mínimo legível. `--accent-ink` é a mesma tinta de `.btn.primary`. */
+.btn.auto { background: #b8860b; border-color: #b8860b; color: var(--accent-ink); font-weight: 600; }
 .btn.auto:hover { background: #d29922; }
 .btn.small { padding: 4px 10px; font-size: 12.5px; }
 .btn.small.danger { background: none; border-color: var(--border); color: var(--red); }
@@ -380,9 +382,11 @@ input:focus, select:focus, textarea:focus {
 }
 .chip.conectando { background: var(--panel2); color: var(--muted); }
 .chip.executando { background: color-mix(in srgb, var(--accent) 15%, var(--panel)); color: var(--accent-text); }
-.chip.ok { background: color-mix(in srgb, var(--green) 15%, var(--panel)); color: var(--green); }
-.chip.erro { background: color-mix(in srgb, var(--red) 14%, var(--panel)); color: var(--red); }
-.chip.cancelado { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: var(--yellow); }
+/* O texto dos chips tem 11,5px e ficava em 4,2:1 no tema claro. Escurecer só a
+   tinta (misturando com --text) mantém a cor de cada estado e passa o mínimo. */
+.chip.ok { background: color-mix(in srgb, var(--green) 15%, var(--panel)); color: color-mix(in srgb, var(--green) 80%, var(--text)); }
+.chip.erro { background: color-mix(in srgb, var(--red) 14%, var(--panel)); color: color-mix(in srgb, var(--red) 80%, var(--text)); }
+.chip.cancelado { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 
 .host-box { margin-bottom: 14px; }
 .host-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -618,6 +622,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   justify-content: center;
   padding: 40px 16px;
   overflow: auto;
+  /* Sem isto, rolar dentro do modal encadeia na página de fundo. */
+  overscroll-behavior: contain;
 }
 .modal-root.open { display: flex; animation: backdropIn .22s ease both; }
 @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
@@ -1335,6 +1341,11 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   display: flex; align-items: flex-start; gap: 10px;
   padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel);
+  /* O histórico chega a 3000 linhas. Isto faz o navegador pular o desenho das
+     que estão fora da área visível da lista — todas continuam no DOM (relatório,
+     seleção e busca da página seguem funcionando), só não são pintadas à toa. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
 }
 .hist-row.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
 .hist-cb { margin-top: 3px; flex: 0 0 auto; }
@@ -1389,7 +1400,8 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
   padding: 1px 5px; border-radius: 4px; vertical-align: middle;
   background: color-mix(in srgb, var(--yellow) 22%, var(--panel)); color: var(--yellow);
 }
-.tag-warn { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: var(--yellow); }
+/* Mesma receita dos chips: amarelo puro sobre painel claro não passa. */
+.tag-warn { background: color-mix(in srgb, var(--yellow) 18%, var(--panel)); color: color-mix(in srgb, var(--yellow) 70%, var(--text)); }
 /* agenda valendo AGORA: o host está sendo mantido aberto neste instante */
 .tag-ativa { background: color-mix(in srgb, var(--accent) 18%, var(--panel)); color: var(--accent-text); }
 .tag-global { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--accent-text); }
@@ -1804,7 +1816,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   background: linear-gradient(135deg, var(--accent-2), var(--accent));
   box-shadow: 0 4px 20px color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.btn.danger { background: linear-gradient(135deg, #c9252d, #e5484d); border-color: transparent; color: #fff; font-weight: 700; }
+/* O gradiente terminava em #e5484d, onde o branco cai para 3,9:1 — metade do
+   botão ficava abaixo do mínimo. Estes dois tons mantêm o efeito e passam. */
+.btn.danger { background: linear-gradient(135deg, #b8202a, #d1333a); border-color: transparent; color: #fff; font-weight: 700; }
 .btn.danger:hover { box-shadow: 0 4px 20px color-mix(in srgb, #e5484d 55%, transparent); }
 
 /* cards e títulos com mais presença */

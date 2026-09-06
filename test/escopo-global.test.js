@@ -42,9 +42,26 @@ const arquivos = [...html.matchAll(/<script src="([^"]+)"/g)]
 
 ok(arquivos.length >= 5, `achei os scripts do app no index.html (${arquivos.length})`);
 
+// Arquivo INTEIRO embrulhado numa função — que é a segunda saída recomendada
+// logo acima, e o que subnet.js, senha.js, diff.js, serial.js e janela.js fazem
+// — não declara nada no escopo global: o que sai de lá vai a `window` de
+// propósito. Sem reconhecer isso, o teste acusava colisão entre arquivos que
+// não colidem, e um guarda que acusa o que está certo é um guarda que se
+// aprende a ignorar.
+function embrulhadoEmFuncao(fonte) {
+  const limpo = fonte.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const linhas = limpo.split('\n').map((l) => l.trim()).filter(Boolean);
+  const i = linhas.findIndex((l) => !/^['"]use strict['"];?$/.test(l));
+  if (i < 0) return false;
+  const abre = /^\(\s*(?:async\s+)?(?:function\s*[\w$]*\s*\([^)]*\)|\([^)]*\)\s*=>)\s*\{$/;
+  const fecha = /^\}\s*\)?\s*\(\s*\)\s*\)?\s*;?$/;
+  return abre.test(linhas[i]) && fecha.test(linhas[linhas.length - 1]);
+}
+
 // Declarações no TOPO do arquivo (coluna zero). Só essas vão para o escopo
 // global; o que está indentado já está dentro de alguma função ou bloco.
 function declaracoesDeTopo(fonte) {
+  if (embrulhadoEmFuncao(fonte)) return new Map();
   const achadas = new Map();
   const re = /^(const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
   let m;

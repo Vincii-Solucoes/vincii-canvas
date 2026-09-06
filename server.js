@@ -114,7 +114,28 @@ app.use((req, res, next) => {
   next();
 });
 
+// O backup que o próprio app gera pode passar de 1 MB (scripts aceitam 100 mil
+// caracteres cada, e não há teto de quantidade). Sob o limite global, o
+// body-parser respondia 413 ANTES de a rota rodar: o arquivo exportado pelo app
+// não restaurava no app, e a tela só dizia "Erro 413". O parser específico roda
+// primeiro e marca req._body; o global abaixo pula o que já foi lido.
+app.use('/api/import', express.json({ limit: '32mb' }));
 app.use(express.json({ limit: '1mb' }));
+// Sem isto, um corpo grande demais ou um JSON malformado sai como a página de
+// erro HTML do Express, com caminho absoluto e stack dentro — e o `api()` do
+// front, que espera JSON, mostrava só "Erro 413"/"Erro 500" sem dizer o motivo.
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  const grande = err.type === 'entity.too.large';
+  const json = err.type === 'entity.parse.failed';
+  if (!grande && !json) return next(err);
+  console.error(`[api] ${req.method} ${req.path}: ${err.message}`);
+  res.status(grande ? 413 : 400).json({
+    error: grande
+      ? 'O conteúdo enviado é grande demais para esta operação.'
+      : 'O conteúdo enviado não é um JSON válido.',
+  });
+});
 // ---------- preferências da interface ----------
 // No app desktop o servidor sobe numa porta ALEATÓRIA a cada abertura, e o
 // localStorage do navegador é por origem — então tudo que ficasse só no
@@ -427,7 +448,14 @@ app.post('/api/cofres', (req, res) => {
     d.cofres.push({ apelido, tipo: adapt.tipo, nome: String(b.nome || adapt.nome).slice(0, 80), config,
       espelharSistemas: b.espelharSistemas !== false });
   }
-  if (Object.keys(segredos).length) segredosDeCofre.definir(apelido, segredos);
+  if (Object.keys(segredos).length) {
+    // `definir` recusa quando o arquivo de chaves existe mas não pôde ser lido
+    // — gravar ali apagaria as chaves dos outros cofres. Sair ANTES do
+    // store.save() deixa a edição só em memória: nada é gravado, nada é
+    // destruído, e a pessoa lê o motivo em vez de "Erro 500".
+    try { segredosDeCofre.definir(apelido, segredos); }
+    catch (e) { return fail(res, 409, e.message); }
+  }
   store.save();
   // Busca AGORA o que este cofre sabe.
   //
@@ -634,6 +662,12 @@ for (const [rota, exec] of [
     if (rota === 'rename') {
       const novo = String(b.newName || '');
       if (!novo || novo.includes('/') || novo === '.' || novo === '..') return fail(res, 400, 'Novo nome inválido.');
+    }
+    // `parseInt('rw-r--r--', 8)` e `parseInt(undefined, 8)` dão NaN, e
+    // `NaN & 0o777` é 0: sem esta conferência a rota aplicava chmod 000 em vez
+    // de recusar — num diretório remoto sem sudo, sem caminho de volta pela aba.
+    if (rota === 'chmod' && !/^[0-7]{3,4}$/.test(String(b.mode))) {
+      return fail(res, 400, 'Permissão inválida (use octal, ex.: 644).');
     }
     try { await exec(c, b); res.json({ ok: true }); }
     catch (err) { fail(res, 400, err && err.message ? err.message : String(err)); }
@@ -1473,13 +1507,27 @@ app.post('/api/import', (req, res) => {
         if (apelido) summary.skipped.push(`cofre "${apelido}": tipo desconhecido "${tipo}"`);
         continue;
       }
+      // A CHAVE do cofre é segredo e mora FORA do data.json (cofresegredos.js).
+      // O cadastro pela tela já respeita isso — POST /api/cofres manda campo
+      // `segredo: true` para o armazenamento protegido e nunca para `config`.
+      // Este laço não respeitava: um XML com <opcao chave="chave" valor="TOKEN">
+      // gravava o token no data.json, ele voltava ao navegador em /api/cofres e
+      // era regravado em TODO export seguinte — inclusive no "sem segredos".
+      const secretas = new Set(cofres.camposSecretos(tipo));
       const config = {};
       for (const [k, v] of Object.entries((c && c.config) || {})) {
-        config[String(k).slice(0, 40)] = String(v).slice(0, 500);
+        const chave = String(k).slice(0, 40);
+        if (secretas.has(chave)) {
+          summary.skipped.push(`cofre "${apelido}": opção "${chave}" ignorada — a chave não entra pelo backup, cadastre na tela de cofres`);
+          continue;
+        }
+        config[chave] = String(v).slice(0, 500);
       }
+      // Mesma regra do POST /api/cofres: só `false` explícito desliga o espelho.
+      const espelharSistemas = c.espelharSistemas !== false;
       const ex = d.cofres.find((x) => x.apelido === apelido);
-      if (ex) Object.assign(ex, { tipo, nome: String(c.nome || ex.nome || tipo).slice(0, 80), config });
-      else d.cofres.push({ apelido, tipo, nome: String(c.nome || tipo).slice(0, 80), config });
+      if (ex) Object.assign(ex, { tipo, nome: String(c.nome || ex.nome || tipo).slice(0, 80), config, espelharSistemas });
+      else d.cofres.push({ apelido, tipo, nome: String(c.nome || tipo).slice(0, 80), config, espelharSistemas });
       summary.cofres = (summary.cofres || 0) + 1;
     }
 
@@ -2055,16 +2103,32 @@ app.post('/api/run', (req, res) => {
     sequential: !!body.sequential,
     timeoutSec: Math.max(0, Number(body.timeoutSec) || 0),
   };
-  // registra no histórico os comandos (já resolvidos) que vão rodar em cada host
+  // registra no histórico os comandos (já resolvidos) que vão rodar em cada host.
+  //
+  // Teto POR LOTE. Sem ele, um playbook com "@cada VLAN em 1-4094" (permitido:
+  // lib/vars.js expande até 6000 comandos por host) grava mais linhas do que o
+  // histórico inteiro comporta (MAX_ENTRIES = 5000) e o splice de lib/history.js
+  // apaga semanas de comandos do terminal em silêncio. Até HIST_LOTE_MAX linhas
+  // nada muda; acima, o que ficou de fora é DITO numa linha-resumo por host, em
+  // vez de sumir.
+  const HIST_LOTE_MAX = 1000;
+  let histLote = 0;
   for (const p of r.perHost) {
+    const meta = {
+      source: 'human', origin: 'batch',
+      machine: p.host.name, ip: p.host.host, username: p.host.username,
+      port: p.host.port || 22, local: false, hostId: p.host.id,
+    };
+    let cortados = 0;
     for (const it of p.items) {
       const c = String(it.resolved || '').trim();
       if (!c || c.startsWith('#')) continue;
-      history.add({
-        command: c, source: 'human', origin: 'batch',
-        machine: p.host.name, ip: p.host.host, username: p.host.username,
-        port: p.host.port || 22, local: false, hostId: p.host.id,
-      });
+      if (histLote >= HIST_LOTE_MAX) { cortados++; continue; }
+      histLote++;
+      history.add({ command: c, ...meta });
+    }
+    if (cortados) {
+      history.add({ command: `# [lote] mais ${cortados} comando(s) deste lote não foram registrados no histórico (teto de ${HIST_LOTE_MAX} por execução)`, ...meta });
     }
   }
   const run = runner.startRun({
@@ -2147,9 +2211,11 @@ app.post('/api/ai/chat', async (req, res) => {
   };
   let aborted = false;
   // res 'close' = cliente desconectou (req 'close' dispara ao fim do corpo no Node atual)
-  res.on('close', () => { aborted = true; });
+  const ac = new AbortController();
+  res.on('close', () => { aborted = true; try { ac.abort(); } catch {} });
   try {
     await ai.streamChat({
+      signal: ac.signal,
       messages: body.messages,
       host,
       terminalContext: body.terminalContext,

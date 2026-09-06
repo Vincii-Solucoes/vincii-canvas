@@ -85,7 +85,7 @@ try {
         <div class="exec-sec">Comandos</div>
         <select id="playbookSelect"></select>
         <div id="adhocWrap" hidden>
-          <textarea id="adhocCommands" rows="6" class="mono" placeholder="echo Olá {{CLIENTE}}&#10;uptime"></textarea>
+          <textarea id="adhocCommands" rows="6" class="mono" spellcheck="false" placeholder="echo Olá {{CLIENTE}}&#10;uptime"></textarea>
           <p class="hint">Um comando por linha; linhas com # são ignoradas; use {{VARIAVEL}}. Ranges: <code>@cada VLAN em {{VLANS}}: comando</code> repete o comando para cada item da lista.</p>
         </div>
 
@@ -98,7 +98,7 @@ try {
           <select id="profileSelect"></select>
         </label>
         <label>Sobrescritas desta execução
-          <textarea id="overridesText" rows="3" class="mono" placeholder="CHAVE=valor (opcional, uma por linha)"></textarea>
+          <textarea id="overridesText" rows="3" class="mono" spellcheck="false" placeholder="CHAVE=valor (opcional, uma por linha)"></textarea>
         </label>
 
         <div class="exec-sec">Opções</div>
@@ -319,7 +319,10 @@ try {
             <button class="btn small" data-act="mkdir" title="Nova pasta">＋</button>
           </div>
         </div>
-        <input class="file-path mono" data-side="local" spellcheck="false">
+        <input class="file-path mono" data-side="local" spellcheck="false"
+               placeholder="Caminho da pasta — Enter para ir"
+               title="Caminho da pasta local — digite e tecle Enter para ir"
+               aria-label="Caminho da pasta local">
         <div class="file-list" data-side="local"></div>
       </div>
 
@@ -333,7 +336,10 @@ try {
             <button class="btn small" data-act="mkdir" title="Nova pasta">＋</button>
           </div>
         </div>
-        <input class="file-path mono" data-side="remote" spellcheck="false">
+        <input class="file-path mono" data-side="remote" spellcheck="false"
+               placeholder="Caminho da pasta — Enter para ir"
+               title="Caminho da pasta remota — digite e tecle Enter para ir"
+               aria-label="Caminho da pasta remota">
         <div class="file-list" data-side="remote"></div>
       </div>
     </div>
@@ -444,7 +450,7 @@ try {
       <div class="card">
         <h2>Variáveis globais</h2>
         <p class="hint">Valem para todos os hosts e execuções, a menos que sejam sobrescritas.</p>
-        <textarea id="globalsText" rows="8" class="mono" placeholder="DATA_DIR=/srv/dados&#10;REGIAO=sudeste"></textarea>
+        <textarea id="globalsText" rows="8" class="mono" spellcheck="false" placeholder="DATA_DIR=/srv/dados&#10;REGIAO=sudeste"></textarea>
         <div class="btn-row"><button id="btnSaveGlobals" class="btn primary">Salvar globais</button></div>
       </div>
       <div class="card">
@@ -825,7 +831,7 @@ try {
 </main>
 
 <div id="modalRoot" class="modal-root">
-  <form id="modalForm" class="modal-card">
+  <form id="modalForm" class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h2 id="modalTitle"></h2>
     <div id="modalBody"></div>
     <footer class="btn-row">

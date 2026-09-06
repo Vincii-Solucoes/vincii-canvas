@@ -231,6 +231,7 @@ async function loadState(sePrecisar) {
   renderExecControls();
   renderHostSidebar();
   renderTermTabs();
+  avisarUrlDeEspelhoMudou();
 }
 
 // ---------- modal ----------
@@ -241,11 +242,51 @@ function openModal(title, bodyHtml) {
   submit.textContent = 'Salvar';
   submit.disabled = false;
   $('#modalRoot').classList.add('open');
+  // Foco no primeiro campo: sem isto o modal abria com o foco na página de trás,
+  // e quem usa teclado precisava tabular até ele. Atraso 0 roda ANTES dos
+  // `setTimeout(…, 30)` de quem escolhe o próprio campo, então esses continuam
+  // mandando; a guarda de activeElement cobre quem foca de forma síncrona.
+  setTimeout(() => {
+    const raiz = $('#modalRoot');
+    if (!raiz.classList.contains('open')) return;
+    if (raiz.contains(document.activeElement) && document.activeElement !== document.body) return;
+    const campo = $('#modalBody').querySelector(
+      'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea');
+    if (campo) { try { campo.focus(); } catch {} }
+  }, 0);
 }
 
 function closeModal() {
   $('#modalRoot').classList.remove('open');
   $('#modalForm').onsubmit = null;
+}
+
+// Uma pergunta de uma linha, no modal do app. Existe porque window.prompt() NÃO
+// funciona no Electron: lança "prompt() is not supported" e o clique não faz
+// nada — era o que acontecia em Renomear, Permissões e Nova pasta da aba
+// Arquivos. Devolve o texto, ou null se a pessoa cancelar/fechar.
+function pedirTexto(titulo, rotulo, valor = '', atributos = '') {
+  return new Promise((resolve) => {
+    openModal(titulo, `<label>${rotulo} <input id="f_pedirTexto" required ${atributos}></label>`);
+    const campo = $('#f_pedirTexto');
+    campo.value = valor == null ? '' : String(valor);
+    setTimeout(() => { try { campo.focus(); campo.select(); } catch {} }, 30);
+    let respondeu = false;
+    const terminar = (v) => { if (respondeu) return; respondeu = true; resolve(v); };
+    $('#modalForm').onsubmit = (ev) => {
+      ev.preventDefault();
+      const v = campo.value.trim();
+      terminar(v || null);
+      closeModal();
+    };
+    // Cancelar, clicar fora ou fechar não passam pelo onsubmit — sem observar o
+    // fechamento, a promessa ficaria pendurada para sempre.
+    const raiz = $('#modalRoot');
+    const olho = new MutationObserver(() => {
+      if (!raiz.classList.contains('open')) { olho.disconnect(); terminar(null); }
+    });
+    olho.observe(raiz, { attributes: true, attributeFilter: ['class'] });
+  });
 }
 
 // ---------- hosts ----------
@@ -766,6 +807,9 @@ async function abrirModalDeCofre(existente) {
       } });
       closeModal();
       toast('Cofre salvo.');
+      // Mexer no cofre é a resposta ao que a recusa pedia: a agenda volta a
+      // tentar já, em vez de esperar o próximo arranque do app.
+      recusadoPeloCofre.clear();
       await carregarCofres(); await loadState(); renderCofres();
     } catch (e) { toast(e.message, 'erro'); }
   };
@@ -903,7 +947,12 @@ async function desenharEscolhaDeSegredo() {
   const lista = el(box, 'div', 'cofre-lista');
   mostrarEscolhido();
 
+  // Cada busca leva um número. Sem isto, a resposta de uma busca ANTIGA que
+  // chegasse depois apagava a lista da busca atual — o cofre remoto responde em
+  // tempos diferentes conforme o termo.
+  let seqBusca = 0;
   const buscar = async () => {
+    const minha = ++seqBusca;
     lista.innerHTML = '';
     el(lista, 'p', 'hint', 'Buscando…');
     let r;
@@ -911,7 +960,11 @@ async function desenharEscolhaDeSegredo() {
       const cliente = clienteSel ? clienteSel.value : '';
       r = await api(`/api/cofres/${encodeURIComponent(apelido)}/segredos`
         + `?busca=${encodeURIComponent(busca.value)}&cliente=${encodeURIComponent(cliente)}`);
-    } catch (e) { lista.innerHTML = ''; el(lista, 'p', 'hint warn-hint', e.message); return; }
+    } catch (e) {
+      if (minha !== seqBusca) return;
+      lista.innerHTML = ''; el(lista, 'p', 'hint warn-hint', e.message); return;
+    }
+    if (minha !== seqBusca) return;
     lista.innerHTML = '';
     if (r.erro) { el(lista, 'p', 'hint warn-hint', `${r.erro.mensagem} (${r.erro.codigo})`); return; }
     if (!r.itens.length) { el(lista, 'p', 'hint', 'Nenhum segredo encontrado.'); return; }
@@ -1046,8 +1099,8 @@ function openHostModal(existing) {
           <option value="no">Nenhuma — texto claro</option>
         </select>
       </label>
-      <label>Usuário <input id="f_user" placeholder="root"></label>
-      <label>Host / IP <input id="f_host" required placeholder="10.0.0.5 ou srv.exemplo.com"></label>
+      <label>Usuário <input id="f_user" spellcheck="false" placeholder="root"></label>
+      <label>Host / IP <input id="f_host" required spellcheck="false" placeholder="10.0.0.5 ou srv.exemplo.com"></label>
       <label>Porta <input id="f_port" type="number" min="1" max="65535" value="22"></label>
     </div>
     <p id="f_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — usuário e senha trafegam em texto claro na rede. Use só em rede de gerência confiável. Preencha usuário e senha para o app fazer login sozinho; deixe a senha em branco para digitar no terminal. Execução em lote e agente de IA exigem SSH.</p>
@@ -1412,7 +1465,7 @@ function openPlaybookModal(existing) {
     <label>Nome <input id="f_pbName" required placeholder="ex.: Atualizar aplicação"></label>
     <label>Descrição (opcional) <input id="f_pbDesc"></label>
     <label>Comandos — um por linha
-      <textarea id="f_pbCommands" rows="10" class="mono" required placeholder="# use {{VARIAVEL}} para segmentar valores&#10;echo &quot;Deploy {{CLIENTE}} em {{AMBIENTE}}&quot;&#10;systemctl restart {{SERVICO}}"></textarea>
+      <textarea id="f_pbCommands" rows="10" class="mono" spellcheck="false" required placeholder="# use {{VARIAVEL}} para segmentar valores&#10;echo &quot;Deploy {{CLIENTE}} em {{AMBIENTE}}&quot;&#10;systemctl restart {{SERVICO}}"></textarea>
     </label>
     <p class="hint">Linhas vazias e iniciadas com # são ignoradas. Embutidas: {{host.name}}, {{host.host}}, {{host.port}}, {{host.user}}.</p>
     <p class="hint">Ranges/listas: <code>@cada VLAN em {{VLANS}}: vlan {{VLAN}}</code> repete o comando para cada item (ex.: VLANS=100-110,150). Também aceita range literal: <code>@cada PORTA em 1-24: …</code></p>
@@ -1523,9 +1576,46 @@ function scriptListItem(sc) {
   return it;
 }
 
+// O editor mostra "alterações não salvas" — e clicar em outro script na lista
+// jogava tudo fora sem perguntar. Compara o que está nos campos com o que foi
+// aberto; só pergunta quando há diferença de verdade.
+function editorScriptSujo() {
+  const box = $('#scriptEditorForm');
+  if (!scriptEditando || !box || box.hidden || !$('#f_scName')) return false;
+  const e = scriptEditando;
+  return $('#f_scName').value !== (e.name || '')
+    || $('#f_scGroup').value !== (e.group || '')
+    || $('#f_scSubgroup').value !== (e.subgroup || '')
+    || $('#f_scDesc').value !== (e.description || '')
+    || $('#f_scBody').value !== (e.body || '');
+}
+
+function confirmarDescarteDeScript() {
+  if (!editorScriptSujo()) return true;
+  return confirm('Este script tem alterações não salvas.\n\nSair sem salvar? O que você escreveu será perdido.');
+}
+
+// O endereço de um sistema espelhado pode mudar no ERP durante a faixa de
+// atendimento. A aba já aberta continua na URL antiga e a agenda não reabre
+// (para ela, o host já está aberto). Navegar sozinho seria pior — a pessoa pode
+// estar no meio de algo. Então avisa, uma vez por sessão.
+function avisarUrlDeEspelhoMudou() {
+  for (const s of sessions) {
+    if (s.kind !== 'web' || !s.hostId || s.avisouUrlNova) continue;
+    const h = state.hosts.find((x) => x.id === s.hostId);
+    if (!h || !h.url) continue;
+    const novo = window.normalizarUrl ? window.normalizarUrl(h.url) : h.url;
+    if (!novo || novo === s.url) continue;
+    s.avisouUrlNova = true;
+    toast(`${s.hostName || h.name}: o endereço deste sistema mudou para ${novo}. `
+      + 'Abra o host de novo (ou digite o endereço na barra da aba) para usar o novo.', 'aviso');
+  }
+}
+
 function abrirScript(id) {
   const sc = state.scripts.find((s) => s.id === id);
   if (!sc) return;
+  if (sc.id !== scriptSelId && !confirmarDescarteDeScript()) return;
   scriptSelId = id;
   scriptEditando = { id: sc.id, name: sc.name, group: sc.group || '', subgroup: sc.subgroup || '', description: sc.description || '', body: sc.body || '' };
   renderScripts();
@@ -1533,6 +1623,7 @@ function abrirScript(id) {
 }
 
 function novoScript() {
+  if (!confirmarDescarteDeScript()) return;
   scriptSelId = null;
   scriptEditando = { name: '', group: '', subgroup: '', description: '', body: '' };
   renderScripts();
@@ -1583,7 +1674,16 @@ function importarScriptArquivo() {
     if (!f) return;
     if (f.size > 100000) { toast('Arquivo grande demais (máximo 100 KB).', 'erro'); return; }
     let texto;
-    try { texto = await f.text(); } catch { toast('Não foi possível ler o arquivo.', 'erro'); return; }
+    try {
+      // `f.text()` assume UTF-8 sempre. Um .ps1 salvo pelo PowerShell ISE vem em
+      // UTF-16 e entrava como texto com um NUL entre cada letra — assim ia para
+      // o data.json e para a área de transferência. O BOM diz a codificação.
+      const b = new Uint8Array(await f.arrayBuffer());
+      const enc = (b[0] === 0xFF && b[1] === 0xFE) ? 'utf-16le'
+        : (b[0] === 0xFE && b[1] === 0xFF) ? 'utf-16be'
+          : 'utf-8';
+      texto = new TextDecoder(enc).decode(b); // o TextDecoder já descarta o BOM
+    } catch { toast('Não foi possível ler o arquivo.', 'erro'); return; }
     const nome = f.name.replace(/\.[^.]+$/, '').slice(0, 120) || 'Importado';
     abrirRascunhoScript({ name: nome, body: texto });
     toast(`"${f.name}" carregado — revise, categorize e salve.`);
@@ -2412,14 +2512,16 @@ function abrirMenuArquivo(ev, lado, item) {
     if (ehTexto(item.name)) add('✎ Abrir/editar', () => abrirEditorArquivo(lado, item));
   }
   add('Renomear', async () => {
-    const novo = prompt('Novo nome:', item.name);
+    const novo = await pedirTexto('Renomear', 'Novo nome', item.name, 'maxlength="255"');
     if (!novo || novo === item.name) return;
     try { await filesApi('rename', ladoBody(lado, { name: item.name, newName: novo })); await fileList(lado); }
     catch (e) { toast(e.message, 'erro'); }
   });
   if (fileState.protocol !== 'ftp' || lado === 'local') {
     add('Permissões (chmod)', async () => {
-      const m = prompt('Permissões em octal (ex.: 644, 755):', item.mode ? item.mode.toString(8).padStart(3, '0') : '644');
+      const m = await pedirTexto('Permissões', 'Octal (ex.: 644, 755)',
+        item.mode ? item.mode.toString(8).padStart(3, '0') : '644',
+        'maxlength="4" inputmode="numeric" pattern="[0-7]{3,4}"');
       if (!m) return;
       if (!/^[0-7]{3,4}$/.test(m)) { toast('Use 3 ou 4 dígitos octais, ex.: 644.', 'erro'); return; }
       try { await filesApi('chmod', ladoBody(lado, { name: item.name, mode: m })); await fileList(lado); }
@@ -2546,7 +2648,7 @@ function initFiles() {
         if (b.dataset.act === 'home') return fileList(lado, lado === 'local' ? '' : (fileState.protocol === 'ftp' ? '/' : ''));
         if (b.dataset.act === 'refresh') return fileList(lado);
         if (b.dataset.act === 'mkdir') {
-          const nome = prompt('Nome da nova pasta:');
+          const nome = await pedirTexto('Nova pasta', 'Nome', '', 'maxlength="255"');
           if (!nome) return;
           try { await filesApi('mkdir', ladoBody(lado, { name: nome })); await fileList(lado); }
           catch (e) { toast(e.message, 'erro'); }
@@ -3231,6 +3333,15 @@ function renderVarMenu() {
         const r = await api(`/api/hosts/${h.id}/segredo`, {
           method: 'POST', body: { campo, token: window.VC_TOKEN },
         });
+        // A conferência lá de cima aconteceu ANTES desta espera, e o cofre pode
+        // levar segundos (há recuo em lib/credenciais.js). `colarNaSessao`
+        // resolve o destino de novo, na hora — sem conferir outra vez, a senha
+        // ia para a aba que estivesse ativa AGORA, que pode ser outro servidor.
+        const agora = activeSession();
+        if (!agora || agora.id !== idSessao) {
+          toast('A aba mudou enquanto o cofre respondia — nada foi colado.', 'erro');
+          return;
+        }
         colarNaSessao(r.valor);
       } catch (e) { toast(e.message, 'erro'); }
     });
@@ -3281,7 +3392,7 @@ function toggleFavMenu() {
 function openFavoriteModal(ctx = {}) {
   openModal(ctx.existing ? 'Editar favorito' : 'Adicionar aos favoritos', `
     <label>Comando
-      <textarea id="fav_cmd" rows="3" class="mono" required placeholder="ex.: df -h"></textarea>
+      <textarea id="fav_cmd" rows="3" class="mono" spellcheck="false" required placeholder="ex.: df -h"></textarea>
     </label>
     <label>Rótulo (opcional) <input id="fav_label" placeholder="ex.: Ver uso de disco"></label>
     <label>Escopo
@@ -3391,7 +3502,11 @@ function xmlToConfig(text) {
 
   const varsOf = (el) => {
     const o = {};
-    if (el) el.querySelectorAll(':scope > var').forEach((v) => { o[v.getAttribute('name')] = v.textContent; });
+    // Sem o `?? ''`, um <var> sem atributo `name` virava a variável chamada
+    // "null" (o nome do atributo ausente, convertido para texto). A chave vazia
+    // já é recusada pelo servidor e listada entre as ignoradas, que é o
+    // tratamento certo.
+    if (el) el.querySelectorAll(':scope > var').forEach((v) => { o[v.getAttribute('name') ?? ''] = v.textContent; });
     return o;
   };
 
@@ -3461,6 +3576,7 @@ function xmlToConfig(text) {
         apelido: c.getAttribute('apelido') || '',
         tipo: c.getAttribute('tipo') || '',
         nome: c.getAttribute('nome') || '',
+        espelharSistemas: c.getAttribute('espelharSistemas') !== 'false',
         config: Object.fromEntries([...c.querySelectorAll(':scope > opcao')]
           .map((o) => [o.getAttribute('chave') || '', o.getAttribute('valor') || ''])
           .filter(([k]) => k)),
@@ -3501,7 +3617,7 @@ function xmlToConfig(text) {
         if (!p) return null;
         const out = {};
         if (p.getAttribute('theme')) out.theme = p.getAttribute('theme');
-        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed']) {
+        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
           const v = p.getAttribute(k);
           if (v === 'true' || v === 'false') out[k] = v === 'true';
         }
@@ -3534,6 +3650,7 @@ async function importFromText(text) {
   conta(c.hosts.length, 'host', 'hosts');
   conta(c.playbooks.length, 'playbook', 'playbooks');
   conta((c.scripts || []).length, 'script', 'scripts');
+  conta((c.cofres || []).length, 'cofre', 'cofres');
   conta(c.profiles.length, 'perfil', 'perfis');
   conta((c.favorites || []).length, 'favorito', 'favoritos');
   conta(Object.keys(c.globals).length, 'variável global', 'variáveis globais');
@@ -3543,6 +3660,33 @@ async function importFromText(text) {
   if (c.settings && Object.keys(c.settings).length) linhas.push('• configurações (IA e terminal)');
   if (c.prefs) linhas.push('• preferências da interface (tema, painéis)');
   if (!linhas.length) { toast('Este arquivo não tem nada para importar.', 'erro'); return; }
+
+  // O cofre é o único item do arquivo que redireciona uma CREDENCIAL SUA: o
+  // apelido casa, o endereço é substituído, e a chave que já está guardada aqui
+  // passa a ser enviada para o endereço do arquivo — sem que o diálogo dissesse
+  // uma palavra sobre cofres. `carregarCofres()` SEM argumento de propósito:
+  // com `true` ele usa ?detalhado=1, que abre o chaveiro do sistema.
+  const cofresRedir = [];
+  if ((c.cofres || []).length) {
+    try { await carregarCofres(); } catch { /* offline: segue com o que houver */ }
+    for (const cf of c.cofres || []) {
+      const ap = String(cf.apelido || '').trim().toLowerCase();
+      if (!ap) continue;
+      const meu = (cofresEmCache.cofres || [])
+        .find((x) => String(x.apelido || '').trim().toLowerCase() === ap);
+      if (!meu) continue;
+      const atual = String((meu.config || {}).baseUrl || '');
+      const novo = String((cf.config || {}).baseUrl || '');
+      if (novo && novo !== atual) {
+        cofresRedir.push(`• ${ap}: você usa ${atual || '(sem endereço)'}, o arquivo traz ${novo}`);
+      }
+    }
+  }
+  const notaCofres = cofresRedir.length
+    ? `\n\n⚠️ ${cofresRedir.length} cofre(s) do arquivo APONTAM PARA OUTRO ENDEREÇO:\n`
+      + `${cofresRedir.join('\n')}\n\nA chave que você já tem guardada continua aqui e passará `
+      + 'a ser enviada para o endereço novo. Se você não reconhece esses endereços, cancele.'
+    : '';
 
   const avisos = [];
   if (temSenha) avisos.push('senhas/passphrases de hosts');
@@ -3638,9 +3782,19 @@ async function importFromText(text) {
       + '\n\nSe você não reconhece ALGUM desses endereços, cancele.'
     : '';
 
+  // A agenda não é o único caminho para o app conectar sozinho: um host com
+  // `<segredo cliente=…>` abre pela janela de atendimento do cofre, e isso não
+  // aparecia em aviso nenhum.
+  const comCofre = (c.hosts || []).filter((h) => h.segredo && h.segredo.cofre);
+  const notaSegredoDeCofre = comCofre.length
+    ? `\n\n⚠️ ${comCofre.length} host(s) do arquivo buscam a senha num COFRE e podem `
+      + `abrir sozinhos na janela de atendimento do cliente:\n• ${comCofre.map((h) => `${h.name} `
+      + `(cofre "${h.segredo.cofre}", destino ${destinoDe(h)})`).join('\n• ')}`
+    : '';
+
   if (!confirm(`Importar deste arquivo:\n\n${linhas.join('\n')}\n\n`
     + 'Hosts e perfis com o mesmo nome e endereço são atualizados (variáveis são mescladas, nada é removido).'
-    + `${notaPb}${notaAgenda}${notaSegredo}\n\nContinuar?`)) return;
+    + `${notaPb}${notaAgenda}${notaSegredoDeCofre}${notaCofres}${notaSegredo}\n\nContinuar?`)) return;
 
   try {
     const r = await api('/api/import', { method: 'POST', body: c });
@@ -4283,9 +4437,9 @@ function openQuickConnectModal() {
           <option value="web">Página web (gerência de roteador, painel)</option>
         </select>
       </label>
-      <label>Host / IP <input id="qc_host" required placeholder="10.0.0.5, srv.exemplo.com ou https://192.168.1.1"></label>
+      <label>Host / IP <input id="qc_host" required spellcheck="false" placeholder="10.0.0.5, srv.exemplo.com ou https://192.168.1.1"></label>
       <label>Porta <input id="qc_port" type="number" min="1" max="65535" value="22"></label>
-      <label>Usuário <input id="qc_user" placeholder="root"></label>
+      <label>Usuário <input id="qc_user" spellcheck="false" placeholder="root"></label>
       <label>Rótulo da aba (opcional) <input id="qc_name" placeholder="ex.: switch-core"></label>
     </div>
     <p id="qc_telnetNote" class="hint warn-hint" hidden>⚠️ Telnet não é criptografado — a senha trafega em texto claro. O login é feito no próprio terminal do equipamento.</p>
@@ -4659,17 +4813,26 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
       session.status = 'conectado';
       term.write(`\x1b[32mPorta serial aberta — ${window.serialLib.resumo(cfg)}\x1b[0m\r\n`);
       renderTermTabs();
+      // O `while` existe porque erro NÃO fatal da linha (framing, paridade,
+      // overrun, break) troca o stream por um novo e a porta continua aberta —
+      // basta pegar outro reader. O `break` no catch nunca deixava chegar lá:
+      // um ruído na linha encerrava a sessão inteira.
+      let errosSeguidos = 0;
       while (vivo && port.readable) {
         reader = port.readable.getReader();
         try {
           for (;;) {
             const { value, done } = await reader.read();
             if (done) break;
-            if (value && value.length) term.write(decoder.decode(value, { stream: true }));
+            if (value && value.length) { term.write(decoder.decode(value, { stream: true })); errosSeguidos = 0; }
           }
         } catch (e) {
-          if (vivo) encerrar('A porta caiu: ' + (e && e.message ? e.message : e));
-          break;
+          const msg = (e && e.message) ? e.message : String(e);
+          // Fatal (dispositivo removido, porta fechada): `port.readable` some.
+          if (!vivo || !port.readable) { if (vivo) encerrar('A porta caiu: ' + msg); break; }
+          // Freio: erro que se repete sem parar viraria laço quente.
+          if (++errosSeguidos > 20) { encerrar('Erros seguidos demais na linha serial (' + msg + '). Sessão encerrada.'); break; }
+          try { term.write(`\r\n\x1b[33m[erro na linha serial: ${msg} — continuando]\x1b[0m\r\n`); } catch {}
         } finally {
           try { reader.releaseLock(); } catch {}
         }
@@ -4888,6 +5051,9 @@ function createWebSession({ hostId, hostName, url, remontagem = 0 }) {
   const armarVigia = () => {
     clearTimeout(vigia);
     vigia = setTimeout(() => {
+      // A aba já foi fechada (×, atalho, ou solta em janela própria): sem esta
+      // saída o vigia continuava contando e REABRIA a aba fechada.
+      if (!sessions.includes(session)) return pararVigia();
       if (chegou() || falhou) return pararVigia();
       if (tentativasDeCarga >= MAX_TENTATIVAS_DE_CARGA) {
         pararVigia();
@@ -5036,7 +5202,15 @@ function createDeskSession({ hostId, hostName, protocol }) {
   sessions.push(session);
   setActiveSession(id);
   const abrir = () => {
-    if (!window.vcDesktop) { toast('Cliente de área de trabalho ainda carregando…', 'erro'); return; }
+    if (!window.vcDesktop) {
+      // Sem marcar o estado, a aba ficava em "conectando" PARA SEMPRE — sem
+      // retentativa e sem o × para fechar, quando a agenda abria antes de o
+      // desktop.js (módulo ES, carrega o noVNC) terminar de carregar.
+      session.status = 'encerrado';
+      renderTermTabs();
+      toast('Cliente de área de trabalho ainda carregando…', 'erro');
+      return;
+    }
     const onEstado = ({ estado, erro }) => {
       if (estado === 'conectado') session.status = 'conectado';
       else session.status = 'encerrado';
@@ -5202,9 +5376,13 @@ function connectSession(session) {
     if (session.ws !== ws) return;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
-    if (m.t === 'o') session.term.write(m.d);
+    if (m.t === 'o') { try { session.term.write(m.d); } catch { /* rajada acima do teto do xterm: perde o trecho, a sessão segue */ } }
     else if (m.t === 'ready') {
       session.status = 'conectado';
+      // Conectou: o cofre entregou a credencial, então a recusa acabou — seja
+      // ela consertada no ERP ou aqui. Sem isto, a agenda ficava parada para
+      // este host até o app reiniciar, mesmo depois de o problema sumir.
+      if (session.hostId) recusadoPeloCofre.delete(session.hostId);
       session.reatarFalhouVaiDoZero = false;
       renderTermTabs();
       renderHostSidebar();
@@ -5419,6 +5597,13 @@ let lastTabClick = { id: null, t: 0 }; // detecção própria de duplo clique
 // (canvas, WebAssembly, webview). Ali a janela nova RECONECTA — o que é
 // imperceptível, porque não existe estado de shell a perder.
 const MODO_SOLO = new URLSearchParams(location.search).get('solo') === '1';
+// Janela de FERRAMENTA (monitor, MTR, TCP ping, varredura, DNS, HTTP, sub-rede,
+// gerador de senha, script). Não tem sessão nem relê o cadastro depois de abrir,
+// então não precisa bater ponto de presença nem recarregar o estado a cada 10 s
+// — e essas janelas costumam ficar abertas o dia inteiro.
+const SOLO_FERRAMENTA = MODO_SOLO
+  && ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'senha', 'script']
+    .includes(new URLSearchParams(location.search).get('tipo'));
 
 function soltarEmJanela(id) {
   const s = sessions.find((x) => x.id === id);
@@ -6228,6 +6413,21 @@ async function aiSend(question) {
 
   const { body } = renderAiMessage(ai, 'assistant', '…', { sessao: s });
   let acc = '';
+  // A resposta era redesenhada INTEIRA a cada pedaço que chegava, com rolagem
+  // forçada junto: numa resposta longa isso é trabalho ao quadrado e a tela
+  // engasga. Agora repinta no máximo uma vez por quadro de vídeo.
+  let errored = false;
+  let rafId = 0;
+  const agendarRender = () => {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      if (errored) return; // nunca repintar por cima da mensagem de erro
+      renderAssistantBody(body, acc, s);
+      aiScroll(ai);
+    });
+  };
+  const cancelarRender = () => { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } };
   try {
     const res = await fetch('/api/ai/chat', {
       method: 'POST',
@@ -6244,7 +6444,6 @@ async function aiSend(question) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let errored = false;
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -6257,10 +6456,10 @@ async function aiSend(question) {
         const evt = JSON.parse(line.slice(5).trim());
         if (evt.type === 'delta') {
           acc += evt.text;
-          renderAssistantBody(body, acc, s);
-          aiScroll(ai);
+          agendarRender();
         } else if (evt.type === 'error') {
           errored = true;
+          cancelarRender();
           body.innerHTML = '';
           el(body, 'p', null, evt.error);
           body.parentElement.classList.add('error');
@@ -6268,12 +6467,16 @@ async function aiSend(question) {
         }
       }
     }
+    // Última repintura, síncrona: o quadro agendado pode não ter rodado ainda.
+    cancelarRender();
     if (!errored && acc) {
+      renderAssistantBody(body, acc, s);
       ai.history.push({ role: 'assistant', content: acc });
     } else if (!errored && !acc) {
       el(body, 'p', null, '(sem resposta)');
     }
   } catch (e) {
+    cancelarRender();
     body.innerHTML = '';
     el(body, 'p', null, e.message);
     body.parentElement.classList.add('error');
@@ -6457,7 +6660,7 @@ function agentStart(auto) {
   const ai = s.ai;
   ai.goal = goal;
   ai.feedEl.replaceChildren();
-  ai.agent = { id: null, es: null, cmds: new Map(), text: null, auto: !!auto, status: 'starting', needsApproval: false };
+  ai.agent = { id: null, es: null, cmds: new Map(), text: null, auto: !!auto, status: 'starting', needsApproval: false, bytes: 0, cortado: false };
   updateAgentControls(s);
   api('/api/agent/start', {
     method: 'POST',
@@ -6494,7 +6697,7 @@ function reatarAgente(s, runId) {
   const ai = s.ai;
   ai.mode = 'agent'; // a janela abre já mostrando o feed do agente
   ai.feedEl.replaceChildren();
-  ai.agent = { id: runId, es: null, cmds: new Map(), text: null, auto: false, status: 'running', needsApproval: false };
+  ai.agent = { id: runId, es: null, cmds: new Map(), text: null, auto: false, status: 'running', needsApproval: false, bytes: 0, cortado: false };
   ai.agent.es = new EventSource(`/api/agent/${runId}/stream`);
   ai.agent.es.onmessage = (m) => handleAgentEvent(s, JSON.parse(m.data));
   ai.agent.es.onerror = () => {};
@@ -6527,6 +6730,11 @@ function handleAgentEvent(session, evt) {
   const agent = ai.agent;
   switch (evt.type) {
     case 'agent-start': {
+      // A janela que REATA um agente (aba solta) não sabia o modo escolhido e
+      // escrevia sempre "Modo supervisionado" — inclusive sobre um agente
+      // automático, que altera o sistema sem perguntar. O servidor manda o modo
+      // no evento; o flag local só vale quando ele não vier.
+      if (evt.aprovacao !== undefined) agent.auto = evt.aprovacao === 'nunca';
       box.replaceChildren();
       el(box, 'div', 'agent-goal').textContent = `Objetivo: ${evt.goal}`;
       el(box, 'div', 'muted small', `${evt.host.name} — ${evt.host.address}`);
@@ -6547,7 +6755,9 @@ function handleAgentEvent(session, evt) {
       clearThinking(ai);
       if (!agent.text) agent.text = el(box, 'div', 'agent-text');
       agent.text.textContent += evt.text;
-      agentScroll(ai);
+      // `autoscroll` agrupa num quadro de vídeo; `agentScroll` lê scrollHeight a
+      // cada token e força o navegador a recalcular o layout na hora.
+      autoscroll(ai.feedEl);
       break;
     }
     case 'command': {
@@ -6562,9 +6772,21 @@ function handleAgentEvent(session, evt) {
     case 'command-output': {
       const pre = agent.cmds.get(evt.id);
       if (pre) {
-        const span = el(pre, 'span', evt.kind === 'err' ? 'err' : null);
-        span.textContent = stripAnsi(evt.text);
-        agentScroll(ai);
+        // Teto por EXECUÇÃO. Um `journalctl` ou um `find /` enchia o feed com um
+        // <span> por pedaço, sem limite nenhum — o painel de execução em lote já
+        // tinha esse teto, o agente não tinha.
+        agent.bytes = (agent.bytes || 0) + evt.text.length;
+        if (agent.bytes > MAX_SAIDA_POR_HOST) {
+          if (!agent.cortado) {
+            agent.cortado = true;
+            el(pre, 'span', 'line-notice',
+              `\n· saída truncada na tela (passou de ${Math.round(MAX_SAIDA_POR_HOST / 1024 / 1024)} MB) — os comandos seguem rodando normalmente.\n`);
+          }
+        } else {
+          const span = el(pre, 'span', evt.kind === 'err' ? 'err' : null);
+          span.textContent = stripAnsi(evt.text);
+        }
+        autoscroll(ai.feedEl);
       }
       break;
     }
@@ -6776,6 +6998,20 @@ function abrirMonitorSolo() {
   };
   $('#monIniciar').addEventListener('click', iniciar);
   $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
+  $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
+  $('#monParar').addEventListener('click', pararMonitoramento);
+  $('#monRetomar').addEventListener('click', retomarMonitoramento);
+  $('#monPdf').addEventListener('click', baixarPdfMonitor);
+  $('#monCopiar').addEventListener('click', () => {
+    copiarParaClipboard(monRelatorioTexto);
+    toast('Relatório copiado — cole no chamado ou no chat.');
+  });
+  // fecha a janela → para de monitorar aquele host no servidor. A guarda evita
+  // que uma janela que nunca iniciou mande {"ip":null} ao fechar.
+  window.addEventListener('pagehide', () => {
+    if (!monIp) return;
+    try { navigator.sendBeacon('/api/tools/monitor/remove', new Blob([JSON.stringify({ ip: monIp })], { type: 'application/json' })); } catch {}
+  });
   setTimeout(() => { try { $('#monIp').focus(); } catch {} }, 40);
 
   // Atalho: /?...&ip=... já começa monitorando (o tile não passa ip).
@@ -6790,20 +7026,9 @@ function iniciarMonitor(ip) {
   $('#monPainel').hidden = false;
   $('#monHost').textContent = monIp;
   document.title = monIp + ' — Monitor';
-  $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
-  $('#monParar').addEventListener('click', pararMonitoramento);
-  $('#monRetomar').addEventListener('click', retomarMonitoramento);
-  $('#monPdf').addEventListener('click', baixarPdfMonitor);
-  $('#monCopiar').addEventListener('click', () => {
-    copiarParaClipboard(monRelatorioTexto);
-    toast('Relatório copiado — cole no chamado ou no chat.');
-  });
-
-  // fecha a janela → para de monitorar aquele host no servidor
-  window.addEventListener('pagehide', () => {
-    try { navigator.sendBeacon('/api/tools/monitor/remove', new Blob([JSON.stringify({ ip: monIp })], { type: 'application/json' })); } catch {}
-  });
-
+  // Os listeners dos botões vivem em abrirMonitorSolo, que roda UMA vez por
+  // janela. Registrados aqui, um segundo "Iniciar" (depois de um /add que
+  // falhou) duplicava PDF, cópia e o aviso de saída.
   api('/api/tools/monitor/add', { method: 'POST', body: { ip: monIp } })
     .then(() => {
       if (monParado) return; // Parar clicado durante o /add em voo: não vazar timer
@@ -7951,9 +8176,17 @@ async function restaurarBackup(nome, quando) {
     if (r.reiniciou) {
       toast('Restaurado — reiniciando o app…');
     } else {
-      // Modo web: não há relaunch nativo. Recarrega a página para reler o estado.
-      toast('Restaurado. Recarregando…');
-      setTimeout(() => window.location.reload(), 800);
+      // Modo web (npm start): não há relaunch nativo. Recarregar a PÁGINA era
+      // enganoso — o servidor continua com o estado velho em memória e, pior,
+      // com as gravações travadas: a tela mostrava os dados antigos e tudo o que
+      // fosse feito depois era descartado em silêncio. Aqui só se diz a verdade.
+      openModal('Restaurado — reinicie o servidor', '<p>O backup foi gravado no disco.</p>'
+        + '<p><strong>Feche o servidor (Ctrl+C no terminal) e abra de novo.</strong></p>'
+        + '<p class="hint">Até reiniciar, esta tela mostra os dados antigos e nada do que '
+        + 'você fizer será gravado.</p>');
+      const okBtn = $('#modalForm button[type=submit]');
+      if (okBtn) okBtn.textContent = 'Entendi';
+      $('#modalForm').onsubmit = (ev) => { ev.preventDefault(); closeModal(); };
     }
   } catch (e) { toast(e.message, 'erro'); }
 }
@@ -8170,7 +8403,13 @@ function init() {
   $('#btnPreview').addEventListener('click', doPreview);
   $('#btnRun').addEventListener('click', doRun);
   $('#btnCancel').addEventListener('click', doCancel);
-  $('#hostSearch').addEventListener('input', renderHostSidebar);
+  // Sem espera, cada tecla redesenhava a lista inteira (com avatar SVG por
+  // innerHTML). 140 ms é o mesmo intervalo já usado na busca de scripts.
+  let hostSearchTimer = null;
+  $('#hostSearch').addEventListener('input', () => {
+    clearTimeout(hostSearchTimer);
+    hostSearchTimer = setTimeout(renderHostSidebar, 140);
+  });
   $('#sidebarQuickConnect').addEventListener('click', openQuickConnectModal);
   $('#toggleSidebar').addEventListener('click', () => {
     // em janela estreita as duas gavetas se sobrepõem: abrir uma fecha a outra
@@ -8264,6 +8503,15 @@ function init() {
       // reatar: a sessão fica viva no servidor até o TTL de órfã vencer (5 min).
       // É o preço de não matar um shell que talvez devesse voltar, e some junto
       // com o app no desktop, onde o servidor morre com ele.
+      // O agente autônomo vive no SERVIDOR. Fechando a janela, ninguém mais vê
+      // o feed nem responde a uma aprovação pendente — e o run ficava
+      // "executando" para sempre, com a conexão SSH aberta.
+      if (s.ai && s.ai.agent && s.ai.agent.id) {
+        try {
+          navigator.sendBeacon(`/api/agent/${s.ai.agent.id}/stop`,
+            new Blob(['{}'], { type: 'application/json' }));
+        } catch {}
+      }
       if (sessaoTravada(s)) continue;
       try {
         if (s.ws && s.ws.readyState === WebSocket.OPEN) s.ws.send(JSON.stringify({ t: 'fim' }));
@@ -8281,13 +8529,12 @@ function init() {
       // Depois do loadState: a agenda precisa da lista de hosts para saber o que
       // manter aberto, e o registro de presença precisa começar a bater ponto
       // antes do primeiro tique da janela principal.
-      iniciarAgenda();
+      if (!SOLO_FERRAMENTA) iniciarAgenda();
       // Janela solta: vai direto para a sessão pedida, sem mais nada na tela.
       if (MODO_SOLO) {
         // Monitor e MTR não são sessão de terminal — não ativam a aba Terminal
         // (que criaria um shell local à toa nesta janela).
-        const tipoSolo = new URLSearchParams(location.search).get('tipo');
-        const soloFerramenta = ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'senha', 'script'].includes(tipoSolo);
+        const soloFerramenta = SOLO_FERRAMENTA;
         if (!soloFerramenta) {
           try { document.querySelector('[data-tab="terminal"]').click(); } catch {}
           onTerminalTabShown();

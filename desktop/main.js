@@ -5,7 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { app: electronApp, BrowserWindow, shell, dialog, session } = require('electron');
+const { app: electronApp, BrowserWindow, shell, dialog, session, Menu } = require('electron');
 
 // Marca que estamos no app desktop — o servidor usa em /api/update-check para
 // decidir: Mac/web mostram a faixa de aviso; Windows/Linux fazem auto-update.
@@ -316,13 +316,24 @@ if (!electronApp.requestSingleInstanceLock()) {
       return u.protocol === 'http:' && u.hostname === '127.0.0.1'
         && u.port === String(port) && !u.username && !u.password;
     };
-    win.webContents.setWindowOpenHandler(({ url }) => {
+    win.webContents.setWindowOpenHandler(({ url, features }) => {
       if (ehDoApp(url)) {
+        // O overrideBrowserWindowOptions VENCE a string de features do
+        // window.open. Sem ler as features, a tabela de tamanhos da interface
+        // (TAM_FERRAMENTA, em public/app.js) era código morto: o monitor de IP,
+        // o TCP ping, o gerador de senha e a janela do script nasciam todos em
+        // 1100x720. Quem não pede tamanho continua recebendo 1100x720.
+        const f = String(features || '');
+        const pedido = (chave, padrao, minimo) => {
+          const m = f.match(new RegExp('(?:^|,)\\s*' + chave + '=(\\d+)'));
+          const n = m ? Number(m[1]) : NaN;
+          return Number.isFinite(n) && n > 0 ? Math.max(n, minimo) : padrao;
+        };
         return {
           action: 'allow',
           overrideBrowserWindowOptions: {
-            width: 1100,
-            height: 720,
+            width: pedido('width', 1100, 600),
+            height: pedido('height', 720, 400),
             minWidth: 600,
             minHeight: 400,
             title: APP_NAME,
@@ -344,9 +355,27 @@ if (!electronApp.requestSingleInstanceLock()) {
           },
         };
       }
-      shell.openExternal(url);
+      // Só http/https saem para o navegador do sistema. O handler genérico de
+      // `protegerConteudos` já filtra assim; este, da janela principal, aceitava
+      // qualquer esquema — e `shell.openExternal` entrega ao sistema
+      // operacional, que sabe abrir muito mais do que uma página.
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+      else console.error(`[desktop] link recusado (esquema não permitido): ${String(url).slice(0, 80)}`);
       return { action: 'deny' };
     });
+
+    // A janela principal É o app: ela nunca navega para fora. Sem esta guarda,
+    // arrastar um link ou um arquivo para cima dela trocava a interface inteira
+    // pela página soltada — as sessões abertas iam junto. Link legítimo continua
+    // saindo para o navegador do sistema, pelo mesmo caminho de sempre.
+    const ficarNoApp = (event, destino) => {
+      if (ehDoApp(destino)) return;
+      event.preventDefault();
+      if (/^https?:\/\//i.test(destino)) shell.openExternal(destino);
+      else console.error(`[desktop] navegação recusada: ${String(destino).slice(0, 80)}`);
+    };
+    win.webContents.on('will-navigate', ficarNoApp);
+    win.webContents.on('will-frame-navigate', (e) => { if (e.isMainFrame) ficarNoApp(e, e.url); });
     // Certificado de gerência de equipamento é quase sempre autoassinado. Em vez
     // de recusar (inútil) ou aceitar qualquer um (perigoso), faz o mesmo que o
     // SSH já faz com o fingerprint: aceita na PRIMEIRA visita, guarda, e a
@@ -386,20 +415,34 @@ if (!electronApp.requestSingleInstanceLock()) {
       };
       const candidatos = hosts.filter((h) => h.protocol === 'web');
       const avulsos = quickhosts.listar ? quickhosts.listar('web') : [];
-      const host = candidatos.find(daSessao) || avulsos.find(daSessao)
-        // Recuo para arquivos antigos/casos sem partição reconhecível: só aceita
-        // quando NÃO houver ambiguidade de endereço.
-        || (() => {
-          const mesmos = candidatos.filter((h) => String(h.host) === alvo.hostname
-            && Number(h.port || 443) === porta);
-          if (mesmos.length === 1) return mesmos[0];
-          if (mesmos.length > 1) {
-            console.error(`[desktop] certificado recusado: ${mesmos.length} hosts web`
-              + ` no mesmo endereço ${alvo.host} e não deu para saber qual abriu a aba`);
-            return null;
-          }
-          return quickhosts.acharPorEndereco('web', alvo.hostname, porta);
-        })();
+      // Recuo para arquivos antigos/casos sem partição reconhecível: só aceita
+      // quando NÃO houver ambiguidade de endereço.
+      const porEndereco = () => {
+        const mesmos = candidatos.filter((h) => String(h.host) === alvo.hostname
+          && Number(h.port || 443) === porta);
+        if (mesmos.length === 1) return mesmos[0];
+        if (mesmos.length > 1) {
+          console.error(`[desktop] certificado recusado: ${mesmos.length} hosts web`
+            + ` no mesmo endereço ${alvo.host} e não deu para saber qual abriu a aba`);
+          return null;
+        }
+        return quickhosts.acharPorEndereco('web', alvo.hostname, porta);
+      };
+      // A sessão diz qual ABA pediu — não diz que o ENDEREÇO é o do host
+      // cadastrado. A barra de endereço da aba aceita qualquer URL, e sem esta
+      // conferência o certificado de OUTRO equipamento era fixado no host da
+      // aba: depois o app recusava o certificado legítimo dizendo "CERTIFICADO
+      // MUDOU". Vale a sessão quando o endereço é o do próprio host, ou quando
+      // o certificado apresentado já é o pino dele (mesmo equipamento noutra
+      // porta ou noutro nome).
+      const daAba = candidatos.find(daSessao) || avulsos.find(daSessao) || null;
+      const abaConfere = !!daAba && (String(daAba.host) === alvo.hostname
+        || (!!daAba.webCert && daAba.webCert === impressao));
+      if (daAba && !abaConfere) {
+        console.error(`[desktop] aba do host "${daAba.name || daAba.host}" está em ${alvo.host}`
+          + ' — o certificado será julgado pelo endereço, não pelo host da aba');
+      }
+      const host = (abaConfere ? daAba : null) || porEndereco();
       if (!host) {
         console.error(`[desktop] certificado recusado (host não cadastrado): ${alvo.host}`);
         return callback(false);
@@ -459,7 +502,30 @@ if (!electronApp.requestSingleInstanceLock()) {
     autoUpdater.checkForUpdates().catch((e) => console.error('[updater] verificação falhou:', e && e.message));
   }
 
-  electronApp.whenReady().then(protegerConteudos).then(createWindow).then(setupAutoUpdate).catch((err) => {
+  // Menu próprio, igual ao padrão MENOS os itens de recarregar.
+  //
+  // Dentro de uma sessão RDP a tecla Cmd do Mac vira a tecla Windows: o gesto
+  // mais comum do Windows, Win+R, chegava ao Electron como Cmd+R e RECARREGAVA
+  // a interface — derrubando de uma vez todas as abas, sessões SSH, RDP e o
+  // agente em execução. No Windows e no Linux, o mesmo Ctrl+R deixa de ser
+  // roubado do terminal. O resto do menu (copiar/colar, zoom, tela cheia,
+  // DevTools, fechar janela, sair) continua igual.
+  function definirMenu() {
+    const ehMac = process.platform === 'darwin';
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      ...(ehMac ? [{ role: 'appMenu' }] : [{ role: 'fileMenu' }]),
+      { role: 'editMenu' },
+      { label: 'Ver',
+        submenu: [
+          { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }, { role: 'toggleDevTools' },
+        ] },
+      { role: 'windowMenu' },
+    ]));
+  }
+
+  electronApp.whenReady().then(definirMenu).then(protegerConteudos).then(createWindow).then(setupAutoUpdate).catch((err) => {
     console.error('[desktop] falha ao iniciar:', err);
     electronApp.quit();
   });
@@ -474,6 +540,17 @@ if (!electronApp.requestSingleInstanceLock()) {
     // ficavam órfãs sem ninguém para reatá-las.
     if (!win || win.isDestroyed()) createWindow();
     else win.show();
+  });
+
+  // Comando local do agente roda no próprio grupo de processos (detached), então
+  // fechar o app não o levava junto: sobrava um `find /` ou um `tcpdump` moendo
+  // a máquina sem nenhuma janela para pará-lo. Só o filho LOCAL é morto — quem
+  // roda no servidor remoto não é assunto de quem fecha a janela aqui.
+  electronApp.on('before-quit', () => {
+    try { require('../lib/agent').matarLocais(); } catch { /* servidor não subiu */ }
+    // O histórico grava com 400 ms de espera e o temporizador é `unref`: os
+    // últimos comandos do dia sumiam ao fechar o app. Gravar aqui é síncrono.
+    try { require('../lib/history').flush(); } catch { /* servidor não subiu */ }
   });
 
   electronApp.on('window-all-closed', () => electronApp.quit());
