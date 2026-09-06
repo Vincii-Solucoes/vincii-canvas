@@ -882,6 +882,14 @@ app.delete('/api/history', (req, res) => {
   res.json({ ok: true });
 });
 
+// Excluir selecionados: ids no corpo (teto de 5000 por chamada).
+app.post('/api/history/excluir', (req, res) => {
+  const ids = (req.body || {}).ids;
+  if (!Array.isArray(ids) || !ids.length) return fail(res, 400, 'Informe os ids.');
+  const removidos = history.removeMany(ids.slice(0, 5000));
+  res.json({ ok: true, removidos });
+});
+
 function cleanVars(obj, res) {
   if (obj == null) return {};
   if (typeof obj !== 'object' || Array.isArray(obj)) return fail(res, 400, 'Formato de variáveis inválido.');

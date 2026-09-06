@@ -2184,6 +2184,8 @@ function updateHistSelUI() {
       : `Baixar relatório dos ${histEntries.length} comando(s) que o filtro mostra`;
   }
   const btn = $('#btnHistPlaybook'); if (btn) btn.disabled = n === 0;
+  const ex = $('#btnHistExcluirSel');
+  if (ex) { ex.disabled = n === 0; ex.textContent = n ? `🗑 Excluir ${n} selecionado(s)` : '🗑 Excluir selecionados'; }
   const all = $('#histSelectAll');
   if (all) all.checked = histEntries.length > 0 && histEntries.every((e) => histState.selected.has(e.id));
 }
@@ -2224,6 +2226,18 @@ function initHistoryControls() {
     renderHistory();
   });
   $('#btnHistPlaybook').addEventListener('click', historyToPlaybook);
+  $('#btnHistExcluirSel').addEventListener('click', async () => {
+    const ids = [...histState.selected];
+    if (!ids.length) return;
+    if (!confirm(`Excluir ${ids.length} comando(s) do histórico? Isto não desfaz.`)) return;
+    const b = $('#btnHistExcluirSel'); b.disabled = true; b.textContent = 'Excluindo…';
+    try {
+      const r = await api('/api/history/excluir', { method: 'POST', body: { ids } });
+      histState.selected.clear();
+      await loadHistory();
+      toast(`${r.removidos} comando(s) excluído(s) do histórico.`);
+    } catch (e) { toast(e.message, 'erro'); updateHistSelUI(); }
+  });
   $('#btnHistClear').addEventListener('click', async () => {
     if (!histEntries.length) { toast('O histórico já está vazio.'); return; }
     if (!confirm('Apagar TODO o histórico de comandos? Esta ação não pode ser desfeita.')) return;
