@@ -407,9 +407,10 @@ try {
           <select id="capHostFiltro" class="hist-hostfilter"><option value="">Todos os hosts</option></select>
           <input id="capBusca" type="text" class="hist-search" placeholder="Buscar rótulo…" autocomplete="off">
           <button id="capComparar" class="btn primary" disabled>⇄ Comparar selecionadas</button>
+          <button id="capExcluirSel" class="btn danger" disabled>🗑 Excluir selecionadas</button>
         </div>
       </div>
-      <p class="hint">A evidência que o histórico não guarda: no terminal, clique em <strong>📸 Capturar</strong> antes da janela de manutenção e de novo depois. Marque <strong>duas</strong> capturas do mesmo host e compare — linhas removidas em vermelho, adicionadas em verde. As capturas ficam no data.json e entram no backup automático.</p>
+      <p class="hint">A evidência que o histórico não guarda: no terminal, clique em <strong>📸 Capturar</strong> antes da janela de manutenção e de novo depois. Marque capturas para <strong>excluir em lote</strong>, ou exatamente <strong>duas</strong> do mesmo host para comparar — linhas removidas em vermelho, adicionadas em verde. As capturas ficam no data.json e entram no backup automático.</p>
       <div id="capLista" class="cap-lista"></div>
     </div>
     <div id="capDiff" class="card" hidden>

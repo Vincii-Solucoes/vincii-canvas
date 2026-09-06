@@ -7634,7 +7634,7 @@ function capturarSaida() {
 
 // ---- aba Capturas ----
 let capLista = [];
-let capSelecionadas = [];   // ids, no máximo 2 (a 3ª marcada derruba a mais antiga)
+let capSelecionadas = [];   // ids marcados (qualquer quantidade; Comparar exige exatamente 2)
 let capLigado = false;
 
 async function loadCapturas() {
@@ -7681,7 +7681,7 @@ function renderCapturas() {
     for (const c of itens) {
       const row = el(grp, 'div', 'cap-item' + (capSelecionadas.includes(c.id) ? ' sel' : ''));
       const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = capSelecionadas.includes(c.id);
-      cb.title = 'Marcar para comparar (duas)';
+      cb.title = 'Marcar (comparar duas / excluir várias)';
       cb.addEventListener('change', () => { alternarSelecaoCaptura(c.id, cb.checked); });
       row.appendChild(cb);
       const info = el(row, 'div', 'cap-info');
@@ -7723,15 +7723,36 @@ function renderCapturas() {
 
 function alternarSelecaoCaptura(id, marcado) {
   capSelecionadas = capSelecionadas.filter((x) => x !== id);
-  if (marcado) { capSelecionadas.push(id); if (capSelecionadas.length > 2) capSelecionadas.shift(); }
+  if (marcado) capSelecionadas.push(id);
   renderCapturas();
 }
 
 function atualizarBotaoComparar() {
+  const n = capSelecionadas.length;
   const b = $('#capComparar');
-  if (!b) return;
-  b.disabled = capSelecionadas.length !== 2;
-  b.textContent = capSelecionadas.length === 2 ? '⇄ Comparar as 2 selecionadas' : `⇄ Comparar selecionadas (${capSelecionadas.length}/2)`;
+  if (b) {
+    b.disabled = n !== 2;
+    b.textContent = n === 2 ? '⇄ Comparar as 2 selecionadas' : `⇄ Comparar selecionadas (${n}/2)`;
+  }
+  const x = $('#capExcluirSel');
+  if (x) { x.disabled = n === 0; x.textContent = n ? `🗑 Excluir ${n} selecionada(s)` : '🗑 Excluir selecionadas'; }
+}
+
+async function excluirCapturasSelecionadas() {
+  const ids = capSelecionadas.slice();
+  if (!ids.length) return;
+  const nomes = ids.map((id) => (capLista.find((c) => c.id === id) || {}).rotulo).filter(Boolean);
+  if (!confirm(`Excluir ${ids.length} captura(s)?\n• ${nomes.slice(0, 8).join('\n• ')}${nomes.length > 8 ? '\n• …' : ''}`)) return;
+  const b = $('#capExcluirSel'); if (b) { b.disabled = true; b.textContent = 'Excluindo…'; }
+  let falhas = 0;
+  for (const id of ids) {
+    try { await api(`/api/capturas/${id}`, { method: 'DELETE' }); }
+    catch { falhas += 1; }
+  }
+  capSelecionadas = [];
+  $('#capDiff').hidden = true; $('#capVer').hidden = true;
+  await loadCapturas();
+  toast(falhas ? `${ids.length - falhas} excluída(s); ${falhas} falharam.` : `${ids.length} captura(s) excluída(s).`, falhas ? 'aviso' : 'ok');
 }
 
 async function verCaptura(id) {
@@ -7805,6 +7826,7 @@ function initCapturas() {
   const q = $('#capBusca'); if (q) q.addEventListener('input', renderCapturas);
   const f = $('#capHostFiltro'); if (f) f.addEventListener('change', renderCapturas);
   const cmp = $('#capComparar'); if (cmp) cmp.addEventListener('click', compararCapturas);
+  const exs = $('#capExcluirSel'); if (exs) exs.addEventListener('click', excluirCapturasSelecionadas);
   const so = $('#capSoDiff'); if (so) so.addEventListener('change', renderDiff);
   const fc = $('#capDiffFechar'); if (fc) fc.addEventListener('click', () => { $('#capDiff').hidden = true; });
   const cc = $('#capDiffCopiar'); if (cc) cc.addEventListener('click', () => { copiarParaClipboard(diffComoTexto()); toast('Diff copiado.'); });
