@@ -1929,3 +1929,32 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .senha-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 16px; }
 .senha-checks label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
 .senha-checks input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+/* ---------- Capturas de saída (evidência antes/depois) ---------- */
+.cap-lista { display: flex; flex-direction: column; gap: 18px; }
+.cap-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); margin-bottom: 6px; }
+.cap-item.sel { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); box-shadow: inset 3px 0 0 var(--accent); }
+.cap-item input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.cap-info { flex: 1; min-width: 0; }
+.cap-rotulo { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
+.cap-meta { font-size: 12px; color: var(--muted); }
+.cap-acoes { display: flex; gap: 6px; flex: none; flex-wrap: wrap; }
+.cap-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.cap-toggle input { accent-color: var(--accent); }
+.cap-resumo { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 13px; }
+.cap-stat { font-family: var(--mono); font-size: 12.5px; padding: 2px 8px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); }
+.cap-stat-menos { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
+.cap-stat-mais { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); }
+/* o diff: ilha sempre escura, como os consoles */
+.cap-diff {
+  --bg: #0a0d12; --panel2: #16202a; --border: #26333d; --text: #e6edf3; --muted: #9aa7b0;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5; overflow: auto; max-height: 70vh; padding: 6px 0;
+}
+.dl { display: flex; gap: 10px; padding: 0 10px; white-space: pre-wrap; word-break: break-word; }
+.dl-sinal { flex: 0 0 12px; text-align: center; user-select: none; opacity: .8; }
+.dl-igual { color: var(--muted); }
+.dl-menos { background: color-mix(in srgb, #f85149 18%, transparent); color: #ffb4ae; }
+.dl-mais { background: color-mix(in srgb, #3fb950 18%, transparent); color: #b6f2c0; }
+.dl-pulo { color: var(--muted); font-style: italic; padding: 4px 10px; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); margin: 4px 0; }
+.cap-texto { max-height: 70vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }

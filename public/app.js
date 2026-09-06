@@ -193,6 +193,7 @@ function initTabs() {
     if (btn.dataset.tab === 'terminal') onTerminalTabShown();
     if (btn.dataset.tab === 'config') loadConfigTab();
     if (btn.dataset.tab === 'history') loadHistory();
+    if (btn.dataset.tab === 'capturas') loadCapturas();
     if (btn.dataset.tab === 'files') onFilesTabShown();
     if (btn.dataset.tab === 'tools') onToolsTabShown();
   }));
@@ -6325,6 +6326,9 @@ function updateTermLayout() {
   // o botão de favoritos insere comando no terminal: some na área de trabalho
   const fav = document.querySelector('.fav-wrap');
   if (fav) fav.hidden = desk;
+  // capturar saída só faz sentido com terminal — mesma regra dos Favoritos
+  const cap = $('#capBtn');
+  if (cap) cap.hidden = desk;
   const grid = document.querySelector('.term-grid');
   const pane = document.querySelector('.ai-pane');
   const sidebar = document.querySelector('.host-sidebar');
@@ -7551,6 +7555,267 @@ function montarGeradorSenha() {
   gerar(); // já abre com uma senha pronta, respeitando as prefs
 }
 
+// ---------- Capturas de saída (evidência antes/depois) ----------
+//
+// O histórico guarda o COMANDO; a captura guarda a RESPOSTA. O gesto é o que o
+// analista já faz de cabeça: foto da tela antes da janela, foto depois, e
+// compara. Num terminal interativo (roteador, switch) não há fronteira
+// confiável entre comandos, então a captura é manual e rotulada — honesta.
+
+// Texto do terminal inteiro (tela + scrollback), linha a linha, sem o rabo de
+// linhas vazias. `termSnapshot()` pega só as últimas 45 (é para a IA); aqui é tudo.
+function textoDoTerminal(s) {
+  const buf = s.term.buffer.active;
+  const lines = [];
+  for (let i = 0; i < buf.length; i++) {
+    const l = buf.getLine(i);
+    if (!l) continue;
+    // se a PRÓXIMA fileira é continuação desta, os espaços do fim são conteúdo
+    // (a quebra pode cair num espaço) — não aparar.
+    const prox = buf.getLine(i + 1);
+    const continua = !!(prox && prox.isWrapped);
+    // Uma linha LÓGICA longa vira várias fileiras no xterm (quebra por largura).
+    // A fileira de continuação vem marcada com isWrapped: junta na anterior —
+    // senão o diff compararia fragmentos ("12" vs "09") em vez da linha inteira
+    // ("10.0.0.1  65001  812" vs "...809"), e o resultado dependeria da largura
+    // da janela na hora da captura.
+    const txt = l.translateToString(!continua);
+    if (l.isWrapped && lines.length) lines[lines.length - 1] += txt;
+    else lines.push(txt);
+  }
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
+// Espelha lib/capturas.js MAX.texto: cortar AQUI evita o 413 do express.json
+// (1 MB) num scrollback largo — o servidor nunca chegaria a truncar.
+const CAP_MAX_TEXTO = 100 * 1024;
+function capturarSaida() {
+  const s = activeSession();
+  if (!s || semTerminal(s) || !s.term) { toast('Abra um terminal para capturar a saída.', 'erro'); return; }
+  const selecao = (s.term.getSelection() || '').trimEnd();
+  const tudo = textoDoTerminal(s);
+  if (!tudo.trim() && !selecao.trim()) { toast('O terminal está vazio — nada para capturar.', 'erro'); return; }
+  const agora = new Date();
+  const p = (x) => String(x).padStart(2, '0');
+  const sugestao = `${s.hostName || 'Terminal'} — ${p(agora.getDate())}/${p(agora.getMonth() + 1)} ${p(agora.getHours())}:${p(agora.getMinutes())}`;
+  const nLinhas = (t) => (t ? t.split('\n').length : 0);
+  openModal('📸 Capturar saída do terminal', `
+    <p class="hint">Guarda o texto do terminal com um rótulo, como evidência. Depois, em <strong>Capturas</strong>, compare duas (antes/depois da janela).</p>
+    <label>Rótulo <input id="f_capRotulo" required placeholder="ex.: BGP antes da janela"></label>
+    <label>O que capturar
+      <select id="f_capFonte">
+        ${selecao ? `<option value="selecao">Só o texto selecionado (${nLinhas(selecao)} linha(s))</option>` : ''}
+        <option value="tudo" ${selecao ? '' : 'selected'}>Tela inteira + histórico (${nLinhas(tudo)} linha(s))</option>
+      </select>
+    </label>
+    <p class="hint">Dica: selecione no terminal só a saída do comando antes de clicar em Capturar — a comparação fica mais limpa.</p>
+  `);
+  $('#f_capRotulo').value = sugestao;
+  $('#modalForm button[type=submit]').textContent = 'Capturar';
+  setTimeout(() => { try { const i = $('#f_capRotulo'); i.focus(); i.select(); } catch {} }, 30);
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const rotulo = $('#f_capRotulo').value.trim();
+    const fonte = $('#f_capFonte').value;
+    let texto = fonte === 'selecao' ? selecao : tudo;
+    let cortada = false;
+    if (texto.length > CAP_MAX_TEXTO) { texto = texto.slice(0, CAP_MAX_TEXTO); cortada = true; }
+    const btn = $('#modalForm button[type=submit]'); btn.disabled = true;
+    try {
+      const r = await api('/api/capturas', { method: 'POST', body: { hostId: s.hostId || null, hostName: s.hostName || '', rotulo, texto } });
+      closeModal();
+      const onde = MODO_SOLO ? 'Veja em Capturas, na janela principal.' : 'Veja na aba Capturas.';
+      const aviso = (cortada || r.truncada) ? ' Aviso: saída grande — cortada no teto de 100 KB; selecione só o trecho que importa.' : '';
+      toast(`Capturado: "${r.rotulo}" (${r.linhas} linhas). ${onde}${aviso}`, aviso ? 'aviso' : 'ok');
+      if ($('#tab-capturas') && $('#tab-capturas').classList.contains('active')) loadCapturas();
+    } catch (e) { toast(e.message, 'erro'); btn.disabled = false; }
+  };
+}
+
+// ---- aba Capturas ----
+let capLista = [];
+let capSelecionadas = [];   // ids, no máximo 2 (a 3ª marcada derruba a mais antiga)
+let capLigado = false;
+
+async function loadCapturas() {
+  try {
+    const r = await api('/api/capturas');
+    capLista = r.capturas || [];
+  } catch (e) { toast(e.message, 'erro'); capLista = []; }
+  // filtro de host
+  const sel = $('#capHostFiltro');
+  if (sel) {
+    const atual = sel.value;
+    const hosts = [...new Map(capLista.map((c) => [c.hostName || '(sem host)', 1])).keys()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    sel.innerHTML = '<option value="">Todos os hosts</option>' + hosts.map((h) => `<option value="${h.replace(/"/g, '&quot;')}"></option>`).join('');
+    // textContent seguro para os rótulos
+    [...sel.options].slice(1).forEach((o, i) => { o.textContent = hosts[i]; });
+    if ([...sel.options].some((o) => o.value === atual)) sel.value = atual;
+  }
+  capSelecionadas = capSelecionadas.filter((id) => capLista.some((c) => c.id === id));
+  renderCapturas();
+}
+
+function fmtDataCap(ms) {
+  const d = new Date(ms); const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function renderCapturas() {
+  const wrap = $('#capLista');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const q = ($('#capBusca') && $('#capBusca').value.toLowerCase().trim()) || '';
+  const fh = ($('#capHostFiltro') && $('#capHostFiltro').value) || '';
+  const lista = capLista.filter((c) => (!fh || (c.hostName || '(sem host)') === fh) && (!q || c.rotulo.toLowerCase().includes(q)));
+  if (!capLista.length) { el(wrap, 'p', 'empty', 'Nenhuma captura ainda. No terminal, clique em 📸 Capturar.'); atualizarBotaoComparar(); return; }
+  if (!lista.length) { el(wrap, 'p', 'empty', 'Nada encontrado com esse filtro.'); atualizarBotaoComparar(); return; }
+  // agrupado por host, mais recente primeiro dentro do grupo
+  const porHost = new Map();
+  for (const c of lista) { const k = c.hostName || '(sem host)'; if (!porHost.has(k)) porHost.set(k, []); porHost.get(k).push(c); }
+  for (const [host, itens] of [...porHost.entries()].sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'))) {
+    const grp = el(wrap, 'div', 'host-group');
+    const head = el(grp, 'div', 'host-group-header');
+    el(head, 'span', 'gname', host);
+    el(head, 'span', 'count', `${itens.length} captura(s)`);
+    for (const c of itens) {
+      const row = el(grp, 'div', 'cap-item' + (capSelecionadas.includes(c.id) ? ' sel' : ''));
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = capSelecionadas.includes(c.id);
+      cb.title = 'Marcar para comparar (duas)';
+      cb.addEventListener('change', () => { alternarSelecaoCaptura(c.id, cb.checked); });
+      row.appendChild(cb);
+      const info = el(row, 'div', 'cap-info');
+      const tit = el(info, 'div', 'cap-rotulo'); tit.textContent = c.rotulo;
+      if (c.truncada) el(tit, 'span', 'tag tag-warn', 'cortada no teto');
+      el(info, 'div', 'cap-meta', `${fmtDataCap(c.criadoEm)} · ${c.linhas} linha(s) · ${(c.tamanho / 1024).toFixed(1)} KB`);
+      const acts = el(row, 'div', 'cap-acoes');
+      const bVer = el(acts, 'button', 'btn small', 'Ver'); bVer.type = 'button';
+      bVer.addEventListener('click', () => verCaptura(c.id));
+      const bRen = el(acts, 'button', 'btn small', '✎'); bRen.type = 'button'; bRen.title = 'Renomear';
+      // modal, não prompt(): o Electron lança "prompt() is not supported"
+      bRen.addEventListener('click', () => {
+        openModal('Renomear captura', '<label>Rótulo <input id="f_capNovoRotulo" required maxlength="120"></label>');
+        $('#f_capNovoRotulo').value = c.rotulo;
+        setTimeout(() => { try { const i = $('#f_capNovoRotulo'); i.focus(); i.select(); } catch {} }, 30);
+        $('#modalForm').onsubmit = async (ev) => {
+          ev.preventDefault();
+          const novo = $('#f_capNovoRotulo').value.trim();
+          if (!novo || novo === c.rotulo) { closeModal(); return; }
+          try { await api(`/api/capturas/${c.id}`, { method: 'PUT', body: { rotulo: novo } }); closeModal(); loadCapturas(); }
+          catch (e) { toast(e.message, 'erro'); }
+        };
+      });
+      const bTxt = el(acts, 'button', 'btn small', '⬇ .txt'); bTxt.type = 'button';
+      bTxt.addEventListener('click', async () => {
+        try { const full = await api(`/api/capturas/${c.id}`); exportarScriptTxt(`captura-${full.hostName || 'terminal'}-${full.rotulo}`, full.texto); }
+        catch (e) { toast(e.message, 'erro'); }
+      });
+      const bDel = el(acts, 'button', 'btn small danger', 'Excluir'); bDel.type = 'button';
+      bDel.addEventListener('click', async () => {
+        if (!confirm(`Excluir a captura "${c.rotulo}"?`)) return;
+        try { await api(`/api/capturas/${c.id}`, { method: 'DELETE' }); capSelecionadas = capSelecionadas.filter((x) => x !== c.id); loadCapturas(); }
+        catch (e) { toast(e.message, 'erro'); }
+      });
+    }
+  }
+  atualizarBotaoComparar();
+}
+
+function alternarSelecaoCaptura(id, marcado) {
+  capSelecionadas = capSelecionadas.filter((x) => x !== id);
+  if (marcado) { capSelecionadas.push(id); if (capSelecionadas.length > 2) capSelecionadas.shift(); }
+  renderCapturas();
+}
+
+function atualizarBotaoComparar() {
+  const b = $('#capComparar');
+  if (!b) return;
+  b.disabled = capSelecionadas.length !== 2;
+  b.textContent = capSelecionadas.length === 2 ? '⇄ Comparar as 2 selecionadas' : `⇄ Comparar selecionadas (${capSelecionadas.length}/2)`;
+}
+
+async function verCaptura(id) {
+  try {
+    const c = await api(`/api/capturas/${id}`);
+    $('#capVerTitulo').textContent = `${c.rotulo} — ${c.hostName || 'terminal'} · ${fmtDataCap(c.criadoEm)}`;
+    $('#capVerTexto').textContent = c.texto;
+    $('#capVer').hidden = false;
+    $('#capDiff').hidden = true;
+    $('#capVerCopiar').onclick = () => { copiarParaClipboard(c.texto); toast('Captura copiada.'); };
+    $('#capVerExportar').onclick = () => exportarScriptTxt(`captura-${c.hostName || 'terminal'}-${c.rotulo}`, c.texto);
+    $('#capVer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+let capDiffAtual = null; // { ops, a, b }
+async function compararCapturas() {
+  if (capSelecionadas.length !== 2) return;
+  try {
+    const [x, y] = await Promise.all(capSelecionadas.map((id) => api(`/api/capturas/${id}`)));
+    // A = a mais antiga (antes), B = a mais nova (depois)
+    const [a, b] = x.criadoEm <= y.criadoEm ? [x, y] : [y, x];
+    const d = window.diffLib.diffLinhas(a.texto, b.texto);
+    capDiffAtual = { ops: d.ops, a, b, degradado: d.degradado, resumo: d.resumo };
+    $('#capDiffTitulo').textContent = `${a.rotulo}  →  ${b.rotulo}`;
+    const res = $('#capDiffResumo'); res.innerHTML = '';
+    if ((a.hostName || '') !== (b.hostName || '')) el(res, 'span', 'tag tag-warn', `hosts diferentes: ${a.hostName || '?'} × ${b.hostName || '?'}`);
+    el(res, 'span', 'cap-stat cap-stat-menos', `− ${d.resumo.removidas} removida(s)`);
+    el(res, 'span', 'cap-stat cap-stat-mais', `+ ${d.resumo.adicionadas} adicionada(s)`);
+    el(res, 'span', 'cap-stat', `= ${d.resumo.iguais} igual(is)`);
+    el(res, 'span', 'cap-stat muted', `${fmtDataCap(a.criadoEm)} → ${fmtDataCap(b.criadoEm)}`);
+    if (!d.resumo.mudou) el(res, 'span', 'tag', '✓ sem diferenças');
+    if (d.degradado) el(res, 'span', 'tag tag-warn', 'capturas muito grandes: comparação simplificada (bloco trocado inteiro)');
+    renderDiff();
+    $('#capDiff').hidden = false;
+    $('#capVer').hidden = true;
+    $('#capDiff').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+function renderDiff() {
+  const corpo = $('#capDiffCorpo');
+  if (!corpo || !capDiffAtual) return;
+  corpo.innerHTML = '';
+  const soDiff = $('#capSoDiff') && $('#capSoDiff').checked;
+  const ops = soDiff ? window.diffLib.compactar(capDiffAtual.ops, 3) : capDiffAtual.ops;
+  const frag = document.createDocumentFragment();
+  for (const o of ops) {
+    const row = document.createElement('div');
+    if (o.tipo === '…') { row.className = 'dl dl-pulo'; row.textContent = `⋯ ${o.n} linha(s) igual(is)`; frag.appendChild(row); continue; }
+    row.className = 'dl ' + (o.tipo === '-' ? 'dl-menos' : o.tipo === '+' ? 'dl-mais' : 'dl-igual');
+    const sinal = document.createElement('span'); sinal.className = 'dl-sinal'; sinal.textContent = o.tipo === '=' ? ' ' : o.tipo;
+    const txt = document.createElement('span'); txt.className = 'dl-txt'; txt.textContent = o.texto === '' ? ' ' : o.texto;
+    row.appendChild(sinal); row.appendChild(txt);
+    frag.appendChild(row);
+  }
+  corpo.appendChild(frag);
+}
+
+function diffComoTexto() {
+  if (!capDiffAtual) return '';
+  const { a, b, ops, resumo } = capDiffAtual;
+  const cab = [`--- ${a.rotulo} (${a.hostName || 'terminal'}, ${fmtDataCap(a.criadoEm)})`, `+++ ${b.rotulo} (${b.hostName || 'terminal'}, ${fmtDataCap(b.criadoEm)})`,
+    `# −${resumo.removidas} +${resumo.adicionadas} =${resumo.iguais}`];
+  return cab.concat(ops.map((o) => (o.tipo === '=' ? ' ' : o.tipo) + ' ' + o.texto)).join('\n');
+}
+
+function initCapturas() {
+  if (capLigado) return; capLigado = true;
+  const capBtn = $('#capBtn'); if (capBtn) capBtn.addEventListener('click', capturarSaida);
+  const q = $('#capBusca'); if (q) q.addEventListener('input', renderCapturas);
+  const f = $('#capHostFiltro'); if (f) f.addEventListener('change', renderCapturas);
+  const cmp = $('#capComparar'); if (cmp) cmp.addEventListener('click', compararCapturas);
+  const so = $('#capSoDiff'); if (so) so.addEventListener('change', renderDiff);
+  const fc = $('#capDiffFechar'); if (fc) fc.addEventListener('click', () => { $('#capDiff').hidden = true; });
+  const cc = $('#capDiffCopiar'); if (cc) cc.addEventListener('click', () => { copiarParaClipboard(diffComoTexto()); toast('Diff copiado.'); });
+  const vf = $('#capVerFechar'); if (vf) vf.addEventListener('click', () => { $('#capVer').hidden = true; });
+  // captura feita numa janela SOLTA: quando esta janela volta ao foco com a aba
+  // aberta, recarrega — senão o "depois" só aparecia trocando de aba.
+  const recarregarSeAberta = () => { if (!document.hidden && $('#tab-capturas') && $('#tab-capturas').classList.contains('active')) loadCapturas(); };
+  document.addEventListener('visibilitychange', recarregarSeAberta);
+  window.addEventListener('focus', recarregarSeAberta);
+}
+
 // ---------- backup automático ----------
 let bkPodeEscolher = false;
 
@@ -7835,6 +8100,7 @@ function init() {
   $('#btnNewHost').addEventListener('click', () => openHostModal(null));
   $('#btnNewPlaybook').addEventListener('click', () => openPlaybookModal(null));
   $('#btnPlaybookAi').addEventListener('click', openPlaybookAiModal);
+  initCapturas();
   $('#btnNewScript').addEventListener('click', novoScript);
   $('#btnImportScript').addEventListener('click', importarScriptArquivo);
   $('#btnScriptAi').addEventListener('click', openScriptAiModal);

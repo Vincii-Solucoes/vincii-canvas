@@ -19,6 +19,7 @@ const { wss: termWss } = require('./lib/terminal');
 const { wss: localWss } = require('./lib/localterm');
 const ai = require('./lib/ai');
 const scripts = require('./lib/scripts');
+const capturas = require('./lib/capturas');
 const agent = require('./lib/agent');
 const history = require('./lib/history');
 const quickhosts = require('./lib/quickhosts');
@@ -1802,6 +1803,63 @@ app.delete('/api/scripts/:id', (req, res) => {
   const idx = arr.findIndex((s) => s.id === req.params.id);
   if (idx < 0) return fail(res, 404, 'Script não encontrado.');
   arr.splice(idx, 1);
+  store.save();
+  res.json({ ok: true });
+});
+
+// ---------- capturas de saída do terminal (evidência antes/depois) ----------
+// A lista NÃO viaja no /api/state (o texto pode ter centenas de KB): metadados
+// numa rota própria e o texto inteiro só sob demanda, por id.
+function garantirCapturas(d) { if (!Array.isArray(d.capturas)) d.capturas = []; return d.capturas; }
+function metaCaptura(c) {
+  return { id: c.id, hostId: c.hostId, hostName: c.hostName, rotulo: c.rotulo,
+    criadoEm: c.criadoEm, tamanho: (c.texto || '').length,
+    // contado na criação: recontar a cada listagem custaria um split de cada texto
+    linhas: typeof c.linhas === 'number' ? c.linhas : (c.texto || '').split('\n').length,
+    truncada: !!c.truncada };
+}
+
+app.get('/api/capturas', (req, res) => {
+  const arr = garantirCapturas(store.get());
+  res.json({ capturas: arr.map(metaCaptura).sort((a, b) => b.criadoEm - a.criadoEm), limite: capturas.MAX.capturas });
+});
+
+app.get('/api/capturas/:id', (req, res) => {
+  const c = garantirCapturas(store.get()).find((x) => x.id === req.params.id);
+  if (!c) return fail(res, 404, 'Captura não encontrada.');
+  res.json(c);
+});
+
+app.post('/api/capturas', (req, res) => {
+  const v = capturas.normalizar(req.body);
+  if (v.erro) return fail(res, 400, v.erro);
+  const d = store.get();
+  const arr = garantirCapturas(d);
+  if (arr.length >= capturas.MAX.capturas) {
+    return fail(res, 400, `Limite de ${capturas.MAX.capturas} capturas. Apague as antigas em Capturas.`);
+  }
+  const c = { id: crypto.randomUUID(), ...v, linhas: v.texto.split('\n').length, criadoEm: Date.now() };
+  arr.push(c);
+  store.save();
+  res.json(metaCaptura(c));
+});
+
+app.put('/api/capturas/:id', (req, res) => {
+  const c = garantirCapturas(store.get()).find((x) => x.id === req.params.id);
+  if (!c) return fail(res, 404, 'Captura não encontrada.');
+  const rotulo = String((req.body || {}).rotulo || '').trim();
+  if (!rotulo) return fail(res, 400, 'Informe o rótulo.');
+  if (rotulo.length > capturas.MAX.rotulo) return fail(res, 400, 'Rótulo longo demais.');
+  c.rotulo = rotulo;
+  store.save();
+  res.json(metaCaptura(c));
+});
+
+app.delete('/api/capturas/:id', (req, res) => {
+  const arr = garantirCapturas(store.get());
+  const i = arr.findIndex((x) => x.id === req.params.id);
+  if (i < 0) return fail(res, 404, 'Captura não encontrada.');
+  arr.splice(i, 1);
   store.save();
   res.json({ ok: true });
 });

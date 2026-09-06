@@ -32,6 +32,7 @@ try {
 <script src="host-icons.js" defer></script>
 <script src="subnet.js" defer></script>
 <script src="senha.js" defer></script>
+<script src="diff.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
 </head>
@@ -66,6 +67,7 @@ try {
       <button data-tab="files">Arquivos</button>
       <button data-tab="favorites">Favoritos</button>
       <button data-tab="history">Histórico</button>
+      <button data-tab="capturas">Capturas</button>
       <button data-tab="vars">Variáveis</button>
       <button data-tab="tools">Ferramentas</button>
       <button data-tab="config">Configurações</button>
@@ -162,6 +164,7 @@ try {
           <!-- só aparece em janela solta, no lugar das abas -->
           <div id="soloTitulo" class="solo-titulo"></div>
           <button id="toggleGreet" class="panel-toggle" type="button" title="Mostrar/ocultar saudação">🖖</button>
+          <button id="capBtn" class="panel-toggle" type="button" title="Capturar a saída deste terminal (evidência antes/depois)">📸 Capturar</button>
           <div class="fav-wrap">
             <button id="favBtn" class="panel-toggle" type="button" title="Comandos favoritos">★ Favoritos</button>
             <div id="favMenu" class="fav-menu" hidden></div>
@@ -393,6 +396,44 @@ try {
         <button id="btnHistRelatorio" class="btn" disabled>⤓ Relatório (<span id="histRelCount">0</span>)</button>
       </div>
       <div id="historyList" class="hist-list"></div>
+    </div>
+  </section>
+
+  <section id="tab-capturas" class="tab-panel">
+    <div class="card">
+      <div class="card-head">
+        <h2>Capturas de saída</h2>
+        <div class="btn-row">
+          <select id="capHostFiltro" class="hist-hostfilter"><option value="">Todos os hosts</option></select>
+          <input id="capBusca" type="text" class="hist-search" placeholder="Buscar rótulo…" autocomplete="off">
+          <button id="capComparar" class="btn primary" disabled>⇄ Comparar selecionadas</button>
+        </div>
+      </div>
+      <p class="hint">A evidência que o histórico não guarda: no terminal, clique em <strong>📸 Capturar</strong> antes da janela de manutenção e de novo depois. Marque <strong>duas</strong> capturas do mesmo host e compare — linhas removidas em vermelho, adicionadas em verde. As capturas ficam no data.json e entram no backup automático.</p>
+      <div id="capLista" class="cap-lista"></div>
+    </div>
+    <div id="capDiff" class="card" hidden>
+      <div class="card-head">
+        <h2 id="capDiffTitulo">Comparação</h2>
+        <div class="btn-row">
+          <label class="cap-toggle"><input id="capSoDiff" type="checkbox" checked> só diferenças</label>
+          <button id="capDiffCopiar" class="btn small">📋 Copiar diff</button>
+          <button id="capDiffFechar" class="btn small">✕ Fechar</button>
+        </div>
+      </div>
+      <div id="capDiffResumo" class="cap-resumo"></div>
+      <div id="capDiffCorpo" class="cap-diff"></div>
+    </div>
+    <div id="capVer" class="card" hidden>
+      <div class="card-head">
+        <h2 id="capVerTitulo">Captura</h2>
+        <div class="btn-row">
+          <button id="capVerCopiar" class="btn small">📋 Copiar</button>
+          <button id="capVerExportar" class="btn small">⬇ Exportar .txt</button>
+          <button id="capVerFechar" class="btn small">✕ Fechar</button>
+        </div>
+      </div>
+      <pre id="capVerTexto" class="console cap-texto"></pre>
     </div>
   </section>
 
