@@ -1007,8 +1007,9 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .host-group-header .gname { font-weight: 700; font-size: 14px; }
 .host-group-header .count { color: var(--muted); font-size: 12px; }
-/* Subgrupo: recuado e com um fio à esquerda — é o que diz "isto está DENTRO do
-   grupo acima" sem repetir o nome do grupo em cada seção. */
+/* Pasta: recuada e com um fio à esquerda — é o que diz "isto está DENTRO do
+   nível acima" sem repetir o nome em cada seção. Pastas aninham: cada nível
+   herda o recuo do pai e soma o seu, como numa listagem de diretório. */
 .host-subgroup {
   margin: 12px 0 0 10px;
   padding-left: 14px;
@@ -1017,6 +1018,30 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .host-subgroup-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .host-subgroup-header .sgname { font-weight: 600; font-size: 13px; }
 .host-subgroup-header .count { color: var(--muted); font-size: 11.5px; }
+/* Recolher: o cabeçalho do grupo e da pasta é clicável; a seta gira e o corpo
+   some. O estado fica nas preferências, então sobrevive ao reinício. */
+.host-group-header, .host-subgroup-header { cursor: pointer; user-select: none; }
+.host-group-header .seta, .host-subgroup-header .seta {
+  display: inline-block; width: 1em; color: var(--muted); font-size: 12px;
+  transition: transform .15s ease;
+}
+.host-group.fechada > .host-group-header .seta,
+.host-subgroup.fechada > .host-subgroup-header .seta { transform: rotate(-90deg); }
+.host-group.fechada > .host-group-corpo,
+.host-subgroup.fechada > .host-subgroup-corpo { display: none; }
+.host-group.fechada > .host-group-header { margin-bottom: 0; }
+.host-subgroup.fechada > .host-subgroup-header { margin-bottom: 0; }
+/* O botão de renomear/mover só aparece ao passar o mouse no cabeçalho da pasta,
+   para a lista não virar uma fileira de lápis. */
+.host-subgroup-header .pasta-mover {
+  margin-left: auto; padding: 0 6px; line-height: 1.5; opacity: 0;
+  transition: opacity .12s ease;
+}
+.host-subgroup-header:hover .pasta-mover,
+.host-subgroup-header .pasta-mover:focus-visible { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .host-group-header .seta, .host-subgroup-header .seta, .host-subgroup-header .pasta-mover { transition: none; }
+}
 .host-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
 
 /* ---------- Aba Scripts: caderno (lista + papel) ---------- */

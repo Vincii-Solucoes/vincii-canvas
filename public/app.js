@@ -15,13 +15,14 @@ let currentRun = null;
 const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
-  abrirLocalSozinho: null, senha: null,
+  abrirLocalSozinho: null, senha: null, pastasFechadas: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
   theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
   recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
+  pastasFechadas: 'vc-pastas-fechadas',
 };
 
 function lsGet(key) {
@@ -313,22 +314,145 @@ function renderHosts() {
   }
   for (const g of hostsAgrupados()) {
     const grp = el(wrap, 'div', 'host-group');
+    const chaveGrupo = chaveDePasta(g.grupo, '');
+    if (pastaFechada(chaveGrupo)) grp.classList.add('fechada');
     const head = el(grp, 'div', 'host-group-header');
+    tornarCabecalhoRecolhivel(head, pastaFechada(chaveGrupo));
+    head.addEventListener('click', () => alternarPasta(grp, chaveGrupo));
+    el(head, 'span', 'seta', '▾');
     el(head, 'span', 'gname', g.nome);
     el(head, 'span', 'count', `${g.total} host(s)`);
+    const corpo = el(grp, 'div', 'host-group-corpo');
     if (g.diretos.length) {
-      const cards = el(grp, 'div', 'host-cards');
+      const cards = el(corpo, 'div', 'host-cards');
       for (const h of g.diretos) cards.appendChild(hostCard(h));
     }
-    for (const [sub, hosts] of g.subgrupos) {
-      const sg = el(grp, 'div', 'host-subgroup');
-      const shead = el(sg, 'div', 'host-subgroup-header');
-      el(shead, 'span', 'sgname', sub);
-      el(shead, 'span', 'count', `${hosts.length} host(s)`);
-      const cards = el(sg, 'div', 'host-cards');
-      for (const h of hosts) cards.appendChild(hostCard(h));
-    }
+    // `g.grupo` é a chave crua ('' = o balde dos sem grupo, que não tem pasta).
+    for (const p of g.pastas) renderPastaDeHosts(corpo, p, g.grupo);
   }
+}
+
+// Uma pasta da árvore, com as filhas dentro — recursiva, é o que dá os
+// "infinitos subgrupos": cada nível recua e ganha o fio à esquerda do CSS.
+function renderPastaDeHosts(pai, no, grupo) {
+  const sg = el(pai, 'div', 'host-subgroup');
+  const chave = chaveDePasta(grupo, no.caminho);
+  if (pastaFechada(chave)) sg.classList.add('fechada');
+  const shead = el(sg, 'div', 'host-subgroup-header');
+  tornarCabecalhoRecolhivel(shead, pastaFechada(chave));
+  shead.addEventListener('click', () => alternarPasta(sg, chave));
+  el(shead, 'span', 'seta', '▾');
+  el(shead, 'span', 'sgname', no.nome);
+  el(shead, 'span', 'count', `${no.total} host(s)`);
+  shead.title = rotuloDoCaminho(no.caminho);
+  if (grupo) {
+    const mover = el(shead, 'button', 'btn small pasta-mover', '✎');
+    mover.type = 'button';
+    mover.title = 'Renomear ou mover esta pasta (com tudo que está dentro)';
+    mover.setAttribute('aria-label', `Renomear ou mover a pasta ${no.nome}`);
+    mover.addEventListener('click', (ev) => { ev.stopPropagation(); abrirMoverPasta('hosts', grupo, no.caminho); });
+  }
+  const corpo = el(sg, 'div', 'host-subgroup-corpo');
+  if (no.diretos.length) {
+    const cards = el(corpo, 'div', 'host-cards');
+    for (const h of no.diretos) cards.appendChild(hostCard(h));
+  }
+  for (const filha of no.pastas) renderPastaDeHosts(corpo, filha, grupo);
+}
+
+// Cabeçalho recolhível alcançável por teclado. A guarda `ev.target !== cab` é
+// essencial: o ✎ (botão) fica DENTRO do cabeçalho da pasta e seu Enter/Espaço
+// sobe por bolha — sem ela, o preventDefault engoliria o clique do lápis.
+function tornarCabecalhoRecolhivel(cab, fechada) {
+  cab.tabIndex = 0;
+  cab.setAttribute('role', 'button');
+  cab.setAttribute('aria-expanded', String(!fechada));
+  cab.addEventListener('keydown', (ev) => {
+    if (ev.target !== cab) return;
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); cab.click(); }
+  });
+}
+
+// ---------- pastas recolhidas ----------
+//
+// A chave é "Grupo|Rede/Core" — grupo e caminho, porque "Rede" do cliente A e
+// "Rede" do cliente B são pastas diferentes. Fica nas preferências (data.json)
+// pelo mesmo motivo de todas as outras: a porta muda a cada abertura e o
+// localStorage não sobrevive.
+function chaveDePasta(grupo, caminho) { return `${grupo || ''}|${caminho || ''}`; }
+function pastaFechada(chave) { return prefList('pastasFechadas').includes(chave); }
+function alternarPasta(no, chave) {
+  const lista = prefList('pastasFechadas').filter((k) => k !== chave);
+  const fechou = !no.classList.contains('fechada');
+  if (fechou) lista.push(chave);
+  no.classList.toggle('fechada', fechou);
+  const cab = no.firstElementChild;
+  if (cab) cab.setAttribute('aria-expanded', String(!fechou));
+  prefSet('pastasFechadas', lista.slice(-500));
+}
+
+// Renomear/mover uma pasta inteira — o servidor troca o trecho do caminho em
+// todos os hosts (ou scripts) do grupo que estão nela ou dentro dela.
+function abrirMoverPasta(colecao, grupo, caminho) {
+  // Template ESTÁTICO; nome de pasta e grupo entram por textContent, nunca por
+  // innerHTML — um "&" ou uma aspa no nome não pode virar entidade nem quebrar
+  // o atributo.
+  openModal('Renomear ou mover pasta', `
+    <p class="hint">Tudo que está em <strong id="f_pastaDe"></strong> (grupo <span id="f_pastaGrupo"></span>) vai junto.
+      Use <code>/</code> para níveis — <code>Infra/Rede</code> põe a pasta dentro de <em>Infra</em>. Deixe vazio para tirar da pasta.</p>
+    <label>Novo caminho <input id="f_pastaPara" list="pastaParaList" spellcheck="false" maxlength="200" placeholder="ex.: Rede/Core"><datalist id="pastaParaList"></datalist></label>`);
+  $('#f_pastaDe').textContent = rotuloDoCaminho(caminho);
+  $('#f_pastaGrupo').textContent = String(grupo);
+  const inp = $('#f_pastaPara');
+  inp.value = caminho;
+  const fonte = colecao === 'scripts' ? state.scripts : state.hosts;
+  const existentes = subgruposDe(fonte, grupo);
+  const dl = $('#pastaParaList');
+  for (const s of existentes) { const o = document.createElement('option'); o.value = s; dl.appendChild(o); }
+  setTimeout(() => { try { inp.focus(); inp.select(); } catch {} }, 30);
+  const submit = $('#modalForm button[type=submit]');
+  submit.textContent = 'Mover';
+  $('#modalForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const para = normalizarCaminho(inp.value);
+    if (para === normalizarCaminho(caminho)) { closeModal(); return; }
+    if (pastaDentroDe(para, caminho)) {
+      toast('Uma pasta não pode ir para dentro dela mesma.', 'erro');
+      return;
+    }
+    // Já existe pasta com esse caminho? Mover para cima dela FUNDE as duas, e
+    // não há desfazer em bloco. Pode ser o que a pessoa quer (juntar "rede" e
+    // "Rede"), então pergunta em vez de barrar.
+    if (para && existentes.includes(para) && !confirm(
+      `A pasta "${rotuloDoCaminho(para)}" já existe neste grupo.\n\n`
+      + `Tudo que está em "${rotuloDoCaminho(caminho)}" vai se juntar ao que já está lá, `
+      + 'e não há como separar de novo em bloco. Continuar?')) return;
+    submit.disabled = true;
+    try {
+      const r = await api('/api/pastas/mover', { method: 'POST', body: { colecao, group: grupo, de: caminho, para } });
+      // As pastas recolhidas são lembradas pelo caminho: acompanham a
+      // renomeação, senão o ramo reabre e a chave velha fica de lixo. Só hosts
+      // (scripts não recolhem) e só se algo se moveu de fato. Pasta dissolvida
+      // no grupo (novo === '') perde a chave — virar a chave do grupo recolheria
+      // o grupo inteiro.
+      if (colecao === 'hosts' && r.movidos) {
+        const prefixo = chaveDePasta(grupo, '');
+        const novas = new Set();
+        for (const k of prefList('pastasFechadas')) {
+          if (typeof k !== 'string' || k === prefixo || !k.startsWith(prefixo)) { novas.add(k); continue; }
+          const novo = moverCaminho(k.slice(prefixo.length), caminho, para);
+          if (novo === null) novas.add(k);
+          else if (novo) novas.add(chaveDePasta(grupo, novo));
+        }
+        prefSet('pastasFechadas', [...novas].slice(-500));
+      }
+      closeModal();
+      await loadState();
+      toast(para
+        ? `${r.movidos} item(ns) movido(s) para ${rotuloDoCaminho(para)}.`
+        : `${r.movidos} item(ns) tirado(s) da pasta.`);
+    } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
+  };
 }
 
 function hostCard(h) {
@@ -1065,7 +1189,7 @@ function openHostModal(existing) {
     <div class="grid2">
       <label>Nome <input id="f_name" required placeholder="ex.: web-01 Cliente A"></label>
       <label>Grupo (opcional) <input id="f_group" list="groupList" placeholder="ex.: Produção"><datalist id="groupList"></datalist></label>
-      <label>Subgrupo (opcional) <input id="f_subgroup" list="subgroupList" placeholder="ex.: Web"><datalist id="subgroupList"></datalist></label>
+      <label>Pasta (opcional) <input id="f_subgroup" list="subgroupList" spellcheck="false" maxlength="200" placeholder="ex.: Rede/Core" title="Use / para criar níveis: Rede/Core/BGP"><datalist id="subgroupList"></datalist></label>
       <label>Protocolo
         <select id="f_protocol">
           <option value="ssh">SSH / SFTP (recomendado)</option>
@@ -1167,15 +1291,19 @@ function openHostModal(existing) {
   $('#f_group').value = (existing && existing.group) || '';
   $('#f_subgroup').value = (existing && existing.subgroup) || '';
   $('#groupList').innerHTML = existingGroups().map((g) => `<option value="${g.replace(/"/g, '&quot;')}"></option>`).join('');
-  // Subgrupo depende do grupo: sem grupo o campo trava (mas NÃO apaga — quem
+  // A pasta depende do grupo: sem grupo o campo trava (mas NÃO apaga — quem
   // limpa o grupo para retocar o nome não perde o que já digitou ao lado), e as
-  // sugestões são só os subgrupos que já existem DENTRO do grupo escolhido.
+  // sugestões são só as pastas que já existem DENTRO do grupo escolhido —
+  // com os níveis intermediários, para "Rede" aparecer mesmo que só exista
+  // "Rede/Core".
   const syncSubgrupo = () => {
     const g = $('#f_group').value.trim();
     const inp = $('#f_subgroup');
     inp.disabled = !g;
-    inp.placeholder = g ? 'ex.: Web' : 'preencha o grupo antes';
-    $('#subgroupList').innerHTML = existingSubgroups(g).map((s) => `<option value="${s.replace(/"/g, '&quot;')}"></option>`).join('');
+    inp.placeholder = g ? 'ex.: Rede/Core' : 'preencha o grupo antes';
+    const dl = $('#subgroupList');
+    dl.replaceChildren();
+    for (const s of existingSubgroups(g)) { const o = document.createElement('option'); o.value = s; dl.appendChild(o); }
   };
   $('#f_group').addEventListener('input', syncSubgrupo);
   syncSubgrupo();
@@ -1530,7 +1658,7 @@ function scriptGroups() { return [...new Set(state.scripts.map((s) => (s.group |
 function scriptSubgroups(grupo) {
   const g = (grupo || '').trim();
   if (!g) return [];
-  return [...new Set(state.scripts.filter((s) => (s.group || '').trim() === g).map((s) => (s.subgroup || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return subgruposDe(state.scripts, g); // com os níveis intermediários, como nos hosts
 }
 function scriptCasa(sc, q) {
   if (!q) return true;
@@ -1556,10 +1684,19 @@ function renderScripts() {
     else for (const g of agruparHosts(filtrados)) {
       el(wrap, 'div', 'script-list-group', g.nome);
       for (const sc of g.diretos) wrap.appendChild(scriptListItem(sc));
-      for (const [sub, lista] of g.subgrupos) {
-        el(wrap, 'div', 'script-list-subgroup', sub);
-        for (const sc of lista) wrap.appendChild(scriptListItem(sc));
-      }
+      // Mesma árvore dos hosts: cada nível recua um pouco mais.
+      const desenharPasta = (no, nivel) => {
+        const cab = el(wrap, 'div', 'script-list-subgroup', no.nome);
+        cab.style.marginLeft = `${8 + (nivel - 1) * 12}px`;
+        cab.title = rotuloDoCaminho(no.caminho);
+        for (const sc of no.diretos) {
+          const it = scriptListItem(sc);
+          it.style.marginLeft = `${nivel * 12}px`;
+          wrap.appendChild(it);
+        }
+        for (const filha of no.pastas) desenharPasta(filha, nivel + 1);
+      };
+      for (const p of g.pastas) desenharPasta(p, 1);
     }
   }
   // O item aberto foi excluído em outra janela: fecha o editor para não salvar
@@ -1719,7 +1856,7 @@ function renderScriptEditor() {
     <div class="script-meta">
       <input id="f_scGroup" list="scGroupList" placeholder="Grupo"><datalist id="scGroupList"></datalist>
       <span class="script-meta-sep">›</span>
-      <input id="f_scSubgroup" list="scSubgroupList" placeholder="Subgrupo"><datalist id="scSubgroupList"></datalist>
+      <input id="f_scSubgroup" list="scSubgroupList" spellcheck="false" maxlength="200" placeholder="Pasta (ex.: Rede/Core)" title="Use / para criar níveis"><datalist id="scSubgroupList"></datalist>
       <input id="f_scDesc" class="script-desc" placeholder="Descrição (opcional)">
     </div>
     <textarea id="f_scBody" class="script-papel mono" spellcheck="false" placeholder="#!/usr/bin/env bash&#10;set -euo pipefail&#10;# escreva ou cole seu script aqui…"></textarea>
@@ -1896,7 +2033,7 @@ async function abrirScriptSolo() {
   catch (e) { $('#ssNome').textContent = 'Script não encontrado'; $('#ssLinhas').textContent = ''; toast(e.message, 'erro'); return; }
   document.title = (sc.name || 'Script') + ' — Vincii Canvas';
   $('#ssNome').textContent = sc.name || '(sem nome)';
-  const via = [sc.group, sc.subgroup].filter(Boolean).join(' › ');
+  const via = [sc.group, rotuloDoCaminho(sc.subgroup)].filter(Boolean).join(' › ');
   $('#ssMeta').textContent = via ? '· ' + via : '';
   renderScriptSoloLinhas(sc.body || '');
   $('#ssLinhas').addEventListener('click', onSsLinhasClick); // delegação: 1 listener

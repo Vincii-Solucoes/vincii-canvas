@@ -29,6 +29,10 @@ const rdp = require('./lib/rdp');
 const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./lib/vars');
 const { buildXml } = require('./lib/exportxml');
 const proto = require('./public/protocolos');
+const agrupar = require('./public/agrupar');
+// Teto do caminho da pasta de um host ("Rede/Core/BGP"). O subgrupo antigo
+// cabia em 60; um caminho de vários níveis precisa de mais.
+const MAX_PASTA = 200;
 const weburl = require('./public/weburl');
 const agendaLib = require('./public/agenda');
 const presenca = require('./lib/presenca');
@@ -559,6 +563,11 @@ app.put('/api/prefs', (req, res) => {
   if (Array.isArray(b.recentHosts)) {
     ui.recentHosts = b.recentHosts.filter((x) => typeof x === 'string' && x.length < 80).slice(0, 30);
   }
+  // Pastas recolhidas na lista de hosts — chaves "Grupo|Rede/Core", como a tela
+  // monta. Lista inteira a cada gravação, igual a recentHosts.
+  if (Array.isArray(b.pastasFechadas)) {
+    ui.pastasFechadas = b.pastasFechadas.filter((x) => typeof x === 'string' && x.length < 300).slice(0, 500);
+  }
   for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
     if (typeof b[k] === 'boolean') ui[k] = b[k];
   }
@@ -1038,10 +1047,13 @@ function parseHostBody(body, res) {
   const vars = cleanVars(body.vars, res);
   if (vars === null) return null;
   const group = String(body.group || '').trim().slice(0, 60);
-  // Subgrupo sem grupo não tem onde morar: um host "Sem grupo > Web" leria como
-  // dois lugares ao mesmo tempo. Grupo vazio zera o subgrupo, em vez de recusar
+  // Pasta sem grupo não tem onde morar: um host "Sem grupo > Web" leria como
+  // dois lugares ao mesmo tempo. Grupo vazio zera a pasta, em vez de recusar
   // — apagar o grupo na edição não pode virar erro por causa de um campo filho.
-  const subgroup = group ? String(body.subgroup || '').trim().slice(0, 60) : '';
+  // A pasta é um CAMINHO ("Rede/Core") e passa pela mesma normalização que a
+  // tela usa para desenhar a árvore — senão "Rede / Core" e "Rede/Core"
+  // virariam duas pastas.
+  const subgroup = group ? agrupar.limitarCaminho(body.subgroup, MAX_PASTA) : '';
   const icon = slug(body.icon);
   const color = slug(body.color);
   const rdpDomain = String(body.rdpDomain || '').trim().slice(0, 80);
@@ -1385,7 +1397,7 @@ app.post('/api/import', (req, res) => {
       const protocol = protocolo;
       const ftps = proto.FTPS_MODOS.includes(h.ftps) ? h.ftps : 'auto';
       const group = opcional(h.group, (v) => String(v).trim().slice(0, 60));
-      const subgroup = opcional(h.subgroup, (v) => String(v).trim().slice(0, 60));
+      const subgroup = opcional(h.subgroup, (v) => agrupar.limitarCaminho(v, MAX_PASTA));
       const rdpDomain = opcional(h.rdpDomain, (v) => String(v).trim().slice(0, 80));
     // A URL passa pela MESMA validação do cadastro manual: o arquivo importado
     // é entrada não confiável e a URL vira `src` de um <webview> dentro do app.
@@ -1710,6 +1722,50 @@ app.delete('/api/hosts/:id', (req, res) => {
   store.save();
   if (removido && removido.protocol === 'web') limparParticaoWeb(removido.id);
   res.json({ ok: true });
+});
+
+// Move ou renomeia uma PASTA inteira: todo host (ou script) do grupo que estiver
+// em `de` — ou dentro dela — passa para `para`, preservando o que vinha depois
+// ("Rede" → "Infra/Rede" leva "Rede/Core" junto). `para` vazio tira da pasta:
+// todos sobem para o grupo. Uma gravação só, no lugar de N edições que exigiriam
+// mandar o cadastro inteiro de cada host (com senha) de volta ao servidor.
+app.post('/api/pastas/mover', (req, res) => {
+  const b = req.body || {};
+  // Coleção errada é erro, não "hosts por padrão": um erro de grafia moveria a
+  // pasta da coleção errada em silêncio.
+  if (b.colecao !== 'hosts' && b.colecao !== 'scripts') return fail(res, 400, 'Coleção desconhecida (use hosts ou scripts).');
+  const colecao = b.colecao;
+  const group = String(b.group || '').trim();
+  const de = agrupar.normalizarCaminho(b.de);
+  const para = agrupar.normalizarCaminho(b.para);
+  if (!group) return fail(res, 400, 'Informe o grupo.');
+  if (!de) return fail(res, 400, 'Informe a pasta a mover.');
+  if (de === para) return res.json({ ok: true, movidos: 0 });
+  // A tela já barra; o servidor também, para quem chegar por outro caminho.
+  if (agrupar.dentroDe(para, de)) return fail(res, 400, 'Uma pasta não pode ir para dentro dela mesma.');
+  const d = store.get();
+  const lista = Array.isArray(d[colecao]) ? d[colecao] : [];
+  // Duas passadas: primeiro CONFERE tudo, depois aplica. `store.get()` é o
+  // objeto vivo — recusar no meio do laço deixaria metade movida na memória, e
+  // o próximo save de qualquer rota gravaria isso. O teto vale para o
+  // RESULTADO (`para` + o resto do caminho), não só para `para`: um resultado
+  // acima do teto seria cortado pela próxima edição do item, trocando-o de
+  // pasta em silêncio.
+  const mudancas = [];
+  for (const item of lista) {
+    if (String(item.group || '').trim() !== group) continue;
+    // Espelho do cofre não é editável aqui — quem manda nele é o ERP.
+    if (colecao === 'hosts' && dadosDeCofre.ehEspelhado(item.id)) continue;
+    const novo = agrupar.moverCaminho(item.subgroup, de, para);
+    if (novo === null) continue;
+    if (novo.length > MAX_PASTA) {
+      return fail(res, 400, `O caminho de "${item.name || item.id}" passaria de ${MAX_PASTA} caracteres. Escolha um nome mais curto.`);
+    }
+    mudancas.push([item, novo]);
+  }
+  for (const [item, novo] of mudancas) item.subgroup = novo;
+  if (mudancas.length) store.save();
+  res.json({ ok: true, movidos: mudancas.length });
 });
 
 // Página web: esquece o certificado fixado, para o próximo acesso aprender o
