@@ -30,9 +30,24 @@ const { mergeVars, parseCommands, expandAndResolve, VAR_NAME_RE } = require('./l
 const { buildXml } = require('./lib/exportxml');
 const proto = require('./public/protocolos');
 const agrupar = require('./public/agrupar');
+const pastas = require('./lib/pastas');
 // Teto do caminho da pasta de um host ("Rede/Core/BGP"). O subgrupo antigo
 // cabia em 60; um caminho de vários níveis precisa de mais.
 const MAX_PASTA = 200;
+
+// Pastas declaradas (lib/pastas.js): a lista vive no data.json e é saneada na
+// primeira leitura, porque pode vir de um arquivo editado à mão ou antigo.
+function garantirPastas(d) {
+  if (!Array.isArray(d.pastas)) d.pastas = [];
+  return d.pastas;
+}
+// Toda pasta em que um host ou script é gravado passa a EXISTIR por conta
+// própria (com os níveis acima), e continua existindo quando o último item
+// sair — como um diretório de verdade. Chamado em todo caminho de gravação.
+function declararPastaDe(d, colecao, group, subgroup) {
+  if (!group || !subgroup) return;
+  pastas.declarar(garantirPastas(d), colecao, group, subgroup);
+}
 const weburl = require('./public/weburl');
 const agendaLib = require('./public/agenda');
 const presenca = require('./lib/presenca');
@@ -1491,6 +1506,7 @@ app.post('/api/import', (req, res) => {
         // grupo (e o subgrupo ficar órfão). Nos dois casos, sem grupo não há
         // onde pendurar o subgrupo.
         if (!ex.group) ex.subgroup = '';
+        declararPastaDe(d, 'hosts', ex.group, ex.subgroup);
         summary.hosts.updated++;
       } else {
         // rdpLegadoOk fica de fora de propósito, pela mesma razão do fingerprint:
@@ -1502,6 +1518,7 @@ app.post('/api/import', (req, res) => {
           rdpDomain: rdpDomain || '', url: url || '', group: group || '',
           subgroup: (group && subgroup) || '', icon: icon || '', color: color || '',
           agenda: agenda || null, segredo: segredo || null, auth, vars });
+        declararPastaDe(d, 'hosts', group, (group && subgroup) || '');
         summary.hosts.added++;
       }
     }
@@ -1562,6 +1579,19 @@ app.post('/api/import', (req, res) => {
       summary.scripts.added += r.added;
       summary.scripts.updated += r.updated;
       for (const n of r.invalidos) summary.skipped.push('script inválido: ' + n);
+      for (const sc of d.scripts || []) declararPastaDe(d, 'scripts', sc.group, sc.subgroup);
+    }
+
+    // Pastas declaradas (as vazias — as demais já entraram pelos hosts).
+    {
+      const lista = garantirPastas(d);
+      let n = 0;
+      for (const p of asArray(body.pastas)) {
+        const v = pastas.normalizar(p);
+        if (!v) continue;
+        n += pastas.declarar(lista, v.colecao, v.group, v.caminho);
+      }
+      if (n) summary.pastas = n;
     }
 
     // Configurações da IA
@@ -1647,6 +1677,7 @@ app.get('/api/state', (req, res) => {
     avisosDeCofre: dadosDeCofre.avisos(),
     playbooks: d.playbooks,
     scripts: d.scripts || [],
+    pastas: garantirPastas(d),
     profiles: d.profiles,
     favorites: d.favorites || [],
     globals: d.globals,
@@ -1659,6 +1690,7 @@ app.post('/api/hosts', (req, res) => {
   if (!v) return;
   const host = { id: crypto.randomUUID(), fingerprint: null, ...v };
   store.get().hosts.push(host);
+  declararPastaDe(store.get(), 'hosts', v.group, v.subgroup);
   store.save();
   res.json(publicHost(host));
 });
@@ -1689,6 +1721,7 @@ app.put('/api/hosts/:id', (req, res) => {
     delete host.webCert;
   }
   Object.assign(host, v);
+  declararPastaDe(store.get(), 'hosts', v.group, v.subgroup);
   store.save();
   res.json(publicHost(host));
 });
@@ -1763,9 +1796,103 @@ app.post('/api/pastas/mover', (req, res) => {
     }
     mudancas.push([item, novo]);
   }
+  // As pastas declaradas (inclusive as vazias) obedecem ao mesmo teto do
+  // resultado: acima dele, sanear() as cortaria no próximo arranque e a pasta
+  // sumiria em silêncio. Ainda na passada de conferência.
+  const decl = garantirPastas(d);
+  for (const c of pastas.das(decl, colecao, group)) {
+    const novo = agrupar.moverCaminho(c, de, para);
+    if (novo !== null && novo.length > MAX_PASTA) {
+      return fail(res, 400, `A pasta "${c}" passaria de ${MAX_PASTA} caracteres. Escolha um nome mais curto.`);
+    }
+  }
   for (const [item, novo] of mudancas) item.subgroup = novo;
-  if (mudancas.length) store.save();
-  res.json({ ok: true, movidos: mudancas.length });
+  // As pastas declaradas (inclusive as vazias de dentro) vão junto. `declarar`
+  // do destino pode acrescentar sem contar em `renomeadas`, daí olhar o tamanho.
+  const antes = decl.length;
+  const renomeadas = pastas.mover(decl, colecao, group, de, para);
+  if (mudancas.length || renomeadas || decl.length !== antes) store.save();
+  res.json({ ok: true, movidos: mudancas.length, pastas: renomeadas });
+});
+
+// Cria uma pasta — vazia, por enquanto. É o "Nova pasta" do gerenciador de
+// arquivos: primeiro a pasta, depois o conteúdo. Os níveis acima entram junto.
+app.post('/api/pastas', (req, res) => {
+  const b = req.body || {};
+  if (b.colecao !== 'hosts' && b.colecao !== 'scripts') return fail(res, 400, 'Coleção desconhecida (use hosts ou scripts).');
+  const group = String(b.group || '').trim().slice(0, pastas.MAX_GRUPO[b.colecao]).trim();
+  const caminho = agrupar.normalizarCaminho(b.caminho);
+  if (!group) return fail(res, 400, 'Informe o grupo.');
+  if (!caminho) return fail(res, 400, 'Informe o nome da pasta.');
+  if (caminho.length > MAX_PASTA) return fail(res, 400, `O caminho passa de ${MAX_PASTA} caracteres.`);
+  const d = store.get();
+  const lista = garantirPastas(d);
+  // Tudo-ou-nada: conta só os níveis que ainda não existem, para não criar
+  // "Rede" e responder que "Rede/Core/BGP" foi criada quando o teto bate no meio.
+  const existentes = new Set(pastas.das(lista, b.colecao, group));
+  const niveis = agrupar.segmentos(caminho);
+  const novas = niveis.filter((_, i) => !existentes.has(niveis.slice(0, i + 1).join('/'))).length;
+  if (novas && lista.length + novas > pastas.MAX_DECLARADAS) return fail(res, 400, `Limite de ${pastas.MAX_DECLARADAS} pastas.`);
+  const criadas = pastas.declarar(lista, b.colecao, group, caminho);
+  if (criadas) store.save();
+  res.json({ ok: true, criadas, caminho });
+});
+
+// Exclui uma pasta. O que estava dentro NÃO some: sobe um nível (para a pasta
+// de cima, ou para o grupo) — apagar hosts nunca é efeito colateral de mexer em
+// pasta. As pastas de dentro sobem junto, vazias ou não.
+app.post('/api/pastas/excluir', (req, res) => {
+  const b = req.body || {};
+  if (b.colecao !== 'hosts' && b.colecao !== 'scripts') return fail(res, 400, 'Coleção desconhecida (use hosts ou scripts).');
+  const colecao = b.colecao;
+  const group = String(b.group || '').trim();
+  const caminho = agrupar.normalizarCaminho(b.caminho);
+  if (!group) return fail(res, 400, 'Informe o grupo.');
+  if (!caminho) return fail(res, 400, 'Informe a pasta.');
+  const pai = agrupar.segmentos(caminho).slice(0, -1).join('/');
+  const d = store.get();
+  const lista = Array.isArray(d[colecao]) ? d[colecao] : [];
+  let movidos = 0;
+  for (const item of lista) {
+    if (String(item.group || '').trim() !== group) continue;
+    if (colecao === 'hosts' && dadosDeCofre.ehEspelhado(item.id)) continue;
+    const novo = agrupar.moverCaminho(item.subgroup, caminho, pai);
+    if (novo === null) continue;
+    item.subgroup = novo;
+    movidos += 1;
+  }
+  // A pasta some da lista; as de dentro sobem um nível (mover para o pai faz
+  // exatamente isso: a própria dissolve ou funde com o pai, e o que colidir
+  // funde). Nada de remover() depois: uma subpasta homônima ("Matriz/Matriz")
+  // acabou de subir para este mesmo caminho e seria apagada junto.
+  const decl = garantirPastas(d);
+  const antes = decl.length;
+  const tinha = pastas.das(decl, colecao, group).includes(caminho);
+  const renomeadas = pastas.mover(decl, colecao, group, caminho, pai);
+  if (movidos || tinha || renomeadas || decl.length !== antes) store.save();
+  res.json({ ok: true, movidos, existia: tinha });
+});
+
+// Muda só a pasta (e o grupo) de UM host — é o que "arrastar para a pasta"
+// precisa. O PUT completo exige o cadastro inteiro de volta, com credencial;
+// aqui vai só o destino.
+app.post('/api/hosts/:id/pasta', (req, res) => {
+  if (dadosDeCofre.ehEspelhado(req.params.id)) {
+    return fail(res, 409, 'Este host é um espelho do cofre: a pasta dele é a do sistema no ERP.');
+  }
+  const d = store.get();
+  const host = d.hosts.find((h) => h.id === req.params.id);
+  if (!host) return fail(res, 404, 'Host não encontrado.');
+  const b = req.body || {};
+  const group = String(b.group == null ? host.group || '' : b.group).trim().slice(0, 60);
+  // Campo ausente = "não mexa" (como o grupo); só string vazia zera a pasta.
+  const subgroup = group ? agrupar.limitarCaminho(b.subgroup == null ? host.subgroup : b.subgroup, MAX_PASTA) : '';
+  if (host.group === group && (host.subgroup || '') === subgroup) return res.json(publicHost(host));
+  host.group = group;
+  host.subgroup = subgroup;
+  declararPastaDe(d, 'hosts', group, subgroup);
+  store.save();
+  res.json(publicHost(host));
 });
 
 // Página web: esquece o certificado fixado, para o próximo acesso aprender o
@@ -1888,6 +2015,7 @@ app.post('/api/scripts', (req, res) => {
   const d = store.get();
   const sc = { id: crypto.randomUUID(), ...v, updatedAt: Date.now() };
   garantirScripts(d).push(sc);
+  declararPastaDe(d, 'scripts', v.group, v.subgroup);
   store.save();
   res.json(sc);
 });
@@ -1905,6 +2033,7 @@ app.put('/api/scripts/:id', (req, res) => {
   const v = scripts.normalizar(req.body);
   if (v.erro) return fail(res, 400, v.erro);
   Object.assign(sc, v, { updatedAt: Date.now() });
+  declararPastaDe(d, 'scripts', v.group, v.subgroup);
   store.save();
   res.json(sc);
 });

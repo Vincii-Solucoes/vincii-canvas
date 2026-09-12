@@ -161,12 +161,17 @@ function makeAvatar(parent, host, extraClass) {
 }
 // O agrupamento (grupo > subgrupo, ordenação, rótulos) mora em agrupar.js — as
 // regras estão lá, testadas em Node. Aqui só se aplica ao estado da tela.
-function hostsAgrupados() { return agruparHosts(state.hosts); }
+// As pastas DECLARADAS (lib/pastas.js): existem mesmo vazias. A árvore nasce
+// dos hosts e é completada por elas.
+function pastasDe(colecao) { return (state.pastas || []).filter((p) => p && p.colecao === colecao); }
+function hostsAgrupados() { return agruparHosts(state.hosts, pastasDe('hosts')); }
 function groupedHosts() { return agruparHostsPlano(state.hosts); }
 function existingGroups() {
-  return [...new Set(state.hosts.map((h) => (h.group || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const nomes = new Set(state.hosts.map((h) => (h.group || '').trim()).filter(Boolean));
+  for (const p of pastasDe('hosts')) if (p.group) nomes.add(p.group);
+  return [...nomes].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
-function existingSubgroups(grupo) { return subgruposDe(state.hosts, grupo); }
+function existingSubgroups(grupo) { return subgruposDe(state.hosts, grupo, pastasDe('hosts')); }
 
 // Desambiguação de nomes repetidos (id -> sufixo tipo "Infra"): só nomes que se
 // repetem ganham "(grupo)". Recalculado a cada leitura do estado (loadState).
@@ -310,7 +315,9 @@ function renderHosts() {
   }
   if (!state.hosts.length) {
     el(wrap, 'p', 'empty', 'Nenhum host cadastrado. Clique em "Novo host".');
-    return;
+    // Só sobraram pastas declaradas (o último host saiu): mostra a árvore
+    // vazia para a pessoa ver o que ficou e poder excluir pelo ⋯.
+    if (!pastasDe('hosts').length) return;
   }
   for (const g of hostsAgrupados()) {
     const grp = el(wrap, 'div', 'host-group');
@@ -322,10 +329,21 @@ function renderHosts() {
     el(head, 'span', 'seta', '▾');
     el(head, 'span', 'gname', g.nome);
     el(head, 'span', 'count', `${g.total} host(s)`);
+    // O menu do grupo: nova pasta, novo host aqui, recolher/expandir tudo.
+    // "Sem grupo" (g.grupo === '') não tem pasta — só ganha "novo host".
+    const menuBtn = el(head, 'button', 'btn small pasta-menu', '⋯');
+    menuBtn.type = 'button';
+    menuBtn.title = 'Ações do grupo';
+    menuBtn.setAttribute('aria-label', `Ações do grupo ${g.nome}`);
+    menuBtn.addEventListener('click', (ev) => { ev.stopPropagation(); abrirMenuPasta(ev, { grupo: g.grupo, caminho: '' }); });
+    head.addEventListener('contextmenu', (ev) => { ev.preventDefault(); abrirMenuPasta(ev, { grupo: g.grupo, caminho: '' }); });
+    tornarAlvoDeSoltura(head, g.grupo, ''); // "Sem grupo" não tem pasta, mas aceita host
     const corpo = el(grp, 'div', 'host-group-corpo');
     if (g.diretos.length) {
       const cards = el(corpo, 'div', 'host-cards');
       for (const h of g.diretos) cards.appendChild(hostCard(h));
+    } else if (!g.pastas.length) {
+      el(corpo, 'p', 'pasta-vazia', 'Grupo vazio — crie um host aqui ou arraste um para cá.');
     }
     // `g.grupo` é a chave crua ('' = o balde dos sem grupo, que não tem pasta).
     for (const p of g.pastas) renderPastaDeHosts(corpo, p, g.grupo);
@@ -346,18 +364,185 @@ function renderPastaDeHosts(pai, no, grupo) {
   el(shead, 'span', 'count', `${no.total} host(s)`);
   shead.title = rotuloDoCaminho(no.caminho);
   if (grupo) {
-    const mover = el(shead, 'button', 'btn small pasta-mover', '✎');
-    mover.type = 'button';
-    mover.title = 'Renomear ou mover esta pasta (com tudo que está dentro)';
-    mover.setAttribute('aria-label', `Renomear ou mover a pasta ${no.nome}`);
-    mover.addEventListener('click', (ev) => { ev.stopPropagation(); abrirMoverPasta('hosts', grupo, no.caminho); });
+    const menuBtn = el(shead, 'button', 'btn small pasta-menu', '⋯');
+    menuBtn.type = 'button';
+    menuBtn.title = 'Ações da pasta: nova subpasta, novo host, renomear/mover, excluir';
+    menuBtn.setAttribute('aria-label', `Ações da pasta ${no.nome}`);
+    menuBtn.addEventListener('click', (ev) => { ev.stopPropagation(); abrirMenuPasta(ev, { grupo, caminho: no.caminho }); });
+    shead.addEventListener('contextmenu', (ev) => { ev.preventDefault(); abrirMenuPasta(ev, { grupo, caminho: no.caminho }); });
+    tornarAlvoDeSoltura(shead, grupo, no.caminho);
   }
   const corpo = el(sg, 'div', 'host-subgroup-corpo');
   if (no.diretos.length) {
     const cards = el(corpo, 'div', 'host-cards');
     for (const h of no.diretos) cards.appendChild(hostCard(h));
+  } else if (!no.pastas.length) {
+    // Pasta declarada e ainda vazia — é o "Nova pasta" que acabou de ser
+    // criada, ou a que esvaziou. Dizer o que fazer com ela evita a dúvida
+    // "sumiu alguma coisa?".
+    el(corpo, 'p', 'pasta-vazia', 'Pasta vazia — arraste um host para cá ou crie um novo pelo menu ⋯.');
   }
   for (const filha of no.pastas) renderPastaDeHosts(corpo, filha, grupo);
+}
+
+// ---------- menu de ações do grupo/pasta ----------
+//
+// Um só menu para os dois: o grupo é a raiz da árvore e aceita o que uma pasta
+// aceita, menos renomear/excluir (grupo se muda no cadastro de cada host).
+// Abre pelo botão ⋯ ou pelo botão direito no cabeçalho, como na aba Arquivos.
+function fecharMenuPasta() {
+  const menu = $('#pastaMenu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  // O foco volta para quem abriu (botão ⋯ ou cabeçalho), senão cai no body.
+  const origem = menu._origem;
+  menu._origem = null;
+  if (origem && document.contains(origem)) { try { origem.focus(); } catch {} }
+}
+
+function abrirMenuPasta(ev, { grupo, caminho }) {
+  const menu = $('#pastaMenu');
+  menu.replaceChildren();
+  menu._origem = ev.currentTarget;
+  const add = (rotulo, fn, perigo) => {
+    const b = el(menu, 'button', 'ctx-item' + (perigo ? ' danger' : ''), rotulo);
+    b.type = 'button';
+    b.addEventListener('click', () => { fecharMenuPasta(); fn(); });
+  };
+  const rotulo = caminho ? `pasta ${rotuloDoCaminho(caminho)}` : (grupo ? `grupo ${grupo}` : 'Sem grupo');
+  if (grupo) add(caminho ? '＋ Nova subpasta' : '＋ Nova pasta', () => criarPasta('hosts', grupo, caminho));
+  add(`＋ Novo host ${caminho ? 'nesta pasta' : (grupo ? 'neste grupo' : 'sem grupo')}`,
+    () => openHostModal(null, { group: grupo, subgroup: caminho }));
+  if (caminho) {
+    add('✎ Renomear ou mover', () => abrirMoverPasta('hosts', grupo, caminho));
+    add('🗑 Excluir pasta', () => excluirPasta('hosts', grupo, caminho), true);
+  } else if (grupo) {
+    add('▾ Expandir tudo', () => alternarTodasAsPastas(grupo, false));
+    add('▸ Recolher tudo', () => alternarTodasAsPastas(grupo, true));
+  }
+  menu.setAttribute('aria-label', `Ações: ${rotulo}`);
+  menu.hidden = false;
+  // Posiciona junto do ponteiro — ou, aberto pelo teclado (Enter no ⋯,
+  // Shift+F10 no cabeçalho, que chegam com 0,0), junto do próprio elemento —
+  // sem sair da janela.
+  let px = ev.clientX || 0;
+  let py = ev.clientY || 0;
+  if (!px && !py) {
+    const r = ev.currentTarget.getBoundingClientRect();
+    px = r.left; py = r.bottom + 4;
+  }
+  const x = Math.min(px, window.innerWidth - menu.offsetWidth - 8);
+  const y = Math.min(py, window.innerHeight - menu.offsetHeight - 8);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+  const primeiro = menu.querySelector('.ctx-item');
+  if (primeiro) { try { primeiro.focus(); } catch {} }
+}
+
+async function criarPasta(colecao, grupo, base) {
+  const nome = await pedirTexto(base ? 'Nova subpasta' : 'Nova pasta',
+    base ? `Nome (dentro de ${rotuloDoCaminho(base)})` : `Nome (no grupo ${grupo})`, '',
+    'maxlength="60" placeholder="ex.: Core"');
+  if (!nome) return;
+  const caminho = normalizarCaminho(base ? `${base}/${nome}` : nome);
+  if (!caminho) { toast('Informe um nome para a pasta.', 'erro'); return; }
+  try {
+    const r = await api('/api/pastas', { method: 'POST', body: { colecao, group: grupo, caminho } });
+    await loadState();
+    toast(r.criadas ? `Pasta ${rotuloDoCaminho(caminho)} criada.` : `A pasta ${rotuloDoCaminho(caminho)} já existia.`);
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+async function excluirPasta(colecao, grupo, caminho) {
+  const fonte = colecao === 'scripts' ? state.scripts : state.hosts;
+  const dentro = fonte.filter((h) => (h.group || '').trim() === grupo && pastaDentroDe(h.subgroup, caminho));
+  const pai = segmentosDoCaminho(caminho).slice(0, -1).join('/');
+  const destino = pai ? `a pasta ${rotuloDoCaminho(pai)}` : `o grupo ${grupo}`;
+  const aviso = dentro.length
+    ? `Excluir a pasta "${rotuloDoCaminho(caminho)}"?\n\nOs ${dentro.length} host(s) que estão nela (e nas subpastas) NÃO são apagados: sobem para ${destino}.`
+    : `Excluir a pasta vazia "${rotuloDoCaminho(caminho)}"?`;
+  if (!confirm(aviso)) return;
+  try {
+    const r = await api('/api/pastas/excluir', { method: 'POST', body: { colecao, group: grupo, caminho } });
+    // O "recolhido" das pastas que sobem acompanha; o da excluída some.
+    if (colecao === 'hosts') {
+      const prefixo = chaveDePasta(grupo, '');
+      const novas = new Set();
+      for (const k of prefList('pastasFechadas')) {
+        if (typeof k !== 'string' || k === prefixo || !k.startsWith(prefixo)) { novas.add(k); continue; }
+        const c = k.slice(prefixo.length);
+        if (c === caminho) continue;
+        const novo = moverCaminho(c, caminho, pai);
+        if (novo === null) novas.add(k); else if (novo) novas.add(chaveDePasta(grupo, novo));
+      }
+      prefSet('pastasFechadas', [...novas].slice(-500));
+    }
+    await loadState();
+    toast(r.movidos ? `Pasta excluída — ${r.movidos} host(s) subiram para ${destino}.` : 'Pasta excluída.');
+  } catch (e) { toast(e.message, 'erro'); }
+}
+
+// Recolhe ou expande TODAS as pastas de um grupo de uma vez.
+function alternarTodasAsPastas(grupo, fechar) {
+  const prefixo = chaveDePasta(grupo, '');
+  let lista = prefList('pastasFechadas').filter((k) => !(typeof k === 'string' && k.startsWith(prefixo) && k !== prefixo));
+  if (fechar) {
+    for (const c of existingSubgroups(grupo)) lista.push(chaveDePasta(grupo, c));
+  }
+  prefSet('pastasFechadas', lista.slice(-500));
+  renderHosts();
+}
+
+// ---------- arrastar host para a pasta ----------
+//
+// O gesto do gerenciador de arquivos: pega o cartão do host e solta no
+// cabeçalho do grupo ou da pasta. Só muda pasta/grupo — o cadastro inteiro fica
+// como está (rota própria, sem mandar credencial de volta).
+function tornarArrastavel(card, h) {
+  if (h.espelho) return; // a pasta do espelho é a do sistema no ERP
+  card.draggable = true;
+  // Sobre nome, endereço e etiquetas o mouse SELECIONA texto (copiar o IP é o
+  // uso mais comum do cartão); no resto do cartão, arrasta. O navegador decide
+  // arrasto x seleção quando o mouse começa a mover, então alternar o atributo
+  // no mousedown basta — e vale para duplo/triplo clique.
+  card.addEventListener('mousedown', (ev) => {
+    card.draggable = !ev.target.closest('.hname, .haddr, .meta');
+  });
+  card.addEventListener('dragstart', (ev) => {
+    ev.dataTransfer.setData('text/x-vc-host', h.id);
+    ev.dataTransfer.effectAllowed = 'move';
+    card.classList.add('arrastando');
+    document.body.classList.add('arrastando-host');
+  });
+  card.addEventListener('dragend', () => {
+    card.classList.remove('arrastando');
+    document.body.classList.remove('arrastando-host');
+    $$('.alvo-solta').forEach((n) => n.classList.remove('alvo-solta'));
+  });
+}
+
+function tornarAlvoDeSoltura(cab, grupo, caminho) {
+  cab.addEventListener('dragover', (ev) => {
+    if (![...ev.dataTransfer.types].includes('text/x-vc-host')) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    cab.classList.add('alvo-solta');
+  });
+  cab.addEventListener('dragleave', () => cab.classList.remove('alvo-solta'));
+  cab.addEventListener('drop', async (ev) => {
+    const id = ev.dataTransfer.getData('text/x-vc-host');
+    if (!id) return;
+    ev.preventDefault();
+    cab.classList.remove('alvo-solta');
+    const h = state.hosts.find((x) => x.id === id);
+    if (!h) return;
+    if ((h.group || '') === grupo && normalizarCaminho(h.subgroup) === caminho) return; // já está aqui
+    try {
+      await api(`/api/hosts/${id}/pasta`, { method: 'POST', body: { group: grupo, subgroup: caminho } });
+      await loadState();
+      toast(`${h.name} movido para ${caminho ? rotuloDoCaminho(caminho) : (grupo ? `o grupo ${grupo}` : 'Sem grupo')}.`);
+    } catch (e) { toast(e.message, 'erro'); }
+  });
 }
 
 // Cabeçalho recolhível alcançável por teclado. A guarda `ev.target !== cab` é
@@ -406,7 +591,8 @@ function abrirMoverPasta(colecao, grupo, caminho) {
   const inp = $('#f_pastaPara');
   inp.value = caminho;
   const fonte = colecao === 'scripts' ? state.scripts : state.hosts;
-  const existentes = subgruposDe(fonte, grupo);
+  const comItens = subgruposDe(fonte, grupo);                      // têm host/script: fusão real
+  const existentes = subgruposDe(fonte, grupo, pastasDe(colecao)); // + declaradas vazias, para sugerir
   const dl = $('#pastaParaList');
   for (const s of existentes) { const o = document.createElement('option'); o.value = s; dl.appendChild(o); }
   setTimeout(() => { try { inp.focus(); inp.select(); } catch {} }, 30);
@@ -423,7 +609,7 @@ function abrirMoverPasta(colecao, grupo, caminho) {
     // Já existe pasta com esse caminho? Mover para cima dela FUNDE as duas, e
     // não há desfazer em bloco. Pode ser o que a pessoa quer (juntar "rede" e
     // "Rede"), então pergunta em vez de barrar.
-    if (para && existentes.includes(para) && !confirm(
+    if (para && comItens.includes(para) && !confirm(
       `A pasta "${rotuloDoCaminho(para)}" já existe neste grupo.\n\n`
       + `Tudo que está em "${rotuloDoCaminho(caminho)}" vai se juntar ao que já está lá, `
       + 'e não há como separar de novo em bloco. Continuar?')) return;
@@ -435,7 +621,7 @@ function abrirMoverPasta(colecao, grupo, caminho) {
       // (scripts não recolhem) e só se algo se moveu de fato. Pasta dissolvida
       // no grupo (novo === '') perde a chave — virar a chave do grupo recolheria
       // o grupo inteiro.
-      if (colecao === 'hosts' && r.movidos) {
+      if (colecao === 'hosts' && (r.movidos || r.pastas)) {
         const prefixo = chaveDePasta(grupo, '');
         const novas = new Set();
         for (const k of prefList('pastasFechadas')) {
@@ -448,9 +634,13 @@ function abrirMoverPasta(colecao, grupo, caminho) {
       }
       closeModal();
       await loadState();
-      toast(para
-        ? `${r.movidos} item(ns) movido(s) para ${rotuloDoCaminho(para)}.`
-        : `${r.movidos} item(ns) tirado(s) da pasta.`);
+      if (r.movidos) {
+        toast(para ? `${r.movidos} item(ns) movido(s) para ${rotuloDoCaminho(para)}.` : `${r.movidos} item(ns) tirado(s) da pasta.`);
+      } else if (r.pastas) {
+        toast(para ? `Pasta renomeada para ${rotuloDoCaminho(para)}.` : 'Pasta dissolvida no grupo.');
+      } else {
+        toast('Nada foi movido — os hosts desta pasta são espelho do cofre (quem manda neles é o ERP).', 'aviso');
+      }
     } catch (e) { toast(e.message, 'erro'); submit.disabled = false; }
   };
 }
@@ -458,6 +648,7 @@ function abrirMoverPasta(colecao, grupo, caminho) {
 function hostCard(h) {
   const card = document.createElement('div');
   card.className = 'host-card';
+  tornarArrastavel(card, h);
   makeAvatar(card, h, 'avatar-lg');
   const info = el(card, 'div', 'info');
   el(info, 'div', 'hname', h.name);
@@ -1184,7 +1375,9 @@ async function desenharEscolhaDeSegredo() {
   });
 }
 
-function openHostModal(existing) {
+// `prefill` (opcional, só no "Novo host"): grupo e pasta já escolhidos — é o
+// "novo host nesta pasta" do menu da árvore.
+function openHostModal(existing, prefill) {
   openModal(existing ? 'Editar host' : 'Novo host', `
     <div class="grid2">
       <label>Nome <input id="f_name" required placeholder="ex.: web-01 Cliente A"></label>
@@ -1288,8 +1481,8 @@ function openHostModal(existing) {
   `);
 
   $('#f_name').value = existing ? existing.name : '';
-  $('#f_group').value = (existing && existing.group) || '';
-  $('#f_subgroup').value = (existing && existing.subgroup) || '';
+  $('#f_group').value = (existing && existing.group) || (prefill && prefill.group) || '';
+  $('#f_subgroup').value = (existing && existing.subgroup) || (prefill && prefill.subgroup) || '';
   $('#groupList').innerHTML = existingGroups().map((g) => `<option value="${g.replace(/"/g, '&quot;')}"></option>`).join('');
   // A pasta depende do grupo: sem grupo o campo trava (mas NÃO apaga — quem
   // limpa o grupo para retocar o nome não perde o que já digitou ao lado), e as
@@ -1658,7 +1851,10 @@ function scriptGroups() { return [...new Set(state.scripts.map((s) => (s.group |
 function scriptSubgroups(grupo) {
   const g = (grupo || '').trim();
   if (!g) return [];
-  return subgruposDe(state.scripts, g); // com os níveis intermediários, como nos hosts
+  // Só dos scripts: a aba Scripts não tem o menu de pastas, então uma pasta
+  // declarada vazia ficaria lá sem como ser excluída. As declaradas de scripts
+  // continuam gravadas, prontas para quando a aba ganhar o menu.
+  return subgruposDe(state.scripts, g);
 }
 function scriptCasa(sc, q) {
   if (!q) return true;
@@ -2811,6 +3007,10 @@ function initFiles() {
   });
 
   document.addEventListener('click', () => { const m = $('#fileMenu'); if (m && !m.hidden) m.hidden = true; });
+  document.addEventListener('click', () => fecharMenuPasta());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharMenuPasta(); });
+  // Rolar a página com o menu aberto o deixava flutuando longe do cabeçalho.
+  window.addEventListener('scroll', () => fecharMenuPasta(), { passive: true, capture: true });
 }
 
 function onFilesTabShown() {
@@ -3731,6 +3931,11 @@ function xmlToConfig(text) {
         description: sc.getAttribute('description') || '',
         body: sc.textContent,
       })),
+      pastas: [...root.querySelectorAll(':scope > pastas > pasta')].map((p) => ({
+        colecao: p.getAttribute('colecao') || 'hosts',
+        group: p.getAttribute('group') || '',
+        caminho: p.getAttribute('caminho') || '',
+      })),
       favorites: [...root.querySelectorAll(':scope > favorites > favorite')].map((f) => ({
         label: f.getAttribute('label') || '',
         hostName: f.getAttribute('host') || '',
@@ -3788,6 +3993,7 @@ async function importFromText(text) {
   conta(c.playbooks.length, 'playbook', 'playbooks');
   conta((c.scripts || []).length, 'script', 'scripts');
   conta((c.cofres || []).length, 'cofre', 'cofres');
+  conta((c.pastas || []).length, 'pasta', 'pastas');
   conta(c.profiles.length, 'perfil', 'perfis');
   conta((c.favorites || []).length, 'favorito', 'favoritos');
   conta(Object.keys(c.globals).length, 'variável global', 'variáveis globais');
@@ -3942,7 +4148,9 @@ async function importFromText(text) {
     if (r.prefs) extras.push('preferências');
     toast(`Importado — hosts: ${p(r.hosts)}; playbooks: ${p(r.playbooks)}`
       + `${r.scripts ? '; scripts: ' + p(r.scripts) : ''}; perfis: ${p(r.profiles)}`
-      + `${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}${extras.length ? '; ' + extras.join(' e ') + ' aplicadas' : ''}.`);
+      + `${r.favorites ? '; favoritos: ' + p(r.favorites) : ''}`
+      + `${r.pastas ? '; pastas: ' + r.pastas + ' nova(s)' : ''}`
+      + `${extras.length ? '; ' + extras.join(' e ') + ' aplicadas' : ''}.`);
     // A lista de ignorados vinha cortada em 3 num toast de 7 s, sem onde revê-la.
     if (r.skipped && r.skipped.length) mostrarIgnorados(r.skipped);
   } catch (e) {

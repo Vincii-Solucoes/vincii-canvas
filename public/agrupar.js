@@ -107,8 +107,31 @@ function achatar(pastas, out) {
 // `nome` é o rótulo da tela ("Sem grupo" para o balde vazio); `grupo` é a chave
 // crua ('' para o balde) — é ela que identifica o grupo, porque um grupo pode
 // se chamar literalmente "Sem grupo".
-function agruparHosts(hosts) {
+//
+// `declaradas` (opcional): [{ group, caminho }] — as pastas que existem por
+// vontade própria, mesmo vazias (lib/pastas.js). Entram na árvore como nós sem
+// host; `total` conta só hosts, então uma pasta vazia mostra 0.
+function agruparHosts(hosts, declaradas) {
   const grupos = new Map(); // chave: o grupo como digitado; '' = sem grupo
+  // Desce a árvore criando os níveis que faltam; devolve o nó do fim.
+  const descer = (raiz, niveis, contar) => {
+    let no = raiz;
+    let caminho = '';
+    for (const nome of niveis) {
+      caminho = caminho ? caminho + SEPARADOR + nome : nome;
+      if (!no.pastas.has(nome)) no.pastas.set(nome, novoNo(nome, caminho));
+      no = no.pastas.get(nome);
+      if (contar) no.total += 1;
+    }
+    return no;
+  };
+  for (const p of declaradas || []) {
+    const g = ((p && p.group) || '').trim();
+    const niveis = g ? segmentos(p.caminho) : [];
+    if (!niveis.length) continue;
+    if (!grupos.has(g)) grupos.set(g, novoNo(g, ''));
+    descer(grupos.get(g), niveis, false);
+  }
   for (const h of hosts || []) {
     const g = ((h && h.group) || '').trim();
     if (!grupos.has(g)) grupos.set(g, novoNo(g || SEM_GRUPO, ''));
@@ -116,16 +139,7 @@ function agruparHosts(hosts) {
     raiz.total += 1;
     const niveis = g ? segmentos(h.subgroup) : [];
     if (!niveis.length) { raiz.diretos.push(h); continue; }
-    // Desce a árvore criando os níveis que faltam.
-    let no = raiz;
-    let caminho = '';
-    for (const nome of niveis) {
-      caminho = caminho ? caminho + SEPARADOR + nome : nome;
-      if (!no.pastas.has(nome)) no.pastas.set(nome, novoNo(nome, caminho));
-      no = no.pastas.get(nome);
-      no.total += 1;
-    }
-    no.diretos.push(h);
+    descer(raiz, niveis, true).diretos.push(h);
   }
   return [...grupos.entries()]
     .sort((a, b) => {
@@ -216,15 +230,16 @@ function desambiguarHosts(hosts) {
 // sugerir as de outro grupo espalharia nomes de um cliente no cadastro de outro.
 // Entram também os PREFIXOS: se existe "Rede/Core", "Rede" é sugerida, porque
 // é uma pasta real da árvore mesmo sem host direto nela.
-function subgruposDe(hosts, grupo) {
+function subgruposDe(hosts, grupo, declaradas) {
   const g = (grupo || '').trim();
   if (!g) return [];
   const out = new Set();
-  for (const h of hosts || []) {
-    if (((h && h.group) || '').trim() !== g) continue;
-    const niveis = segmentos(h.subgroup);
+  const somar = (caminho) => {
+    const niveis = segmentos(caminho);
     for (let i = 1; i <= niveis.length; i += 1) out.add(niveis.slice(0, i).join(SEPARADOR));
-  }
+  };
+  for (const h of hosts || []) if (((h && h.group) || '').trim() === g) somar(h.subgroup);
+  for (const p of declaradas || []) if (((p && p.group) || '').trim() === g) somar(p.caminho);
   return [...out].sort(ordemPt);
 }
 

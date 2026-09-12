@@ -1031,16 +1031,35 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .host-subgroup.fechada > .host-subgroup-corpo { display: none; }
 .host-group.fechada > .host-group-header { margin-bottom: 0; }
 .host-subgroup.fechada > .host-subgroup-header { margin-bottom: 0; }
-/* O botão de renomear/mover só aparece ao passar o mouse no cabeçalho da pasta,
-   para a lista não virar uma fileira de lápis. */
-.host-subgroup-header .pasta-mover {
-  margin-left: auto; padding: 0 6px; line-height: 1.5; opacity: 0;
+/* O botão ⋯ (menu do grupo/pasta) só aparece ao passar o mouse no cabeçalho,
+   para a lista não virar uma fileira de botões. O botão direito abre o mesmo
+   menu, como na aba Arquivos. */
+.host-group-header .pasta-menu, .host-subgroup-header .pasta-menu {
+  margin-left: auto; padding: 0 8px; line-height: 1.5; opacity: 0;
   transition: opacity .12s ease;
 }
-.host-subgroup-header:hover .pasta-mover,
-.host-subgroup-header .pasta-mover:focus-visible { opacity: 1; }
+.host-group-header:hover .pasta-menu, .host-subgroup-header:hover .pasta-menu,
+.host-group-header .pasta-menu:focus-visible, .host-subgroup-header .pasta-menu:focus-visible,
+.host-group-header:focus-visible .pasta-menu, .host-subgroup-header:focus-visible .pasta-menu { opacity: 1; }
+/* Pasta (ou grupo) sem nada dentro: diz o que fazer, em vez de parecer sumiço. */
+.pasta-vazia {
+  margin: 0 0 4px; padding: 10px 12px; font-size: 12.5px; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px;
+}
+/* Arrastar host para a pasta: o cartão esmaece; o cabeçalho que aceita a
+   soltura acende quando o host passa por cima. */
+.host-card[draggable] { cursor: grab; }
+.host-card[draggable] .hname, .host-card[draggable] .haddr { cursor: text; }
+.host-card.arrastando { opacity: .45; cursor: grabbing; }
+body.arrastando-host .host-group-header, body.arrastando-host .host-subgroup-header {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; border-radius: 6px;
+}
+.host-group-header.alvo-solta, .host-subgroup-header.alvo-solta {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 2px solid var(--accent);
+}
 @media (prefers-reduced-motion: reduce) {
-  .host-group-header .seta, .host-subgroup-header .seta, .host-subgroup-header .pasta-mover { transition: none; }
+  .host-group-header .seta, .host-subgroup-header .seta, .pasta-menu { transition: none; }
 }
 .host-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
 
