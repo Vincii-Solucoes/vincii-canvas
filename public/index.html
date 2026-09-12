@@ -33,6 +33,8 @@ try {
 <script src="subnet.js" defer></script>
 <script src="senha.js" defer></script>
 <script src="diff.js" defer></script>
+<script src="extrairips.js" defer></script>
+<script src="smokeping.js" defer></script>
 <script src="app.js" defer></script>
 <script src="desktop.js" type="module"></script>
 </head>
@@ -471,11 +473,27 @@ try {
     <!-- Lançador: o TILE. Clicar abre o monitor numa janela própria. Uma
          janela por host — para vigiar vários, abra vários. -->
     <div id="toolsLauncher" class="tools-grid">
+      <button id="tilePing" type="button" class="tool-tile" data-tipo="ping">
+        <span class="tool-ico">🏓</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Ping por sondas</span>
+          <span class="tool-desc">Latência, jitter e perda até um alvo — medidos ao mesmo tempo desta máquina e de qualquer host SSH seu (borda, OLT, servidor). Compare os pontos de vista lado a lado.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tileMtu" type="button" class="tool-tile" data-tipo="mtu">
+        <span class="tool-ico">📏</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Detectar MTU</span>
+          <span class="tool-desc">Descobre o MTU efetivo do caminho por busca binária com pacotes "não fragmentar" — desta máquina ou de um host SSH. Diz se bate com Ethernet, PPPoE, GRE, WireGuard…</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
       <button id="tileMonitor" type="button" class="tool-tile">
         <span class="tool-ico">📡</span>
         <span class="tool-corpo">
-          <span class="tool-nome">Monitorador de IP</span>
-          <span class="tool-desc">Pinga um host numa janela própria — terminal ao vivo, cronômetro e perda de pacotes, com sirene quando cai.</span>
+          <span class="tool-nome">Monitorador de IP <span class="tool-tag">+ Smokeping</span></span>
+          <span class="tool-desc">Pinga um host numa janela própria — terminal ao vivo, gráfico de latência estilo Smokeping (faixas, mediana e perda ao longo do tempo), cronômetro e sirene quando cai.</span>
         </span>
         <span class="tool-abrir">Abrir&nbsp;↗</span>
       </button>
@@ -535,7 +553,72 @@ try {
         </span>
         <span class="tool-abrir">Abrir&nbsp;↗</span>
       </button>
+      <button id="tileMeuip" type="button" class="tool-tile" data-tipo="meuip">
+        <span class="tool-ico">🌍</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Meu IP</span>
+          <span class="tool-desc">Seu IPv4 e IPv6 públicos, o ASN e o provedor, o PTR e as interfaces locais com o gateway — tudo descoberto por DNS, sem API na web.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
+      <button id="tileExtrair" type="button" class="tool-tile" data-tipo="extrair">
+        <span class="tool-ico">🔎</span>
+        <span class="tool-corpo">
+          <span class="tool-nome">Extrair IPs</span>
+          <span class="tool-desc">Cole logs, configs ou saída de traceroute e receba todos os IPv4, IPv6 e faixas — sem repetição, ordenados, com contagem e CSV. Offline, aqui mesmo.</span>
+        </span>
+        <span class="tool-abrir">Abrir&nbsp;↗</span>
+      </button>
     </div>
+
+    <!-- Ping e MTU por SONDAS: alvo + quem mede (esta máquina e hosts SSH). -->
+    <div id="toolsSondas" hidden>
+      <h2 id="sdTitulo"></h2>
+      <p id="sdHint" class="hint"></p>
+      <div class="input-row" style="max-width:640px">
+        <input id="sdAlvo" spellcheck="false" placeholder="IP ou host — ex.: 8.8.8.8, google.com, 2001:4860:4860::8888">
+        <button id="sdBtn" type="button" class="btn primary">Medir</button>
+        <button id="sdCopiar" type="button" class="btn" hidden>📋 Copiar</button>
+      </div>
+      <div id="sdOpcoes" class="sd-opcoes">
+        <label>Pacotes <input id="sdPacotes" type="number" min="1" max="100" value="10"></label>
+        <label>Intervalo (ms) <input id="sdIntervalo" type="number" min="200" max="5000" step="100" value="500"></label>
+        <label>Tamanho (bytes) <input id="sdTamanho" type="number" min="8" max="1472" value="56"></label>
+      </div>
+      <div class="sd-sondas">
+        <div class="sd-sondas-cab"><strong>Medir a partir de</strong> <span class="hint">— esta máquina e/ou hosts SSH cadastrados</span></div>
+        <div id="sdLista" class="sd-lista"></div>
+      </div>
+      <div id="sdResultado" class="sd-resultado"></div>
+    </div><!-- #toolsSondas -->
+
+    <!-- Meu IP -->
+    <div id="toolsMeuip" hidden>
+      <h2>🌍 Meu IP</h2>
+      <p class="hint">Como a internet vê esta máquina. Descoberto por consultas DNS (OpenDNS, Google, Team Cymru) — nenhuma API web, nada é enviado além das perguntas.</p>
+      <div class="btn-row" style="justify-content:flex-start">
+        <button id="mipAtualizar" type="button" class="btn primary">↻ Descobrir</button>
+        <button id="mipCopiar" type="button" class="btn" hidden>📋 Copiar</button>
+      </div>
+      <div id="mipResultado" class="cons-resultado"></div>
+    </div><!-- #toolsMeuip -->
+
+    <!-- Extrair IPs (offline, no navegador) -->
+    <div id="toolsExtrair" hidden>
+      <h2>🔎 Extrair IPs</h2>
+      <p class="hint">Cole qualquer texto — log, config, saída de traceroute — ou solte um arquivo. Sai a lista de IPv4, IPv6 e faixas, sem repetição e ordenada. Nada sai desta janela.</p>
+      <textarea id="exTexto" class="mono ex-texto" spellcheck="false" placeholder="Cole aqui logs, configs, saída de traceroute…"></textarea>
+      <div class="btn-row" style="justify-content:flex-start">
+        <button id="exExtrair" type="button" class="btn primary">Extrair IPs</button>
+        <button id="exArquivo" type="button" class="btn">📂 Abrir arquivo</button>
+        <button id="exExemplo" type="button" class="btn">Exemplo</button>
+        <span class="spacer"></span>
+        <button id="exCopiar" type="button" class="btn" hidden>📋 Copiar lista</button>
+        <button id="exCsv" type="button" class="btn" hidden>📋 Copiar CSV</button>
+      </div>
+      <p id="exResumo" class="hint"></p>
+      <div id="exResultado" class="ex-resultado"></div>
+    </div><!-- #toolsExtrair -->
 
     <!-- O monitor de UM host: escondido no app normal, exibido na janela solta
          (?solo=1&tipo=monitor). O endereço é informado DENTRO da janela. -->
@@ -575,6 +658,14 @@ try {
         <span id="monAlarmeTxt">⚠ Sem resposta!</span>
         <button id="monSilenciar" type="button" class="btn">🔇 Silenciar</button>
       </div>
+      <!-- Gráfico estilo Smokeping: faixa mín–máx ("fumaça"), mediana e perda. -->
+      <div class="mon-grafico-cab">
+        <span class="mon-grafico-tit">📈 Latência ao longo do tempo</span>
+        <span id="monGraficoResumo" class="hint"></span>
+        <span class="spacer"></span>
+        <select id="monJanela" class="mon-janela" aria-label="Janela do gráfico"></select>
+      </div>
+      <canvas id="monGrafico" class="mon-grafico" height="160"></canvas>
       <div id="monTerm" class="mon-term"></div>
       </div><!-- #monPainel -->
     </div><!-- #toolsMonitor -->

@@ -13,6 +13,9 @@ const monitor = require('./lib/monitor');
 const mtr = require('./lib/mtr');
 const tcpping = require('./lib/tcpping');
 const redetools = require('./lib/redetools');
+const sondas = require('./lib/sondas');
+const diagnosticos = require('./lib/diagnosticos');
+const meuip = require('./lib/meuip');
 const relatoriopdf = require('./lib/relatoriopdf');
 const runner = require('./lib/runner');
 const { wss: termWss } = require('./lib/terminal');
@@ -1260,6 +1263,56 @@ app.post('/api/tools/portscan', async (req, res) => {
 // O relatório do monitor em PDF — como o relatório de comandos, um arquivo
 // baixado. A tela manda os dados; aqui o HTML é montado e o Electron imprime
 // (lib/relatoriopdf). Fora do app instalado devolve 501 e a tela avisa.
+// ---------- Ping e MTU por SONDAS (esta máquina + hosts SSH), e Meu IP ----------
+//
+// O que o isp.tools chama de "probes": rodar o diagnóstico de vários pontos de
+// vista. Aqui os pontos de vista são os seus hosts. Começar/detalhe, como as
+// outras ferramentas do kit.
+app.get('/api/tools/sondas', (req, res) => {
+  const d = store.get();
+  res.json({ sondas: sondas.listar([...d.hosts, ...dadosDeCofre.hostsEspelhados(d.hosts)]) });
+});
+
+// O host de uma sonda pode ser espelhado (vem do cofre): o pin do fingerprint
+// vai para o cofre de confiança, como no terminal e nos arquivos.
+function guardarFingerprintDe(host) {
+  return (fp) => {
+    host.fingerprint = fp;
+    if (!dadosDeCofre.fixarFingerprint(host.id, fp, host)) store.save();
+  };
+}
+function acharHostSonda(id) {
+  return store.get().hosts.find((h) => h.id === id) || quickhosts.get(id) || dadosDeCofre.pegarHost(id) || null;
+}
+
+app.post('/api/tools/ping/start', (req, res) => {
+  const b = req.body || {};
+  try {
+    const t = diagnosticos.iniciarPing(b, {
+      acharHost: acharHostSonda,
+      onSaveFingerprint: (fp, host) => guardarFingerprintDe(host)(fp),
+    });
+    res.json({ id: t.id });
+  } catch (e) { fail(res, 400, e.message); }
+});
+app.post('/api/tools/mtu/start', (req, res) => {
+  const b = req.body || {};
+  try {
+    const t = diagnosticos.iniciarMtu(b, { acharHost: acharHostSonda, onSaveFingerprint: (fp, host) => guardarFingerprintDe(host)(fp) });
+    res.json({ id: t.id });
+  } catch (e) { fail(res, 400, e.message); }
+});
+app.get('/api/tools/diagnostico/detalhe', (req, res) => {
+  const d = diagnosticos.detalhe(req.query.id);
+  if (!d) return fail(res, 404, 'Diagnóstico não encontrado (pode ter vencido).');
+  res.json(d);
+});
+
+app.get('/api/tools/meuip', async (req, res) => {
+  try { res.json(await meuip.descobrir({ plataforma: process.platform })); }
+  catch (e) { fail(res, 500, e.message); }
+});
+
 app.post('/api/tools/monitor/relatorio-pdf', async (req, res) => {
   const dados = relatoriopdf.normalizarDados(req.body);
   if (!dados) return fail(res, 400, 'Dados do relatório inválidos.');
@@ -1394,6 +1447,11 @@ app.post('/api/import', (req, res) => {
     }
 
     // Hosts
+    // Nomes que JÁ existiam antes desta importação. O aviso de homônimo é para
+    // o host que estava aqui, não para o irmão que o PRÓPRIO arquivo acabou de
+    // acrescentar no laço — senão dois "Firewall" (um por filial) num app vazio
+    // produziam "1 item não importado" com os dois importados.
+    const nomesAntes = new Set(d.hosts.map((x) => x.name));
     for (const h of asArray(body.hosts)) {
       const name = String((h && h.name) || '').trim();
       const hostAddr = String((h && h.host) || '').trim();
@@ -1484,7 +1542,7 @@ app.post('/api/import', (req, res) => {
       // novo: importar nunca deve destruir um registro existente, e sem o endereço
       // não há como saber se "Firewall" do arquivo é o mesmo "Firewall" daqui.
       const ex = d.hosts.find(mesmoDestino);
-      if (!ex && d.hosts.some((x) => x.name === name)) {
+      if (!ex && nomesAntes.has(name)) {
         summary.skipped.push(`"${name}": já existe um host com este nome em outro endereço — o do arquivo foi adicionado à parte, nada foi sobrescrito`);
       }
       if (ex) {
@@ -1712,7 +1770,10 @@ app.get('/api/state', (req, res) => {
     // ERP tirava os sistemas do cliente da lista sem uma palavra na tela.
     avisosDeCofre: dadosDeCofre.avisos(),
     playbooks: d.playbooks,
-    scripts: d.scripts || [],
+    // Sem o CORPO: ele ia inteiro a cada tique de 10 s da tela (2,9 MB com 300
+    // scripts) e a lista só precisa de nome/pasta. O corpo vem por
+    // GET /api/scripts/:id ao abrir — mesma regra das capturas.
+    scripts: (d.scripts || []).map(({ body, ...s }) => ({ ...s, tamanho: (body || '').length })),
     pastas: garantirPastas(d),
     profiles: d.profiles,
     favorites: d.favorites || [],
@@ -2055,6 +2116,10 @@ app.post('/api/scripts', (req, res) => {
   store.save();
   res.json(sc);
 });
+
+// A lista COMPLETA (com corpo), só sob demanda — é o que a busca por conteúdo
+// da aba Scripts usa quando há um termo digitado.
+app.get('/api/scripts', (req, res) => res.json({ scripts: garantirScripts(store.get()) }));
 
 app.get('/api/scripts/:id', (req, res) => {
   const sc = (store.get().scripts || []).find((s) => s.id === req.params.id);

@@ -566,6 +566,51 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 .mon-linha.rel { color: #d8c8ff; font-weight: 600; }
 .mon-linha.erro { color: #ffcf6b; }
 
+/* ---------- gráfico estilo Smokeping no monitor ---------- */
+.mon-grafico-cab { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; flex-wrap: wrap; }
+.mon-grafico-tit { font-weight: 600; font-size: 13px; }
+.mon-janela { font-size: 12px; padding: 3px 6px; }
+.mon-grafico { width: 100%; height: 160px; display: block; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); margin-bottom: 10px; }
+
+/* ---------- Ping/MTU por sondas ---------- */
+.sd-opcoes { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.sd-opcoes label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 3px; }
+.sd-opcoes input { width: 110px; }
+.sd-opcoes[hidden] { display: none; }
+.sd-sondas { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.sd-sondas-cab { margin-bottom: 6px; font-size: 13px; }
+.sd-lista { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.sd-grupo { flex-basis: 100%; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-top: 6px; }
+.sd-item { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.sd-alvo { font-weight: 600; margin: 10px 0 6px; }
+.sd-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel); }
+.sd-card-cab { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sd-estado { margin-left: auto; font-size: 12px; color: var(--muted); }
+.sd-estado.ok { color: var(--green); }
+.sd-estado.erro { color: var(--red); }
+.sd-estado.rodando, .sd-estado.conectando { animation: pulsar 1.2s ease-in-out infinite; }
+.sd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
+.sd-stat { display: flex; flex-direction: column; align-items: center; padding: 6px 4px; border-radius: 8px; background: var(--panel2); }
+.sd-stat-num { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.sd-stat-rot { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.sd-stat.ruim .sd-stat-num { color: var(--red); }
+.sd-spark { width: 100%; height: 60px; margin-top: 8px; color: var(--accent); display: block; }
+.sd-explica { font-size: 13px; margin: 8px 0 4px; white-space: pre-line; }
+.sd-tentativas { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.sd-tent { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: var(--panel2); font-variant-numeric: tabular-nums; }
+.sd-tent.ok { color: var(--green); }
+.sd-tent.fragmentacao { color: var(--red); }
+.sd-tent.timeout, .sd-tent.erro { color: var(--yellow); }
+
+/* ---------- Meu IP / Extrair IPs ---------- */
+.mip-tit { font-size: 13px; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.ex-texto { width: 100%; min-height: 180px; resize: vertical; font-size: 12.5px; }
+.ex-texto.alvo-solta { outline: 2px solid var(--accent); }
+.ex-resultado { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.ex-lista { list-style: none; margin: 0; padding: 0; font-size: 12.5px; max-height: 420px; overflow: auto; }
+.ex-lista li { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-bottom: 1px solid var(--border); }
+.tool-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); padding: 1px 6px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+
 .mon-alarme[hidden] { display: none !important; }
 .mon-alarme {
   display: flex; align-items: center; gap: 14px;
@@ -1140,6 +1185,11 @@ body.arrastando-host .host-group-header, body.arrastando-host .host-subgroup-hea
   align-items: flex-start;
   gap: 12px;
   background: var(--bg);
+  /* Com centenas de hosts, o navegador pula o desenho dos cartões fora da
+     tela (medido: 124 → 99 ms no teto de 800). Só no cartão, não na pasta: no
+     cabeçalho da pasta o contain cortaria o anel de foco e o alvo de soltura. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 14px;

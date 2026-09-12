@@ -1860,9 +1860,26 @@ function scriptSubgroups(grupo) {
   // continuam gravadas, prontas para quando a aba ganhar o menu.
   return subgruposDe(state.scripts, g);
 }
+// Corpos dos scripts para a BUSCA por conteúdo: o state não os traz mais.
+// Carregados uma vez, só quando há termo digitado, e invalidados quando a lista
+// muda (salvar, excluir, importar) — o `versao` é a assinatura da lista.
+let scriptsCorpo = { versao: '', mapa: null, carregando: null };
+function assinaturaDosScripts() { return state.scripts.map((s) => `${s.id}:${s.updatedAt || ''}:${s.tamanho || 0}`).join('|'); }
+async function garantirCorposDosScripts() {
+  const v = assinaturaDosScripts();
+  if (scriptsCorpo.mapa && scriptsCorpo.versao === v) return scriptsCorpo.mapa;
+  if (scriptsCorpo.carregando) return scriptsCorpo.carregando;
+  scriptsCorpo.carregando = api('/api/scripts').then((r) => {
+    const mapa = new Map((r.scripts || []).map((s) => [s.id, s.body || '']));
+    scriptsCorpo = { versao: v, mapa, carregando: null };
+    return mapa;
+  }).catch(() => { scriptsCorpo.carregando = null; return scriptsCorpo.mapa || new Map(); });
+  return scriptsCorpo.carregando;
+}
 function scriptCasa(sc, q) {
   if (!q) return true;
-  return `${sc.name} ${sc.group || ''} ${sc.subgroup || ''} ${sc.description || ''} ${sc.body || ''}`.toLowerCase().includes(q);
+  const corpo = (scriptsCorpo.mapa && scriptsCorpo.mapa.get(sc.id)) || '';
+  return `${sc.name} ${sc.group || ''} ${sc.subgroup || ''} ${sc.description || ''} ${corpo}`.toLowerCase().includes(q);
 }
 
 // O caderno tem dois lados: a LISTA (esquerda, agrupada) e o EDITOR (direita, o
@@ -1949,10 +1966,14 @@ function avisarUrlDeEspelhoMudou() {
   }
 }
 
-function abrirScript(id) {
-  const sc = state.scripts.find((s) => s.id === id);
-  if (!sc) return;
-  if (sc.id !== scriptSelId && !confirmarDescarteDeScript()) return;
+async function abrirScript(id) {
+  if (!state.scripts.some((s) => s.id === id)) return;
+  if (id !== scriptSelId && !confirmarDescarteDeScript()) return;
+  // O corpo não viaja no /api/state (só nome/pasta): busca ao abrir, como a
+  // janela solta de script já fazia.
+  let sc;
+  try { sc = await api(`/api/scripts/${encodeURIComponent(id)}`); }
+  catch (e) { toast(e.message, 'erro'); return; }
   scriptSelId = id;
   scriptEditando = { id: sc.id, name: sc.name, group: sc.group || '', subgroup: sc.subgroup || '', description: sc.description || '', body: sc.body || '' };
   renderScripts();
@@ -5966,7 +5987,7 @@ const MODO_SOLO = new URLSearchParams(location.search).get('solo') === '1';
 // então não precisa bater ponto de presença nem recarregar o estado a cada 10 s
 // — e essas janelas costumam ficar abertas o dia inteiro.
 const SOLO_FERRAMENTA = MODO_SOLO
-  && ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'senha', 'script']
+  && ['monitor', 'mtr', 'tcpping', 'portscan', 'dns', 'http', 'subnet', 'senha', 'script', 'ping', 'mtu', 'meuip', 'extrair']
     .includes(new URLSearchParams(location.search).get('tipo'));
 
 function soltarEmJanela(id) {
@@ -6347,6 +6368,9 @@ function abrirSolo() {
   if (p.tipo === 'tcpping') { abrirTcppingSolo(); return; }
   if (['portscan', 'dns', 'http', 'subnet'].includes(p.tipo)) { abrirConsultaSolo(p.tipo); return; }
   if (p.tipo === 'senha') { abrirSenhaSolo(); return; }
+  if (p.tipo === 'ping' || p.tipo === 'mtu') { abrirSondasSolo(p.tipo); return; }
+  if (p.tipo === 'meuip') { abrirMeuipSolo(); return; }
+  if (p.tipo === 'extrair') { abrirExtrairSolo(); return; }
   if (p.tipo === 'script') { abrirScriptSolo(); return; }
   if (p.tipo === 'web') {
     createWebSession({ hostId: p.hostId, hostName: p.nome, url: p.url });
@@ -7294,9 +7318,9 @@ async function loadConfigTab() {
 let monLauncherLigado = false;
 // Tamanho da janela por ferramenta.
 const TAM_FERRAMENTA = {
-  monitor: '600,560', mtr: '720,600', tcpping: '600,560',
+  monitor: '640,720', mtr: '720,600', tcpping: '600,560',
   portscan: '640,640', dns: '640,600', http: '640,560', subnet: '620,640',
-  senha: '560,520',
+  senha: '560,520', ping: '760,700', mtu: '760,640', meuip: '640,640', extrair: '760,720',
 };
 function abrirFerramenta(tipo) {
   const url = '/?' + new URLSearchParams({ solo: '1', tipo, nome: tipo }).toString();
@@ -7340,6 +7364,31 @@ let monVarredura = null;
 let monUltimoDetalhe = null; // último retrato completo (para o relatório)
 let monParado = false;
 let monRelatorioTexto = '';
+// As amostras do gráfico estilo Smokeping: { t, estado, latencia }. O servidor
+// guarda só as últimas 500 linhas; a janela acumula o que recebeu (teto de
+// 20 mil ≈ 5,5 h a 1/s), que é a "memória longa" do gráfico.
+let monAmostras = [];
+const MON_AMOSTRAS_MAX = 20000;
+let monJanelaMs = 5 * 60 * 1000; // começa curta: nos primeiros minutos a linha ficaria espremida na borda de uma janela de 30 min
+
+function monDesenharGrafico() {
+  const lib = window.smokepingLib;
+  const canvas = $('#monGrafico');
+  if (!lib || !canvas) return;
+  const cs = getComputedStyle(document.documentElement);
+  const cor = (v, padrao) => (cs.getPropertyValue(v) || '').trim() || padrao;
+  lib.desenhar(canvas, monAmostras, {
+    janelaMs: monJanelaMs,
+    cores: {
+      fundo: cor('--panel', '#fff'), grade: cor('--border', '#ddd'), texto: cor('--muted', '#888'),
+      fumaca: cor('--accent', '#0c9') + '33', fumacaDensa: cor('--accent', '#0c9') + '77',
+      mediana: cor('--accent-text', cor('--accent', '#0c9')), perda: cor('--red', '#e33'),
+    },
+  });
+  const r = lib.resumo(monAmostras, monJanelaMs);
+  const el2 = $('#monGraficoResumo');
+  if (el2) el2.textContent = r && r.n ? `p50 ${r.p50 != null ? r.p50.toFixed(1) : '—'} ms · p95 ${r.p95 != null ? r.p95.toFixed(1) : '—'} ms · perda ${r.perdaPct != null ? r.perdaPct.toFixed(1) : '0'}% · ${r.n} amostras` : '';
+}
 
 // Prepara a janela solta do monitor: mostra o painel e liga a caixa de host.
 // Se veio um ip na URL (atalho), começa direto; senão espera o "Iniciar".
@@ -7362,6 +7411,14 @@ function abrirMonitorSolo() {
   };
   $('#monIniciar').addEventListener('click', iniciar);
   $('#monIp').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); iniciar(); } });
+  // Janela do gráfico (5 min … 12 h) e redesenho ao redimensionar.
+  const sel = $('#monJanela');
+  if (sel && window.smokepingLib) {
+    for (const j of window.smokepingLib.janelas()) { const o = document.createElement('option'); o.value = String(j.ms); o.textContent = j.rotulo; if (j.ms === monJanelaMs) o.selected = true; sel.appendChild(o); }
+    sel.addEventListener('change', () => { monJanelaMs = Number(sel.value) || monJanelaMs; monDesenharGrafico(); });
+  }
+  let monResizeTimer = null;
+  window.addEventListener('resize', () => { clearTimeout(monResizeTimer); monResizeTimer = setTimeout(monDesenharGrafico, 120); });
   $('#monSilenciar').addEventListener('click', () => { monSilenciado = true; pararSirene(); });
   $('#monParar').addEventListener('click', pararMonitoramento);
   $('#monRetomar').addEventListener('click', retomarMonitoramento);
@@ -7421,7 +7478,10 @@ function monAplicar(d) {
     monUltSeq = Math.max(monUltSeq, e.seq);
     if (e.vivo) monTermLinha(`resposta de ${monIp}: tempo=${e.latencia != null ? e.latencia : '<1'} ms`, 'ok');
     else monTermLinha(`sem resposta de ${monIp} (tempo esgotado)`, 'perda');
+    monAmostras.push({ t: e.t || Date.now(), estado: e.vivo ? 'ok' : 'timeout', latencia: e.vivo ? (e.latencia != null ? e.latencia : 0) : null });
   }
+  if (monAmostras.length > MON_AMOSTRAS_MAX) monAmostras.splice(0, monAmostras.length - MON_AMOSTRAS_MAX);
+  if (d.novos.length) monDesenharGrafico();
   // contadores
   $('#monEnviados').textContent = d.total;
   $('#monPerdidos').textContent = d.perdidos;
@@ -8065,6 +8125,296 @@ function abrirSenhaInline() {
 }
 
 // Janela solta (?solo=1&tipo=senha) — sem o botão voltar (não há launcher atrás).
+// ---------- Ping e MTU por sondas ----------
+//
+// O que o isp.tools chama de "probes" (medir de vários provedores), aqui com
+// os pontos de vista que importam a quem opera a rede: esta máquina e os hosts
+// SSH cadastrados. O servidor roda o comando em cada um, em paralelo; a tela
+// acompanha por detalhe (começar/detalhe, como o TCP ping).
+const SONDAS_CFG = {
+  ping: {
+    titulo: '🏓 Ping por sondas',
+    hint: 'Latência, jitter e perda até o alvo, medidos ao mesmo tempo de cada ponto de vista escolhido.',
+    btn: 'Medir',
+  },
+  mtu: {
+    titulo: '📏 Detectar MTU',
+    hint: 'Busca binária com pacotes "não fragmentar": o maior que passa inteiro é o MTU efetivo do caminho. Uma dúzia de pings por sonda.',
+    btn: 'Detectar',
+  },
+};
+let sdTipo = null;
+let sdTimer = null;
+let sdUltimo = null;
+
+function abrirSondasSolo(tipo) {
+  sdTipo = tipo;
+  const cfg = SONDAS_CFG[tipo];
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  $('#toolsSondas').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  $('#sdTitulo').textContent = cfg.titulo;
+  $('#sdHint').textContent = cfg.hint;
+  $('#sdBtn').textContent = cfg.btn;
+  $('#sdOpcoes').hidden = tipo !== 'ping';
+  document.title = cfg.titulo.replace(/^[^ ]+ /, '') + ' — Ferramentas';
+  carregarSondas();
+  $('#sdBtn').addEventListener('click', () => sdMedir());
+  $('#sdAlvo').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sdMedir(); } });
+  $('#sdCopiar').addEventListener('click', () => { copiarParaClipboard(sdTexto()); toast('Resultado copiado.'); });
+  setTimeout(() => { try { $('#sdAlvo').focus(); } catch {} }, 40);
+}
+
+async function carregarSondas() {
+  const lista = $('#sdLista');
+  lista.replaceChildren();
+  let r;
+  try { r = await api('/api/tools/sondas'); }
+  catch (e) { el(lista, 'p', 'hint', '⚠ ' + e.message); return; }
+  // "Esta máquina" vem marcada; os hosts, agrupados pelo grupo do cadastro.
+  const porGrupo = new Map();
+  for (const s of r.sondas) {
+    const g = s.tipo === 'local' ? '' : (s.grupo || 'Sem grupo');
+    if (!porGrupo.has(g)) porGrupo.set(g, []);
+    porGrupo.get(g).push(s);
+  }
+  for (const [g, itens] of porGrupo) {
+    if (g) el(lista, 'div', 'sd-grupo', g);
+    for (const s of itens) {
+      const lab = el(lista, 'label', 'sd-item');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = s.id; cb.checked = s.tipo === 'local';
+      lab.appendChild(cb);
+      el(lab, 'span', null, s.tipo === 'local' ? '💻 ' + s.rotulo : '🖥 ' + s.rotulo);
+      if (s.espelho) el(lab, 'span', 'tag', 'cofre');
+    }
+  }
+  if (porGrupo.size === 1) el(lista, 'p', 'hint', 'Cadastre hosts SSH na aba Hosts para medir a partir deles também.');
+}
+
+function sdSelecionadas() { return $$('#sdLista input:checked').map((c) => c.value); }
+
+async function sdMedir() {
+  const alvo = $('#sdAlvo').value.trim();
+  if (!alvo) { toast('Informe o alvo.', 'erro'); return; }
+  const ids = sdSelecionadas();
+  if (!ids.length) { toast('Escolha pelo menos uma sonda.', 'erro'); return; }
+  const btn = $('#sdBtn'); btn.disabled = true;
+  $('#sdCopiar').hidden = true;
+  clearTimeout(sdTimer);
+  const res = $('#sdResultado'); res.replaceChildren(); el(res, 'p', 'hint', 'Iniciando…');
+  const corpo = sdTipo === 'ping'
+    ? { alvo, ids, pacotes: Number($('#sdPacotes').value), intervaloMs: Number($('#sdIntervalo').value), tamanho: Number($('#sdTamanho').value) }
+    : { alvo, ids };
+  try {
+    const r = await api(`/api/tools/${sdTipo}/start`, { method: 'POST', body: corpo });
+    sdAcompanhar(r.id);
+  } catch (e) { res.replaceChildren(); el(res, 'p', 'hint', '⚠ ' + e.message); btn.disabled = false; }
+}
+
+async function sdAcompanhar(id) {
+  let d;
+  try { d = await api(`/api/tools/diagnostico/detalhe?id=${encodeURIComponent(id)}`); }
+  catch (e) { $('#sdResultado').replaceChildren(); el($('#sdResultado'), 'p', 'hint', '⚠ ' + e.message); $('#sdBtn').disabled = false; return; }
+  sdUltimo = d;
+  sdRender(d);
+  if (!d.concluida) { sdTimer = setTimeout(() => sdAcompanhar(id), 1000); return; }
+  $('#sdBtn').disabled = false;
+  $('#sdCopiar').hidden = false;
+}
+
+// Latência com uma casa: o fmtMs global é para durações (segundos/ms inteiros).
+const fmtLat = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toFixed(1) + ' ms');
+
+function sdRender(d) {
+  const res = $('#sdResultado');
+  res.replaceChildren();
+  el(res, 'div', 'sd-alvo', `Alvo: ${d.alvo}${d.concluida ? '' : ' — medindo…'}`);
+  for (const s of d.sondas) {
+    const card = el(res, 'div', 'sd-card ' + s.estado);
+    const cab = el(card, 'div', 'sd-card-cab');
+    el(cab, 'strong', null, s.rotulo);
+    if (s.plataforma) el(cab, 'span', 'tag', s.plataforma);
+    el(cab, 'span', 'sd-estado ' + s.estado, { aguardando: 'aguardando', conectando: 'conectando…', rodando: 'medindo…', ok: 'ok', erro: 'erro' }[s.estado] || s.estado);
+    if (s.estado === 'erro') { el(card, 'p', 'hint warn-hint', s.erro || 'Falhou.'); continue; }
+    if (s.estado !== 'ok' || !s.resultado) continue;
+    const r = s.resultado;
+    if (d.tipo === 'ping') sdRenderPing(card, r); else sdRenderMtu(card, r);
+  }
+}
+
+function sdRenderPing(card, r) {
+  const e = r.estatisticas || {};
+  const perda = r.enviados ? Math.round((r.perdidos / r.enviados) * 100) : 0;
+  const stats = el(card, 'div', 'sd-stats');
+  const stat = (num, rot, cls) => { const b = el(stats, 'div', 'sd-stat' + (cls ? ' ' + cls : '')); el(b, 'span', 'sd-stat-num', num); el(b, 'span', 'sd-stat-rot', rot); };
+  stat(`${r.recebidos}/${r.enviados}`, 'recebidos');
+  stat(perda + '%', 'perda', perda > 0 ? 'ruim' : '');
+  stat(fmtLat(e.min), 'mín');
+  stat(fmtLat(e.avg), 'média');
+  stat(fmtLat(e.max), 'máx');
+  stat(fmtLat(e.jitter), 'jitter');
+  stat(fmtLat(e.mdev), 'desvio');
+  stat(fmtLat(e.p95), 'p95');
+  // A linha do tempo dos RTTs: um SVG simples, sem biblioteca.
+  const rtts = Array.isArray(r.rtts) ? r.rtts : [];
+  if (rtts.length) {
+    const W = 600, H = 60, max = Math.max(...rtts, 1);
+    const pts = rtts.map((v, i) => `${(i / Math.max(1, rtts.length - 1)) * W},${H - (v / max) * (H - 6) - 3}`).join(' ');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'sd-spark'); svg.setAttribute('preserveAspectRatio', 'none');
+    const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    pl.setAttribute('points', pts); pl.setAttribute('fill', 'none'); pl.setAttribute('stroke', 'currentColor'); pl.setAttribute('stroke-width', '2');
+    svg.appendChild(pl); card.appendChild(svg);
+  }
+  if (r.implementacao && r.implementacao !== 'desconhecida') el(card, 'p', 'hint', `ping: ${r.implementacao}`);
+}
+
+function sdRenderMtu(card, r) {
+  const stats = el(card, 'div', 'sd-stats');
+  const stat = (num, rot, cls) => { const b = el(stats, 'div', 'sd-stat' + (cls ? ' ' + cls : '')); el(b, 'span', 'sd-stat-num', num); el(b, 'span', 'sd-stat-rot', rot); };
+  stat(r.pmtu != null ? String(r.pmtu) : '—', 'MTU do caminho', r.pmtu == null ? 'ruim' : '');
+  stat(r.payloadMax != null ? String(r.payloadMax) : '—', 'maior payload ICMP');
+  stat(String((r.tentativas || []).length), 'pings');
+  if (r.explicacao) { const p = el(card, 'p', 'sd-explica'); p.textContent = r.explicacao; }
+  if (r.inconclusivo) el(card, 'p', 'hint warn-hint', 'Só houve tempo esgotado: com "não fragmentar", ICMP bloqueado no caminho parece fragmentação. O resultado é inconclusivo.');
+  if ((r.tentativas || []).length) {
+    const t = el(card, 'div', 'sd-tentativas');
+    for (const x of r.tentativas) el(t, 'span', 'sd-tent ' + x.resultado, `${x.payload} ${x.resultado === 'ok' ? '✓' : x.resultado === 'fragmentacao' ? '✗' : '⏱'}`);
+  }
+}
+
+function sdTexto() {
+  const d = sdUltimo;
+  if (!d) return '';
+  const linhas = [`${d.tipo === 'ping' ? 'Ping' : 'MTU'} até ${d.alvo}`];
+  for (const s of d.sondas) {
+    if (s.estado !== 'ok' || !s.resultado) { linhas.push(`- ${s.rotulo}: ${s.erro || s.estado}`); continue; }
+    const r = s.resultado;
+    if (d.tipo === 'ping') {
+      const e = r.estatisticas || {};
+      const perda = r.enviados ? Math.round((r.perdidos / r.enviados) * 100) : 0;
+      linhas.push(`- ${s.rotulo}: ${r.recebidos}/${r.enviados}, perda ${perda}%, min/avg/max ${fmtLat(e.min)}/${fmtLat(e.avg)}/${fmtLat(e.max)}, jitter ${fmtLat(e.jitter)}`);
+    } else {
+      linhas.push(`- ${s.rotulo}: MTU ${r.pmtu != null ? r.pmtu : 'inconclusivo'} (payload ${r.payloadMax != null ? r.payloadMax : '—'})`);
+    }
+  }
+  return linhas.join('\n');
+}
+
+// ---------- Meu IP ----------
+let mipUltimo = null;
+function abrirMeuipSolo() {
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  $('#toolsMeuip').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  document.title = 'Meu IP — Ferramentas';
+  $('#mipAtualizar').addEventListener('click', mipDescobrir);
+  $('#mipCopiar').addEventListener('click', () => { copiarParaClipboard(mipTexto()); toast('Copiado.'); });
+  mipDescobrir();
+}
+async function mipDescobrir() {
+  const res = $('#mipResultado'); res.replaceChildren(); el(res, 'p', 'hint', 'Descobrindo…');
+  $('#mipAtualizar').disabled = true;
+  try {
+    const d = await api('/api/tools/meuip');
+    mipUltimo = d;
+    res.replaceChildren();
+    const bloco = (titulo, info) => {
+      el(res, 'h3', 'mip-tit', titulo);
+      if (!info) { el(res, 'p', 'hint', 'Não detectado nesta conexão.'); return; }
+      tabelinha(res, [
+        ['Endereço', info.ip || '—'],
+        ['PTR (nome reverso)', info.ptr || '—'],
+        ['ASN', info.asn ? 'AS' + info.asn : '—'],
+        ['Provedor (AS)', info.provedor || '—'],
+        ['Titular do bloco (whois)', info.titular || '—'],
+        ['Prefixo anunciado', info.prefixo || '—'],
+        ['País', info.pais || '—'],
+      ]);
+    };
+    bloco('IPv4 público', d.ipv4);
+    bloco('IPv6 público', d.ipv6);
+    el(res, 'h3', 'mip-tit', 'Rede local');
+    // Sem os link-local IPv6 (fe80::, um por interface, inclusive as virtuais
+    // awdl/llw/utun): é ruído para quem quer saber "qual é o meu IP na rede".
+    const ifs = (d.interfaces || []).filter((i) => !/^fe80:/i.test(i.ip || ''));
+    ifs.sort((a, b) => (a.familia === b.familia ? 0 : a.familia === 'IPv4' ? -1 : 1));
+    const linhas = ifs.map((i) => [i.nome + (i.familia ? ' (' + i.familia + ')' : ''), `${i.cidr || i.ip}${i.mac && !/^(00:){5}00$/.test(i.mac) ? '  · ' + i.mac : ''}`]);
+    if (d.gateway) linhas.push(['Gateway padrão', d.gateway]);
+    if (linhas.length) tabelinha(res, linhas); else el(res, 'p', 'hint', 'Nenhuma interface encontrada.');
+    for (const a of d.avisos || []) el(res, 'p', 'hint warn-hint', '⚠ ' + a);
+    $('#mipCopiar').hidden = false;
+  } catch (e) { res.replaceChildren(); el(res, 'p', 'hint', '⚠ ' + e.message); }
+  finally { $('#mipAtualizar').disabled = false; }
+}
+function mipTexto() {
+  const d = mipUltimo; if (!d) return '';
+  const l = [];
+  if (d.ipv4) l.push(`IPv4: ${d.ipv4.ip}${d.ipv4.asn ? ' (AS' + d.ipv4.asn + (d.ipv4.provedor ? ' ' + d.ipv4.provedor : '') + ')' : ''}${d.ipv4.ptr ? ' ' + d.ipv4.ptr : ''}`);
+  if (d.ipv6) l.push(`IPv6: ${d.ipv6.ip}${d.ipv6.asn ? ' (AS' + d.ipv6.asn + ')' : ''}`);
+  for (const i of d.interfaces || []) l.push(`${i.nome}: ${i.ip}${i.cidr ? ' ' + i.cidr : ''}`);
+  if (d.gateway) l.push(`Gateway: ${d.gateway}`);
+  return l.join('\n');
+}
+
+// ---------- Extrair IPs (offline) ----------
+let exUltimo = null;
+function abrirExtrairSolo() {
+  if ($('#toolsLauncher')) $('#toolsLauncher').hidden = true;
+  $('#toolsExtrair').hidden = false;
+  $$('.tab-panel').forEach((el) => el.classList.toggle('active', el.id === 'tab-tools'));
+  document.body.classList.remove('term-full');
+  document.title = 'Extrair IPs — Ferramentas';
+  const ta = $('#exTexto');
+  $('#exExtrair').addEventListener('click', exExtrair);
+  $('#exExemplo').addEventListener('click', () => { ta.value = window.extrairIpsLib.exemplo(); exExtrair(); });
+  $('#exCopiar').addEventListener('click', () => { copiarParaClipboard(window.extrairIpsLib.listaTexto(exUltimo)); toast('Lista copiada.'); });
+  $('#exCsv').addEventListener('click', () => { copiarParaClipboard(window.extrairIpsLib.csv(exUltimo)); toast('CSV copiado.'); });
+  // Arquivo: pelo botão ou soltando em cima da caixa. Lido no navegador, nunca
+  // enviado a lugar nenhum. Teto de 50 MB, como no isp.tools.
+  const lerArquivo = async (f) => {
+    if (!f) return;
+    if (f.size > 50 * 1024 * 1024) { toast('Arquivo grande demais (máximo 50 MB).', 'erro'); return; }
+    try { ta.value = await f.text(); exExtrair(); } catch { toast('Não foi possível ler o arquivo.', 'erro'); }
+  };
+  $('#exArquivo').addEventListener('click', () => {
+    const inp = document.createElement('input'); inp.type = 'file';
+    inp.addEventListener('change', () => lerArquivo(inp.files && inp.files[0]));
+    inp.click();
+  });
+  ta.addEventListener('dragover', (e) => { e.preventDefault(); ta.classList.add('alvo-solta'); });
+  ta.addEventListener('dragleave', () => ta.classList.remove('alvo-solta'));
+  ta.addEventListener('drop', (e) => { e.preventDefault(); ta.classList.remove('alvo-solta'); lerArquivo(e.dataTransfer.files && e.dataTransfer.files[0]); });
+  setTimeout(() => { try { ta.focus(); } catch {} }, 40);
+}
+function exExtrair() {
+  const lib = window.extrairIpsLib;
+  const r = lib.extrair($('#exTexto').value);
+  exUltimo = r;
+  $('#exResumo').textContent = `${r.total} no total · ${r.ipv4.length} IPv4 · ${r.ipv6.length} IPv6 · ${r.faixas.length} faixa(s)`;
+  const res = $('#exResultado'); res.replaceChildren();
+  const coluna = (titulo, itens) => {
+    if (!itens.length) return;
+    const c = el(res, 'div', 'ex-col');
+    el(c, 'h3', 'mip-tit', `${titulo} (${itens.length})`);
+    const ul = el(c, 'ul', 'ex-lista mono');
+    for (const ip of itens) {
+      const li = el(ul, 'li');
+      el(li, 'span', null, ip);
+      const n = r.ocorrencias && (r.ocorrencias instanceof Map ? r.ocorrencias.get(ip) : r.ocorrencias[ip]);
+      if (n > 1) el(li, 'span', 'tag', `×${n}`);
+      const cls = lib.classificar ? lib.classificar(ip) : null;
+      if (cls && cls !== 'publico') el(li, 'span', 'tag tag-warn', cls);
+    }
+  };
+  coluna('IPv4', r.ipv4); coluna('IPv6', r.ipv6); coluna('Faixas', r.faixas);
+  const tem = r.total > 0;
+  $('#exCopiar').hidden = !tem; $('#exCsv').hidden = !tem;
+  if (!tem) el(res, 'p', 'hint', 'Nenhum endereço encontrado.');
+}
+
 function abrirSenhaSolo() {
   mostrarPainelSenha();
   if ($('#snVoltar')) $('#snVoltar').hidden = true;
@@ -8743,7 +9093,12 @@ function init() {
   let scriptSearchTimer = null;
   $('#scriptSearch').addEventListener('input', () => {
     clearTimeout(scriptSearchTimer);
-    scriptSearchTimer = setTimeout(() => { scriptQuery = $('#scriptSearch').value.toLowerCase().trim(); renderScripts(); }, 140);
+    scriptSearchTimer = setTimeout(async () => {
+      scriptQuery = $('#scriptSearch').value.toLowerCase().trim();
+      // Com termo, a busca também olha o CORPO — que vem sob demanda.
+      if (scriptQuery) await garantirCorposDosScripts();
+      renderScripts();
+    }, 140);
   });
   initHistoryControls();
   initFavorites();
