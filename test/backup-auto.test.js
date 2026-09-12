@@ -180,6 +180,59 @@ const tick = () => (t += 60000);
     + 'antes era um console.warn que ninguém via no app instalado');
 }
 
+// ---------- 9b. restauração RECUSADA não deixa rastro na pasta ----------
+
+// Um arquivo com nome nosso mas conteúdo que não é backup ([]): a recusa
+// precisa vir ANTES da cópia do estado atual — senão cada tentativa gravava
+// um snapshot novo e consumia a retenção, com a mensagem dizendo "nada foi
+// alterado".
+{
+  store.get().settings.backup = { ativo: true, pasta: '', manter: 10 };
+  store.get().hosts = [{ id: 'h', name: 'antes', host: '10.0.0.1', auth: { type: 'agent' } }];
+  store.save();
+  const falso = 'canvas-data-2000-01-01T00-00-00.000Z.json';
+  fs.writeFileSync(path.join(PADRAO, falso), '[]', { mode: 0o600 });
+  const antes = fs.readdirSync(PADRAO).length;
+  const r = backup.restaurar(falso);
+  igual(r.ok, false, 'array não é backup: recusado');
+  igual(fs.readdirSync(PADRAO).length, antes, 'a recusa NÃO gravou a cópia do estado atual');
+  igual(JSON.parse(fs.readFileSync(DADOS, 'utf8')).hosts[0].name, 'antes', 'e o data.json ficou como estava');
+  fs.unlinkSync(path.join(PADRAO, falso));
+}
+
+// ---------- 9c. .tmp órfão é limpo; um recente é respeitado ----------
+{
+  const velho = path.join(PADRAO, 'canvas-data-1999-01-01T00-00-00.000Z.json.tmp');
+  const novo = path.join(PADRAO, 'canvas-data-1999-01-01T00-00-01.000Z.json.tmp');
+  fs.writeFileSync(velho, 'x'); fs.writeFileSync(novo, 'x');
+  const antigo = Date.now() - 10 * 60 * 1000;
+  fs.utimesSync(velho, antigo / 1000, antigo / 1000);
+  store.get().hosts.push({ id: 'h2', name: 'muda', host: '10.0.0.2', auth: { type: 'agent' } });
+  store.save();
+  backup.rodarAgora(tick());
+  ok(!fs.existsSync(velho), 'o .tmp de 10 min atrás foi limpo na gravação seguinte');
+  ok(fs.existsSync(novo), 'o .tmp recente (pode ser de outra instância) ficou');
+  fs.unlinkSync(novo);
+}
+
+// ---------- 9d. o caminho da pasta personalizada tem cópia LATERAL ----------
+
+// No arranque corrompido o settings.backup morre com o data.json — e é aí que a
+// tela precisa listar as cópias. O lateral guarda só o caminho, fora do JSON.
+{
+  const lateral = path.join(DIR, '.canvas-backup-pasta');
+  const custom = path.join(DIR, 'minha-pasta');
+  backup.aplicar({ pasta: custom });
+  igual(fs.readFileSync(lateral, 'utf8').trim(), custom, 'a pasta personalizada foi anotada no lateral');
+  igual((fs.statSync(lateral).mode & 0o777).toString(8), '600', 'lateral em 0600');
+  igual((fs.statSync(custom).mode & 0o777).toString(8), '700', 'a pasta nova nasce 0700');
+  backup.aplicar({ ativo: true }); // sem `pasta`: o lateral não pode ser tocado
+  ok(fs.existsSync(lateral), 'um PUT sem a pasta não apaga o lateral');
+  backup.aplicar({ pasta: '' });
+  ok(!fs.existsSync(lateral), 'voltar à padrão remove o lateral (nada a lembrar)');
+  fs.rmSync(custom, { recursive: true, force: true });
+}
+
 // ---------- 10. RESTAURAÇÃO: o caminho de volta ----------
 
 {

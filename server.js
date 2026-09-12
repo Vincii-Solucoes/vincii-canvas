@@ -68,6 +68,12 @@ const HOST = '127.0.0.1'; // apenas esta máquina — o app guarda credenciais e
 const PORT = Number(process.env.PORT || 3033);
 
 const app = express();
+app.disable('x-powered-by'); // cosmético; o app só escuta em 127.0.0.1
+// Resposta de API é estado vivo, não cacheável: sem isto o Chromium do Electron
+// guardava /api/state (o inventário de hosts) em userData/Cache para revalidar
+// por ETag — uma cópia fora do data.json e do backup, e inútil porque a porta
+// muda a cada arranque. Os estáticos ficam como estão.
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 // ---------- proteção contra acesso de páginas externas ----------
 // O app escuta em 127.0.0.1, mas isso NÃO basta: (a) WebSocket não é coberto
@@ -1125,7 +1131,8 @@ app.post('/api/backup/agora', (req, res) => {
   const porque = r.motivo === 'desligado' ? 'O backup automático está desligado.'
     : r.motivo === 'sem-dados' ? 'Ainda não há data.json para copiar.'
       : r.motivo === 'origem-invalida' ? 'O data.json atual está ilegível — nada foi copiado.'
-        : (r.erro || 'Não foi possível fazer o backup.');
+        : r.motivo === 'arranque-corrompido' ? 'O app abriu vazio por corrupção ou apagamento do data.json: o backup fica pausado até você restaurar uma cópia (veja o aviso acima).'
+          : (r.erro || 'Não foi possível fazer o backup.');
   return fail(res, 400, porque);
 });
 
@@ -1585,11 +1592,16 @@ app.post('/api/import', (req, res) => {
     // Pastas declaradas (as vazias — as demais já entraram pelos hosts).
     {
       const lista = garantirPastas(d);
+      // Um Set para o laço inteiro (declarar reconstruía o dele a cada <pasta>:
+      // um arquivo hostil com 200 mil entradas travava o app por 40 s), e
+      // parada quando a lista enche — daí em diante nada mais entraria.
+      const existentes = new Set(lista.map(pastas.chave));
       let n = 0;
       for (const p of asArray(body.pastas)) {
+        if (lista.length >= pastas.MAX_DECLARADAS) break;
         const v = pastas.normalizar(p);
         if (!v) continue;
-        n += pastas.declarar(lista, v.colecao, v.group, v.caminho);
+        n += pastas.declarar(lista, v.colecao, v.group, v.caminho, existentes);
       }
       if (n) summary.pastas = n;
     }
@@ -1602,6 +1614,13 @@ app.post('/api/import', (req, res) => {
       if (typeof s.apiKey === 'string' && s.apiKey.trim()) { d.settings.apiKey = s.apiKey.trim(); summary.settings = true; }
       if (typeof s.termFont === 'string' && s.termFont.length <= 200 && /^[A-Za-z0-9 ,"'\-]+$/.test(s.termFont)) { d.settings.termFont = s.termFont; summary.settings = true; }
       if (Number.isFinite(Number(s.termFontSize))) { d.settings.termFontSize = Math.min(28, Math.max(8, Math.round(Number(s.termFontSize)))); summary.settings = true; }
+      // Retenção do backup automático (mesmo clamp de lib/backup.js). `ativo` e
+      // `pasta` desta máquina ficam como estão.
+      if (Number.isFinite(Number(s.backupManter))) {
+        const b = (d.settings.backup && typeof d.settings.backup === 'object' && !Array.isArray(d.settings.backup)) ? d.settings.backup : {};
+        d.settings.backup = { ...b, manter: Math.min(100, Math.max(1, Math.round(Number(s.backupManter)))) };
+        summary.settings = true;
+      }
     }
 
     // Favoritos: o arquivo referencia o host pelo NOME (ids mudam entre
@@ -1611,7 +1630,7 @@ app.post('/api/import', (req, res) => {
     for (const f of asArray(body.favorites)) {
       const command = String((f && f.command) || '').trim();
       if (!command || command.length > 4000) { summary.skipped.push('favorito inválido'); continue; }
-      const label = String((f && f.label) || '').trim().slice(0, 80);
+      const label = String((f && f.label) || '').trim().slice(0, 4000); // mesmo teto do cadastro
       let hostId = null;
       if (f && f.hostName) {
         const nome = String(f.hostName);
@@ -1640,6 +1659,23 @@ app.post('/api/import', (req, res) => {
       if (body.prefs.theme === 'light' || body.prefs.theme === 'dark') ui.theme = body.prefs.theme;
       for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
         if (typeof body.prefs[k] === 'boolean') ui[k] = body.prefs[k];
+      }
+      // Gerador de senhas: mesma validação do PUT /api/prefs.
+      const sn = body.prefs.senha;
+      if (sn && typeof sn === 'object' && !Array.isArray(sn)) {
+        const atual = (ui.senha && typeof ui.senha === 'object') ? ui.senha : {};
+        const tam = Math.round(Number(sn.tamanho));
+        if (Number.isFinite(tam) && tam >= 4 && tam <= 128) atual.tamanho = tam;
+        for (const k of ['minusculas', 'maiusculas', 'numeros', 'simbolos', 'semAmbiguos']) {
+          if (typeof sn[k] === 'boolean') atual[k] = sn[k];
+        }
+        ui.senha = atual;
+      }
+      // Pastas recolhidas: UNIR com as daqui (importar não pode "abrir" o que
+      // a pessoa recolheu nesta máquina).
+      if (Array.isArray(body.prefs.pastasFechadas)) {
+        const vindas = body.prefs.pastasFechadas.filter((x) => typeof x === 'string' && x && x.length < 300);
+        ui.pastasFechadas = [...new Set([...(Array.isArray(ui.pastasFechadas) ? ui.pastasFechadas : []), ...vindas])].slice(-500);
       }
       summary.prefs = true;
     }

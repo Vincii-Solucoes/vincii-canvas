@@ -57,6 +57,26 @@ const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
   ok(pastas.das(L, 'hosts', 'Infra').includes('Rede'), 'a mãe fica');
 }
 
+// ---------- 2b. mover pasta que NÃO existe não inventa o destino ----------
+{
+  const L = [];
+  pastas.declarar(L, 'hosts', 'Infra', 'Rede');
+  igual(pastas.mover(L, 'hosts', 'Infra', 'NaoExiste', 'Fantasma/Sub'), 0, 'nada para mover');
+  igual(pastas.das(L, 'hosts', 'Infra'), ['Rede'], 'e o destino NÃO foi declarado');
+  igual(pastas.mover(L, 'hosts', 'OutroGrupo', 'Rede', 'X'), 0, 'grupo que não existe: nada');
+  igual(pastas.das(L, 'hosts', 'OutroGrupo'), [], 'e nenhum grupo novo nasceu');
+}
+
+// ---------- 2c. limitarCaminho é linear ----------
+{
+  const { limitarCaminho } = require('../public/agrupar');
+  const t0 = process.hrtime.bigint();
+  const r = limitarCaminho('a/'.repeat(60000), 200);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  ok(ms < 100, `60 mil níveis em ${ms.toFixed(1)} ms (o laço antigo levava ~12 s)`);
+  ok(r.length <= 200 && !r.endsWith('/'), 'resultado dentro do teto e canônico');
+}
+
 // ---------- 3. sanear: lista vinda de arquivo ----------
 {
   const suja = [

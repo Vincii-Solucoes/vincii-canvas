@@ -273,7 +273,11 @@ function closeModal() {
 // Arquivos. Devolve o texto, ou null se a pessoa cancelar/fechar.
 function pedirTexto(titulo, rotulo, valor = '', atributos = '') {
   return new Promise((resolve) => {
-    openModal(titulo, `<label>${rotulo} <input id="f_pedirTexto" required ${atributos}></label>`);
+    // O rótulo pode carregar dado do usuário (nome de grupo/pasta, que também
+    // vem de XML importado): entra escapado, nunca como HTML. `atributos` é
+    // sempre literal do código-fonte — manter assim.
+    const rotuloSeguro = String(rotulo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    openModal(titulo, `<label>${rotuloSeguro} <input id="f_pedirTexto" required ${atributos}></label>`);
     const campo = $('#f_pedirTexto');
     campo.value = valor == null ? '' : String(valor);
     setTimeout(() => { try { campo.focus(); campo.select(); } catch {} }, 30);
@@ -3952,6 +3956,7 @@ function xmlToConfig(text) {
         if (s.getAttribute('apiKey')) out.apiKey = s.getAttribute('apiKey');
         if (s.getAttribute('termFont')) out.termFont = s.getAttribute('termFont');
         if (s.getAttribute('termFontSize')) out.termFontSize = Number(s.getAttribute('termFontSize'));
+        if (s.getAttribute('backupManter')) out.backupManter = Number(s.getAttribute('backupManter'));
         return out;
       })(),
       prefs: (() => {
@@ -3963,6 +3968,20 @@ function xmlToConfig(text) {
           const v = p.getAttribute(k);
           if (v === 'true' || v === 'false') out[k] = v === 'true';
         }
+        const sn = p.querySelector(':scope > senha');
+        if (sn) {
+          const o = {};
+          const t = Number(sn.getAttribute('tamanho'));
+          if (Number.isInteger(t) && t >= 4 && t <= 128) o.tamanho = t;
+          for (const k of ['minusculas', 'maiusculas', 'numeros', 'simbolos', 'semAmbiguos']) {
+            const v = sn.getAttribute(k);
+            if (v === 'true' || v === 'false') o[k] = v === 'true';
+          }
+          if (Object.keys(o).length) out.senha = o;
+        }
+        const fechadas = [...p.querySelectorAll(':scope > pastaFechada')]
+          .map((f) => f.getAttribute('chave') || '').filter(Boolean);
+        if (fechadas.length) out.pastasFechadas = fechadas;
         return Object.keys(out).length ? out : null;
       })(),
     },
@@ -4001,7 +4020,7 @@ async function importFromText(text) {
   // para trocar modelo de IA, fonte do terminal e tema com o diálogo dizendo
   // "0 host(s), 0 playbook(s)…".
   if (c.settings && Object.keys(c.settings).length) linhas.push('• configurações (IA e terminal)');
-  if (c.prefs) linhas.push('• preferências da interface (tema, painéis)');
+  if (c.prefs) linhas.push('• preferências da interface (tema, painéis, gerador de senhas, pastas recolhidas)');
   if (!linhas.length) { toast('Este arquivo não tem nada para importar.', 'erro'); return; }
 
   // O cofre é o único item do arquivo que redireciona uma CREDENCIAL SUA: o

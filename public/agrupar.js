@@ -52,9 +52,19 @@ function normalizarCaminho(caminho) {
 // pasta que ninguém digitou) ou deixava barra pendurada no fim. Se nem o
 // primeiro nível couber, fica só ele, aparado.
 function limitarCaminho(caminho, max) {
-  const segs = segmentos(caminho);
-  while (segs.length > 1 && segs.join(SEPARADOR).length > max) segs.pop();
-  return segs.join(SEPARADOR).slice(0, max);
+  // Uma passada, acumulando o tamanho — o laço antigo refazia o join a cada
+  // nível removido (O(n²)) e um caminho de 120 KB parava o servidor por ~12 s.
+  // Mesma regra: o primeiro nível sempre entra (aparado no teto); cada nível
+  // seguinte só entra se couber inteiro.
+  const out = [];
+  let tam = 0;
+  for (const s of segmentos(caminho)) {
+    const novo = tam + (out.length ? SEPARADOR.length : 0) + s.length;
+    if (out.length && novo > max) break;
+    out.push(s);
+    tam = novo;
+  }
+  return out.join(SEPARADOR).slice(0, max);
 }
 
 // Os níveis de um caminho, já aparados e sem os vazios.

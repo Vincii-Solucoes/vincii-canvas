@@ -356,6 +356,32 @@ const HOST_REF = {
   ok(!/[￾￿]/.test(xml), 'noncharacters Unicode não podem chegar ao arquivo');
 }
 
+// ---------- 5b. o que a validação da v1.73 descobriu perdido no round-trip ----------
+
+// Um valor de variável com CR cru dentro de <var> voltava sem o CR (o XML
+// normaliza quebra de linha); as preferências do gerador de senhas e as pastas
+// recolhidas não iam; a retenção do backup também não.
+{
+  const xml = buildXml({
+    hosts: [], playbooks: [], profiles: [], favorites: [{ command: 'c1\rc2', label: 'x' }],
+    globals: { V: 'a\rb' },
+    settings: {
+      backup: { ativo: true, pasta: '/so/desta/maquina', manter: 7 },
+      ui: { theme: 'dark', senha: { tamanho: 24, simbolos: false, semAmbiguos: true }, pastasFechadas: ['Infra|Rede', 'Infra|Rede/Core'] },
+    },
+  }, {});
+  ok(!/\r/.test(xml), 'nenhum CR cru no arquivo');
+  ok(xml.includes('>a&#13;b<'), 'o CR da variável vai como referência numérica');
+  ok(xml.includes('backupManter="7"'), 'a retenção do backup viaja');
+  ok(!xml.includes('/so/desta/maquina'), 'a PASTA do backup não viaja (é desta máquina)');
+  ok(!/backupAtivo/.test(xml), 'ativo/desligado não viaja (nasce ligado em toda instalação)');
+  ok(xml.includes('<senha tamanho="24" simbolos="false" semAmbiguos="true"/>'), 'preferências do gerador de senhas');
+  ok(xml.includes('<pastaFechada chave="Infra|Rede/Core"/>'), 'pastas recolhidas');
+  // sem filhos, <prefs> continua sendo o elemento vazio de sempre (arquivo idêntico ao antigo)
+  const semFilhos = buildXml({ hosts: [], settings: { ui: { theme: 'dark' } } }, {});
+  ok(semFilhos.includes('<prefs theme="dark"/>'), 'sem senha/pastas, <prefs> fica como era');
+}
+
 // ---------- 6. segredos só saem quando pedidos ----------
 
 {
