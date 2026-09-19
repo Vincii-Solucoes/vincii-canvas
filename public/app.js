@@ -3977,6 +3977,7 @@ function xmlToConfig(text) {
         if (s.getAttribute('apiKey')) out.apiKey = s.getAttribute('apiKey');
         if (s.getAttribute('termFont')) out.termFont = s.getAttribute('termFont');
         if (s.getAttribute('termFontSize')) out.termFontSize = Number(s.getAttribute('termFontSize'));
+        if (s.getAttribute('termScrollback') !== null && s.getAttribute('termScrollback') !== '') out.termScrollback = Number(s.getAttribute('termScrollback'));
         if (s.getAttribute('backupManter')) out.backupManter = Number(s.getAttribute('backupManter'));
         return out;
       })(),
@@ -4598,8 +4599,15 @@ async function loadLocalInfo() {
 
 const DEFAULT_TERM_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 const DEFAULT_TERM_FONT_SIZE = 13;
+// Linhas guardadas na rolagem: 0 = sem limite. O xterm aceita até ~4 bilhões;
+// o teto de verdade é a memória da janela (cada linha guardada ocupa cerca de
+// 12 bytes por coluna) — por isso a tela avisa ao escolher "sem limite".
+const DEFAULT_TERM_SCROLLBACK = 50000;
+const SCROLLBACK_SEM_LIMITE = 4000000000;
 let termFont = DEFAULT_TERM_FONT;
 let termFontSize = DEFAULT_TERM_FONT_SIZE;
+let termScrollback = DEFAULT_TERM_SCROLLBACK;
+const scrollbackDoXterm = () => (termScrollback === 0 ? SCROLLBACK_SEM_LIMITE : termScrollback);
 
 function activeSession() { return sessions.find((s) => s.id === activeSessionId) || null; }
 function activeHostId() { const s = activeSession(); return s ? s.hostId : null; }
@@ -4608,6 +4616,9 @@ function applyTermAppearance() {
   for (const s of sessions) {
     s.term.options.fontFamily = termFont;
     s.term.options.fontSize = termFontSize;
+    // Vale para os terminais JÁ abertos: o xterm redimensiona o anel na hora
+    // (encolher descarta as linhas mais antigas).
+    try { s.term.options.scrollback = scrollbackDoXterm(); } catch {}
   }
   fitActive();
 }
@@ -5108,7 +5119,7 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
   const term = new Terminal({
     cursorBlink: true, fontSize: termFontSize, fontFamily: termFont,
     theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1' },
-    scrollback: 5000,
+    scrollback: scrollbackDoXterm(),
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
@@ -5678,7 +5689,7 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
     fontSize: termFontSize,
     fontFamily: termFont,
     theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1' },
-    scrollback: 5000,
+    scrollback: scrollbackDoXterm(),
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
@@ -6996,6 +7007,7 @@ async function refreshAiVisibility() {
     applyAiVisibility(s.hasApiKey);
     if (s.termFont) termFont = s.termFont;
     if (s.termFontSize) termFontSize = s.termFontSize;
+    if (s.termScrollback !== undefined) termScrollback = s.termScrollback;
     applyTermAppearance();
   } catch {
     applyAiVisibility(false);
@@ -7295,6 +7307,16 @@ async function loadConfigTab() {
   // aparência do terminal
   termFont = s.termFont || DEFAULT_TERM_FONT;
   termFontSize = s.termFontSize || DEFAULT_TERM_FONT_SIZE;
+  if (s.termScrollback !== undefined) termScrollback = s.termScrollback;
+  const scrollSel = $('#cfgTermScroll');
+  if (scrollSel) {
+    if (![...scrollSel.options].some((o) => Number(o.value) === termScrollback)) {
+      // valor fora da lista (importado ou editado à mão): entra como opção própria
+      const o = document.createElement('option'); o.value = String(termScrollback); o.textContent = `${termScrollback.toLocaleString('pt-BR')} linhas`; scrollSel.appendChild(o);
+    }
+    scrollSel.value = String(termScrollback);
+    atualizarAvisoScroll();
+  }
   const fontSel = $('#cfgTermFont');
   if (![...fontSel.options].some((o) => o.value === termFont)) fontSel.selectedIndex = 0;
   else fontSel.value = termFont;
@@ -8951,18 +8973,29 @@ function updateFontPreview() {
   pv.style.fontSize = size + 'px';
 }
 
+// "Sem limite" merece um aviso: a memória da janela é o teto de verdade.
+function atualizarAvisoScroll() {
+  const sel = $('#cfgTermScroll');
+  const aviso = $('#cfgTermScrollAviso');
+  if (!sel || !aviso) return;
+  const v = Number(sel.value);
+  aviso.hidden = !(v === 0 || v >= 500000);
+}
+
 // aplica ao terminal e salva — chamado pelo botão "Salvar"
 async function saveTermAppearance() {
   termFont = $('#cfgTermFont').value || DEFAULT_TERM_FONT;
   const n = Number($('#cfgTermSize').value);
   termFontSize = Number.isFinite(n) ? Math.min(28, Math.max(8, Math.round(n))) : DEFAULT_TERM_FONT_SIZE;
   $('#cfgTermSize').value = termFontSize; // reflete o valor já normalizado (8–28)
+  const sc = $('#cfgTermScroll');
+  if (sc) { const v = Number(sc.value); termScrollback = Number.isFinite(v) && v >= 0 ? Math.round(v) : DEFAULT_TERM_SCROLLBACK; }
   updateFontPreview();
   applyTermAppearance();
   const btn = $('#cfgSaveTerm');
   if (btn) btn.disabled = true;
   try {
-    await api('/api/settings', { method: 'PUT', body: { termFont, termFontSize } });
+    await api('/api/settings', { method: 'PUT', body: { termFont, termFontSize, termScrollback } });
     toast('Aparência do terminal salva.');
   } catch (e) {
     toast(e.message, 'erro');
@@ -9179,6 +9212,8 @@ function init() {
   if (btnVazio) btnVazio.addEventListener('click', () => openLocalSession());
   $('#cfgTermFont').addEventListener('change', updateFontPreview);
   $('#cfgTermSize').addEventListener('input', updateFontPreview);
+  const scSel = $('#cfgTermScroll');
+  if (scSel) scSel.addEventListener('change', atualizarAvisoScroll);
   $('#cfgSaveTerm').addEventListener('click', saveTermAppearance);
   $('#bkSalvar').addEventListener('click', salvarBackup);
   $('#bkEscolher').addEventListener('click', escolherPastaBackup);

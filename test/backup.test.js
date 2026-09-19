@@ -418,4 +418,25 @@ const HOST_REF = {
     'favorito global não inventa referência de host');
 }
 
+// v1.75.0: as linhas de rolagem do terminal são configuráveis; viajam no XML
+// (inclusive o 0 = "sem limite") e a normalização protege o servidor.
+{
+  const ai = require('../lib/ai');
+  igual(ai.normalizarScrollback(undefined), ai.DEFAULT_TERM_SCROLLBACK, 'sem valor → padrão');
+  igual(ai.normalizarScrollback(''), ai.DEFAULT_TERM_SCROLLBACK, 'vazio → padrão');
+  igual(ai.normalizarScrollback('abc'), ai.DEFAULT_TERM_SCROLLBACK, 'lixo → padrão');
+  igual(ai.normalizarScrollback(-5), ai.DEFAULT_TERM_SCROLLBACK, 'negativo → padrão');
+  igual(ai.normalizarScrollback(0), 0, '0 é "sem limite" e sobrevive');
+  igual(ai.normalizarScrollback('0'), 0, '"0" em texto também');
+  igual(ai.normalizarScrollback(10), 1000, 'abaixo do piso sobe para 1000');
+  igual(ai.normalizarScrollback(123456.7), 123457, 'arredonda');
+  igual(ai.normalizarScrollback(1e12), ai.TERM_SCROLLBACK_MAX, 'acima do teto cai no teto');
+  for (const v of [0, 50000, 1000000]) {
+    const xml = buildXml({ hosts: [], playbooks: [], profiles: [], favorites: [], globals: {}, settings: { termScrollback: v } }, {});
+    ok(xml.includes(`termScrollback="${v}"`), `termScrollback ${v} viaja no XML`);
+  }
+  const semNada = buildXml({ hosts: [], playbooks: [], profiles: [], favorites: [], globals: {}, settings: {} }, {});
+  ok(!semNada.includes('termScrollback'), 'sem configuração, o atributo não aparece (arquivo igual ao antigo)');
+}
+
 console.log(`\n${n} verificações passaram`);

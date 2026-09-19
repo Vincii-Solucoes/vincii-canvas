@@ -59,6 +59,8 @@ const cofres = require('./lib/cofres');
 const segredosDeCofre = require('./lib/cofresegredos');
 const dadosDeCofre = require('./lib/dadosdecofre');
 const termsessions = require('./lib/termsessions');
+// O buffer de reanexar das sessões soltas acompanha as linhas da rolagem.
+termsessions.configurarLinhas(() => ai.normalizarScrollback((store.get().settings || {}).termScrollback));
 const pkg = require('./package.json');
 
 // Uma lista só. Ela vivia copiada em TRÊS pontos deste arquivo (cadastro,
@@ -1672,6 +1674,7 @@ app.post('/api/import', (req, res) => {
       if (typeof s.apiKey === 'string' && s.apiKey.trim()) { d.settings.apiKey = s.apiKey.trim(); summary.settings = true; }
       if (typeof s.termFont === 'string' && s.termFont.length <= 200 && /^[A-Za-z0-9 ,"'\-]+$/.test(s.termFont)) { d.settings.termFont = s.termFont; summary.settings = true; }
       if (Number.isFinite(Number(s.termFontSize))) { d.settings.termFontSize = Math.min(28, Math.max(8, Math.round(Number(s.termFontSize)))); summary.settings = true; }
+      if (s.termScrollback !== undefined && Number.isFinite(Number(s.termScrollback))) { d.settings.termScrollback = ai.normalizarScrollback(Number(s.termScrollback)); summary.settings = true; }
       // Retenção do backup automático (mesmo clamp de lib/backup.js). `ativo` e
       // `pasta` desta máquina ficam como estão.
       if (Number.isFinite(Number(s.backupManter))) {
@@ -2478,6 +2481,11 @@ app.put('/api/settings', (req, res) => {
     const n = Number(body.termFontSize);
     if (!Number.isFinite(n)) return fail(res, 400, 'Tamanho de fonte inválido.');
     s.termFontSize = Math.min(28, Math.max(8, Math.round(n)));
+  }
+  if (body.termScrollback !== undefined) {
+    const n = Number(body.termScrollback);
+    if (!Number.isFinite(n) || n < 0) return fail(res, 400, 'Quantidade de linhas inválida.');
+    s.termScrollback = ai.normalizarScrollback(n);
   }
   store.save();
   res.json(ai.publicSettings());

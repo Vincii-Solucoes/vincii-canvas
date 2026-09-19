@@ -111,12 +111,45 @@ function comCanal(sessao) {
 
 {
   // Buffer em anel: o começo é descartado, o fim (a tela atual) sobrevive.
+  ts.configurarLinhas(() => 1000); // 1000 linhas × 160 B < mínimo → vale o mínimo
+  igual(ts.tetoDoBuffer(), ts.MAX_BUFFER_MIN, 'configuração pequena cai no piso de 256 KB');
+  const teto = ts.tetoDoBuffer();
   const s = ts.criar({ rotulo: 'x' });
   comCanal(s);
-  s.enviar({ t: 'o', d: 'A'.repeat(ts.MAX_BUFFER) });
+  s.enviar({ t: 'o', d: 'A'.repeat(teto) });
   s.enviar({ t: 'o', d: 'FIM-VISIVEL' });
-  ok(s.buffer.length <= ts.MAX_BUFFER, 'o buffer não pode passar do teto');
-  ok(s.buffer.endsWith('FIM-VISIVEL'), 'o mais recente é o que precisa sobreviver');
+  ok(s.bufferBytes <= teto, 'o buffer não pode passar do teto');
+  ok(s.pedacos.join('').endsWith('FIM-VISIVEL'), 'o mais recente é o que precisa sobreviver');
+  // Um pedaço só, maior que o teto: corta pelo fim, sem estourar.
+  s.enviar({ t: 'o', d: 'B'.repeat(teto * 2) + 'ULTIMO' });
+  ok(s.bufferBytes <= teto, 'um pedaço gigante também respeita o teto');
+  ok(s.pedacos.join('').endsWith('ULTIMO'), 'e sobrevive o fim dele');
+  s.encerrar('fim');
+}
+
+{
+  // O teto acompanha a configuração de linhas da rolagem.
+  ts.configurarLinhas(() => undefined);
+  igual(ts.tetoDoBuffer(), 50000 * ts.BYTES_POR_LINHA, 'sem configuração vale o padrão de 50 mil linhas');
+  ts.configurarLinhas(() => 200000);
+  igual(ts.tetoDoBuffer(), 200000 * ts.BYTES_POR_LINHA, '200 mil linhas → 32 MB');
+  ts.configurarLinhas(() => 0);
+  igual(ts.tetoDoBuffer(), ts.MAX_BUFFER_ABS, '"sem limite" no xterm = teto absoluto no servidor');
+  ts.configurarLinhas(() => 5000000);
+  igual(ts.tetoDoBuffer(), ts.MAX_BUFFER_ABS, 'acima do teto absoluto, o teto absoluto');
+  ts.configurarLinhas(() => { throw new Error('store quebrada'); });
+  igual(ts.tetoDoBuffer(), 50000 * ts.BYTES_POR_LINHA, 'a função falhando não derruba a sessão');
+  ts.configurarLinhas(() => 1000);
+  // O buffer reexibido ao reatar é a concatenação dos pedaços.
+  const s = ts.criar({ rotulo: 'x' });
+  comCanal(s);
+  s.enviar({ t: 'o', d: 'um ' });
+  s.enviar({ t: 'e', d: 'dois ' });
+  s.enviar({ t: 'o', d: 'três' });
+  const ws = socketFalso();
+  s.atacar(ws);
+  const replay = ws.recebidas.find((m) => m.t === 'o');
+  igual(replay && replay.d, 'um dois três', 'ao reatar, a tela volta inteira e na ordem');
   s.encerrar('fim');
 }
 
@@ -129,9 +162,9 @@ function comCanal(sessao) {
   s.encerrar('teste');
   igual(ts.pegar(s.id), undefined, 'sai do registro ao encerrar');
   ok(!s.atacar(socketFalso()), 'não dá para reatar a uma sessão encerrada');
-  const antes = s.buffer.length;
+  const antes = s.bufferBytes;
   s.enviar({ t: 'o', d: 'depois do fim' });
-  igual(s.buffer.length, antes, 'nem acumula saída depois de encerrada');
+  igual(s.bufferBytes, antes, 'nem acumula saída depois de encerrada');
   ok(ws.recebidas.some((m) => m.t === 'x'), 'a janela é avisada do fim');
 }
 

@@ -820,7 +820,19 @@ try {
         <label>Tamanho (px)
           <input id="cfgTermSize" type="number" min="8" max="28" step="1">
         </label>
+        <label>Linhas guardadas na rolagem
+          <select id="cfgTermScroll">
+            <option value="5000">5.000</option>
+            <option value="20000">20.000</option>
+            <option value="50000">50.000 (padrão)</option>
+            <option value="100000">100.000</option>
+            <option value="500000">500.000</option>
+            <option value="1000000">1.000.000</option>
+            <option value="0">Sem limite</option>
+          </select>
+        </label>
       </div>
+      <p id="cfgTermScrollAviso" class="hint warn-hint" hidden>⚠ Sem limite (ou acima de 500 mil): a rolagem cresce até a memória da janela acabar — cada linha guardada ocupa cerca de 12 bytes por coluna. Um <code>tail -f</code> de horas ou um <code>cat</code> de arquivo gigante pode travar a aba. Vale para os terminais já abertos assim que você salvar.</p>
       <div id="cfgFontPreview" class="font-preview">demo@servidor:~$ echo "Olá {{host.name}}"  0123456789 |&gt;_</div>
       <div class="btn-row">
         <span class="spacer"></span>
