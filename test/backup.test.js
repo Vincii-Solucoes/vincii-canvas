@@ -439,4 +439,18 @@ const HOST_REF = {
   ok(!semNada.includes('termScrollback'), 'sem configuração, o atributo não aparece (arquivo igual ao antigo)');
 }
 
+// v1.76.0: a última configuração da porta serial (inclusive o Backspace) viaja
+// em <prefs><serial/>, normalizada — valor fora da lista não chega ao arquivo.
+{
+  const xml = buildXml({
+    hosts: [], playbooks: [], profiles: [], favorites: [], globals: {},
+    settings: { ui: { serial: { baudRate: '115200', fimDeLinha: 'crlf', backspace: 'del', ecoLocal: true, parity: 'mark' } } },
+  }, {});
+  ok(xml.includes('<serial baudRate="115200" dataBits="8" parity="none" stopBits="1" flowControl="none" fimDeLinha="crlf" backspace="del" ecoLocal="true"/>'),
+    'serial viaja completa e normalizada (paridade "mark" caiu no padrão)');
+  const sem = buildXml({ hosts: [], playbooks: [], profiles: [], favorites: [], globals: {}, settings: { ui: {} } }, {});
+  ok(!sem.includes('<serial'), 'sem configuração serial, nada de <serial>');
+  ok(!sem.includes('<prefs>'), 'e <prefs> continua sem filhos (arquivo igual ao antigo)');
+}
+
 console.log(`\n${n} verificações passaram`);

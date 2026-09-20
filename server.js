@@ -52,6 +52,7 @@ function declararPastaDe(d, colecao, group, subgroup) {
   pastas.declarar(garantirPastas(d), colecao, group, subgroup);
 }
 const weburl = require('./public/weburl');
+const serialLib = require('./public/serial');
 const agendaLib = require('./public/agenda');
 const presenca = require('./lib/presenca');
 const credenciais = require('./lib/credenciais');
@@ -598,6 +599,9 @@ app.put('/api/prefs', (req, res) => {
     if (typeof b[k] === 'boolean') ui[k] = b[k];
   }
   if (typeof b.updateDismissed === 'string') ui.updateDismissed = b.updateDismissed.slice(0, 40);
+  // Última configuração da porta serial (baud, fim de linha, Backspace, eco):
+  // normalizada pela mesma lib da tela — nunca guarda valor fora da lista.
+  if (b.serial && typeof b.serial === 'object' && !Array.isArray(b.serial)) ui.serial = serialLib.normalizarConfig(b.serial);
   // preferências do gerador de senhas — só campos conhecidos e saneados
   if (b.senha && typeof b.senha === 'object' && !Array.isArray(b.senha)) {
     const atual = (ui.senha && typeof ui.senha === 'object') ? ui.senha : {};
@@ -1732,6 +1736,8 @@ app.post('/api/import', (req, res) => {
         }
         ui.senha = atual;
       }
+      const se = body.prefs.serial;
+      if (se && typeof se === 'object' && !Array.isArray(se)) ui.serial = serialLib.normalizarConfig(se);
       // Pastas recolhidas: UNIR com as daqui (importar não pode "abrir" o que
       // a pessoa recolheu nesta máquina).
       if (Array.isArray(body.prefs.pastasFechadas)) {

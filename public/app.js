@@ -15,14 +15,14 @@ let currentRun = null;
 const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
-  abrirLocalSozinho: null, senha: null, pastasFechadas: null,
+  abrirLocalSozinho: null, senha: null, pastasFechadas: null, serial: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
   theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
   recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
-  pastasFechadas: 'vc-pastas-fechadas',
+  pastasFechadas: 'vc-pastas-fechadas', serial: 'vc-serial',
 };
 
 function lsGet(key) {
@@ -4004,6 +4004,15 @@ function xmlToConfig(text) {
         const fechadas = [...p.querySelectorAll(':scope > pastaFechada')]
           .map((f) => f.getAttribute('chave') || '').filter(Boolean);
         if (fechadas.length) out.pastasFechadas = fechadas;
+        const se = p.querySelector(':scope > serial');
+        if (se) {
+          const o = {};
+          for (const k of ['baudRate', 'dataBits', 'parity', 'stopBits', 'flowControl', 'fimDeLinha', 'backspace', 'ecoLocal']) {
+            const v = se.getAttribute(k);
+            if (v !== null && v !== '') o[k] = k === 'ecoLocal' ? v === 'true' : v;
+          }
+          if (Object.keys(o).length) out.serial = o;
+        }
         return Object.keys(out).length ? out : null;
       })(),
     },
@@ -4874,8 +4883,10 @@ function openQuickConnectModal() {
         <label>Stop bits <select id="qc_stopBits"></select></label>
         <label>Controle de fluxo <select id="qc_flow"></select></label>
         <label>Fim de linha (Enter) <select id="qc_eol"></select></label>
+        <label>Tecla Backspace envia <select id="qc_bs"></select></label>
       </div>
-      <label class="check-inline"><input type="checkbox" id="qc_echo"> Eco local (mostrar o que você digita)</label>
+      <p class="hint">Se o Backspace não apagar (nada acontece ou aparece <code>^?</code>/<code>^H</code>), troque o que ele envia: OLTs, switches e a maioria dos consoles querem <b>Ctrl+H</b>; um Linux na serial quer <b>DEL</b>. Na sessão, <b>Ctrl+Backspace</b> manda o outro código — se ele apagar, é só trocar aqui.</p>
+      <label class="check-inline"><input type="checkbox" id="qc_echo"> Eco local — marque só se as letras não aparecem enquanto você digita (equipamento sem eco)</label>
     </fieldset>
     <label class="check-inline" id="qc_saveWrap"><input type="checkbox" id="qc_save"> Salvar este host para reusar depois</label>
   `);
@@ -4999,6 +5010,18 @@ function montarSerialForm() {
   preencherSelect($('#qc_stopBits'), L.STOP_BITS.map((b) => ({ valor: b, rotulo: String(b) })), L.PADRAO.stopBits);
   preencherSelect($('#qc_flow'), L.FLUXOS.map((f) => ({ valor: f, rotulo: L.ROTULO_FLUXO[f] })), L.PADRAO.flowControl);
   preencherSelect($('#qc_eol'), L.FINS_DE_LINHA.map((e) => ({ valor: e, rotulo: L.ROTULO_FIM[e] })), L.PADRAO.fimDeLinha);
+  preencherSelect($('#qc_bs'), L.BACKSPACES.map((b) => ({ valor: b, rotulo: L.ROTULO_BACKSPACE[b] })), L.PADRAO.backspace);
+  // O formulário nasce com a ÚLTIMA configuração usada (prefs): quem descobre
+  // que o equipamento quer Ctrl+H não deveria ter que escolher de novo a cada
+  // conexão.
+  const ultima = prefs.serial && typeof prefs.serial === 'object' ? prefs.serial : (() => { try { return JSON.parse(lsGet('serial') || 'null'); } catch { return null; } })();
+  if (ultima) {
+    const c = L.normalizarConfig(ultima);
+    $('#qc_baud').value = String(c.baudRate); $('#qc_dataBits').value = String(c.dataBits);
+    $('#qc_parity').value = c.parity; $('#qc_stopBits').value = String(c.stopBits);
+    $('#qc_flow').value = c.flowControl; $('#qc_eol').value = c.fimDeLinha;
+    $('#qc_bs').value = c.backspace; $('#qc_echo').checked = c.ecoLocal;
+  }
   const btn = $('#qc_serialRefresh');
   if (btn) btn.addEventListener('click', enumerarSerial);
 }
@@ -5075,7 +5098,7 @@ function lerConfigSerialDoForm() {
     baudRate: $('#qc_baud').value, dataBits: $('#qc_dataBits').value,
     parity: $('#qc_parity').value, stopBits: $('#qc_stopBits').value,
     flowControl: $('#qc_flow').value, fimDeLinha: $('#qc_eol').value,
-    ecoLocal: $('#qc_echo').checked,
+    backspace: $('#qc_bs').value, ecoLocal: $('#qc_echo').checked,
   });
 }
 
@@ -5100,6 +5123,7 @@ async function conectarSerialDoForm(submit) {
       port = await navigator.serial.requestPort();
     }
     await port.open(window.serialLib.opcoesDeAbertura(cfg));
+    prefSet('serial', cfg); // lembra para a próxima conexão
     closeModal();
     abrirSessaoSerial(port, cfg, rotuloAba);
   } catch (e) {
@@ -5154,10 +5178,11 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     enviar: (texto, executar) => {
       if (!vivo || !writer) return false;
       try {
-        if (texto) escrever(encoder.encode(texto));
+        if (texto) { escrever(encoder.encode(window.serialLib.transformarEnvio(texto, cfg.fimDeLinha, cfg.backspace))); ecoar(texto); }
         if (executar) {
-          const eol = window.serialLib.transformarEnvio('\r', cfg.fimDeLinha);
+          const eol = window.serialLib.transformarEnvio('\r', cfg.fimDeLinha, cfg.backspace);
           if (eol) escrever(encoder.encode(eol));
+          ecoar('\r');
         }
         return true;
       } catch { return false; }
@@ -5187,15 +5212,26 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     } catch (e) { encerrar('A porta caiu ao escrever: ' + (e && e.message ? e.message : e)); }
   };
 
-  // O eco local só reflete o que é SEGURO imprimir: Enter e caracteres visíveis.
-  // Ecoar bytes crus fazia backspace não apagar e setas (ESC[A…) andarem o
-  // cursor — o xterm INTERPRETA sequências de controle recebidas, embaralhando
-  // a tela em vez de "mostrar o que você digita".
-  const ecoavel = (d) => d === '\r' || (d.length >= 1 && !/[\x00-\x1f\x7f]/.test(d));
+  // O eco local só reflete o que é SEGURO imprimir (serialLib.ecoLocal): Enter
+  // vira quebra de linha, Backspace apaga um caractere DA LINHA DIGITADA (e
+  // nada quando ela está vazia — senão comeria o prompt), setas/ESC ficam mudos.
+  // Ecoar bytes crus fazia o Backspace não apagar e as setas andarem o cursor —
+  // o xterm INTERPRETA sequências de controle recebidas.
+  // A contagem da linha digitada é compartilhada com `enviar` (colar variável,
+  // inserir comando da IA): o que entra por lá também aparece e também conta.
+  let linhaLocal = 0;
+  const ecoar = (d) => {
+    if (!cfg.ecoLocal) return;
+    const eco = window.serialLib.ecoLocal(d, linhaLocal);
+    linhaLocal = eco.tamanho;
+    if (eco.texto) { try { term.write(eco.texto); } catch {} }
+  };
   term.onData((d) => {
     if (!vivo || !writer) return;
-    const saida = window.serialLib.transformarEnvio(d, cfg.fimDeLinha);
-    if (cfg.ecoLocal && ecoavel(d)) { try { term.write(d === '\r' ? '\r\n' : d); } catch {} }
+    // Backspace: o xterm manda DEL; se o equipamento quer BS (Ctrl+H), vai 0x08.
+    // Ctrl+Backspace manda o outro código (saída de emergência sem reconectar).
+    const saida = window.serialLib.transformarEnvio(d, cfg.fimDeLinha, cfg.backspace);
+    ecoar(d);
     if (saida) escrever(encoder.encode(saida));
     // Histórico: no Enter, lê a linha da tela e registra — igual ao SSH/Telnet.
     // Só pega o que está VISÍVEL (device com eco, ou eco local), como sempre.
@@ -5207,7 +5243,10 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
   (async () => {
     try {
       session.status = 'conectado';
-      term.write(`\x1b[32mPorta serial aberta — ${window.serialLib.resumo(cfg)}\x1b[0m\r\n`);
+      // A linha de abertura diz o modo do Backspace — a aba não tem outro lugar
+      // para isso, e é o primeiro suspeito quando a tecla "não funciona".
+      const L = window.serialLib;
+      term.write(`\x1b[32mPorta serial aberta — ${L.resumo(cfg)}\x1b[0m\x1b[90m · Backspace envia ${L.ROTULO_BACKSPACE[cfg.backspace]}; Ctrl+Backspace envia ${L.ROTULO_BACKSPACE[L.codigoOposto(cfg.backspace)]}\x1b[0m\r\n`);
       renderTermTabs();
       // O `while` existe porque erro NÃO fatal da linha (framing, paridade,
       // overrun, break) troca o stream por um novo e a porta continua aberta —

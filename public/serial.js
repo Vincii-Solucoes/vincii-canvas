@@ -28,16 +28,25 @@ const FLUXOS = ['none', 'hardware'];
 // equipamento espera um terminador, e mandar o errado deixa o comando "sem
 // efeito" sem nenhum erro. CR é o mais comum em equipamento de rede.
 const FINS_DE_LINHA = ['cr', 'lf', 'crlf', 'none'];
+// O que a tecla Backspace manda. O xterm emite DEL (0x7f), que é o que Linux e
+// SSH esperam — mas boa parte dos consoles seriais (OLT ZTE/Fiberhome, muitos
+// switches, bootloaders) só apaga com BS (0x08, o Ctrl+H). Mandar o errado não
+// dá erro: a tecla "não faz nada" ou imprime ^?. É o BSKey do Tera Term, cujo
+// padrão é BS — e aqui também, porque console serial é quase sempre
+// equipamento de rede, não um shell Linux (que, com readline, aceita os dois).
+const BACKSPACES = ['bs', 'del'];
 
 // Rótulos legíveis para a tela (a chave é o valor técnico).
 const ROTULO_PARIDADE = { none: 'Nenhuma', even: 'Par', odd: 'Ímpar' };
 const ROTULO_FLUXO = { none: 'Nenhum', hardware: 'Hardware (RTS/CTS)' };
 const ROTULO_FIM = { cr: 'CR', lf: 'LF', crlf: 'CR+LF', none: 'Nenhum' };
+const ROTULO_BACKSPACE = { bs: 'Ctrl+H (BS, 0x08)', del: 'DEL (0x7f)' };
 
-// Padrões do Tera Term: 9600 8-N-1, sem fluxo, CR no envio, sem eco local.
+// Padrões do Tera Term: 9600 8-N-1, sem fluxo, CR no envio, Backspace = BS,
+// sem eco local.
 const PADRAO = {
   baudRate: 9600, dataBits: 8, parity: 'none', stopBits: 1,
-  flowControl: 'none', fimDeLinha: 'cr', ecoLocal: false,
+  flowControl: 'none', fimDeLinha: 'cr', backspace: 'bs', ecoLocal: false,
 };
 
 function umDe(lista, v, padrao) {
@@ -56,6 +65,7 @@ function normalizarConfig(bruto) {
     stopBits: umDe(STOP_BITS, Number(b.stopBits), PADRAO.stopBits),
     flowControl: umDe(FLUXOS, String(b.flowControl), PADRAO.flowControl),
     fimDeLinha: umDe(FINS_DE_LINHA, String(b.fimDeLinha), PADRAO.fimDeLinha),
+    backspace: umDe(BACKSPACES, String(b.backspace), PADRAO.backspace),
     ecoLocal: !!b.ecoLocal,
   };
 }
@@ -70,14 +80,55 @@ function opcoesDeAbertura(cfg) {
   };
 }
 
-// O que o xterm entrega em `onData` vira o que sai na porta. A única tradução é
-// o Enter: o xterm manda '\r' (CR), e nós trocamos pelo fim de linha escolhido.
-// Os outros caracteres (letras, backspace, setas) passam intactos.
+// O que o xterm entrega em `onData` vira o que sai na porta. Duas traduções:
+// o Enter — o xterm manda '\r' (CR), e nós trocamos pelo fim de linha
+// escolhido — e o Backspace — o xterm manda DEL (0x7f) e, se a escolha for BS,
+// vai 0x08. Ctrl+Backspace (que o xterm entrega como 0x08) manda sempre o
+// OUTRO código, à moda do PuTTY: é a saída de emergência de dentro da sessão
+// quando a escolha estava errada, sem reconectar. Os outros caracteres
+// (letras, setas, Ctrl+C) passam intactos.
 const EOL = { cr: '\r', lf: '\n', crlf: '\r\n', none: '' };
-function transformarEnvio(dado, fimDeLinha) {
+function transformarEnvio(dado, fimDeLinha, backspace) {
   const eol = Object.prototype.hasOwnProperty.call(EOL, fimDeLinha) ? EOL[fimDeLinha] : '\r';
   // Troca cada CR (Enter) pelo terminador; um CRLF colado vira um terminador só.
-  return String(dado).replace(/\r\n|\r/g, eol);
+  let s = String(dado).replace(/\r\n|\r/g, eol);
+  // Troca simultânea (um replace só), senão o DEL virado BS viraria DEL de novo.
+  if (backspace === 'bs') s = s.replace(/[\x7f\b]/g, (c) => (c === '\x7f' ? '\b' : '\x7f'));
+  return s;
+}
+
+// O código que o Ctrl+Backspace manda, para a tela dizer.
+function codigoOposto(backspace) { return backspace === 'bs' ? 'del' : 'bs'; }
+
+// Eco local: o que o xterm deve MOSTRAR quando a pessoa digita e o equipamento
+// não ecoa. Devolve { texto, tamanho }: o que escrever na tela e quantos
+// caracteres a linha digitada passa a ter.
+//
+// Ecoar o byte cru fazia o Backspace não apagar (o xterm recebe DEL e não faz
+// nada) e as setas (ESC[A…) andarem o cursor — o xterm INTERPRETA sequências
+// de controle. Então: visível ecoa; Enter vira quebra de linha e zera a
+// contagem; Backspace apaga UM caractere (\b + espaço + \b) só se há algo
+// digitado — senão comeria o prompt do equipamento; Ctrl+C zera a linha (o
+// equipamento a abandona); o resto dos controles (setas, Tab, ESC) fica mudo.
+//
+// Uma colagem chega como string inteira ("abc\rdef"): é tratada caractere a
+// caractere, para o Enter do meio quebrar a linha e a contagem ficar certa.
+// Só uma sequência de escape (setas, F1…, começa com ESC) é uma unidade — muda.
+function ecoLocal(dado, tamanho) {
+  const d = String(dado);
+  let t = Number.isFinite(tamanho) && tamanho > 0 ? Math.floor(tamanho) : 0;
+  if (d.startsWith('\x1b')) return { texto: '', tamanho: t };
+  let texto = '';
+  const chars = Array.from(d.replace(/\r\n/g, '\r'));
+  for (const c of chars) {
+    if (c === '\r' || c === '\n') { texto += '\r\n'; t = 0; continue; }
+    if (c === '\x7f' || c === '\b') { if (t > 0) { texto += '\b \b'; t -= 1; } continue; }
+    if (c === '\x03') { texto += '^C\r\n'; t = 0; continue; }
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(c)) continue;
+    texto += c; t += 1;
+  }
+  return { texto, tamanho: t };
 }
 
 // Rótulo de uma porta, a partir do que o Electron entrega em `select-serial-port`
@@ -117,9 +168,9 @@ function dicaSemPortas(plataforma) {
 }
 
 const API = {
-  BAUDS, DATA_BITS, PARIDADES, STOP_BITS, FLUXOS, FINS_DE_LINHA,
-  ROTULO_PARIDADE, ROTULO_FLUXO, ROTULO_FIM, PADRAO,
-  normalizarConfig, opcoesDeAbertura, transformarEnvio, rotuloDaPorta, resumo,
+  BAUDS, DATA_BITS, PARIDADES, STOP_BITS, FLUXOS, FINS_DE_LINHA, BACKSPACES,
+  ROTULO_PARIDADE, ROTULO_FLUXO, ROTULO_FIM, ROTULO_BACKSPACE, PADRAO,
+  normalizarConfig, opcoesDeAbertura, transformarEnvio, codigoOposto, ecoLocal, rotuloDaPorta, resumo,
   dicaSemPortas,
 };
 
