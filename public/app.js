@@ -4646,6 +4646,11 @@ function addRecent(id) {
   ids.unshift(id);
   saveRecents(ids);
 }
+// Limpa a lista inteira — inclusive ids de hosts que já não existem, que
+// getRecents() esconde da tela mas continuavam guardados.
+function limparRecentes() {
+  prefSet('recentHosts', []);
+}
 function removeRecent(id) {
   saveRecents(getRecents().filter((x) => x !== id));
 }
@@ -4735,7 +4740,23 @@ function renderHostSidebar() {
   const recents = getRecents();
   const lbl = el(list, 'div', 'host-group-label');
   el(lbl, 'span', null, 'Recentes');
-  if (recents.length) el(lbl, 'span', 'count', String(recents.length));
+  // Direita do cabeçalho: a contagem e, quando há o que limpar, "Limpar" — o
+  // "×" de cada item serve para tirar um, não para esvaziar trinta.
+  const acoes = el(lbl, 'span', 'label-acoes');
+  if (recents.length) {
+    el(acoes, 'span', 'count', String(recents.length));
+    const limpar = el(acoes, 'button', 'label-limpar', 'Limpar');
+    limpar.type = 'button';
+    limpar.title = 'Tirar todos os hosts da lista de recentes';
+    limpar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm(`Tirar os ${recents.length} hosts da lista de recentes?\n\n`
+        + 'Nenhum host é excluído — eles continuam na aba Hosts e voltam a aparecer aqui quando você conectar.')) return;
+      limparRecentes();
+      renderHostSidebar();
+      toast('Lista de recentes limpa.');
+    });
+  }
   if (!recents.length) {
     el(list, 'p', 'empty', state.hosts.length
       ? 'Nenhum host recente. Use a busca acima para conectar — o host passa a aparecer aqui.'
