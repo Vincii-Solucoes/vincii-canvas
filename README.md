@@ -162,7 +162,10 @@ public/            interface web (HTML/CSS/JS puro)
 public/soltar.js   contrato da janela solta (montar e ler os parâmetros)
 public/agenda.js   faixa de horário do host: validação e "está na janela agora?"
 desktop/main.js    processo principal do Electron (app desktop)
-build/icon.png     ícone do aplicativo
+build/icon.png     ícone do aplicativo (origem do .icns do mac e do .ico do Windows)
+build/icons/       o MESMO ícone em NxN.png (16…1024) — o Linux precisa do
+                   conjunto: com um .png só, o electron-builder instala um
+                   tamanho único e o GNOME mostra engrenagem no lugar do logo
 test/sshd-local.js servidor SSH local de teste
 test/cofre-local.js  cofre de credenciais de teste (e implementação de referência)
 data.json          seus dados (gerado ao usar; não versionar)

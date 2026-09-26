@@ -11,9 +11,17 @@ const { app: electronApp, BrowserWindow, shell, dialog, session, Menu } = requir
 // decidir: Mac/web mostram a faixa de aviso; Windows/Linux fazem auto-update.
 process.env.SSHC_DESKTOP = '1';
 
-// Ícone de runtime (dock no macOS, barra de tarefas no Windows/Linux). Fica em
+// Ícone de runtime (dock no macOS, barra de tarefas no Windows). Fica em
 // public/ porque essa pasta é embarcada no app empacotado — diferente de build/,
 // que só é usada em tempo de empacotamento para gerar o .icns/.ico do bundle.
+//
+// NO LINUX ISTO NÃO VALE. No Wayland (sessão única do Ubuntu 26.04) não existe
+// _NET_WM_ICON, e o Electron ainda não implementa o xdg_toplevel_icon_v1 — a
+// opção `icon:` da janela é simplesmente ignorada. Lá o ícone vem do
+// `Icon=vincii-canvas` do .desktop, que o sistema procura em
+// /usr/share/icons/hicolor/<tamanho>/apps/. Quem cuida disso é build/icons/
+// (16…512, os tamanhos que o tema hicolor declara) — não mexa aqui achando que
+// resolve.
 const APP_NAME = 'Vincii Canvas';
 const iconPath = path.join(__dirname, '..', 'public', 'app-icon.png');
 

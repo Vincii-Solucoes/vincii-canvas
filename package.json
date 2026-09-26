@@ -1,7 +1,8 @@
 {
   "name": "vincii-canvas",
   "productName": "Vincii Canvas",
-  "version": "1.76.1",
+  "desktopName": "vincii-canvas.desktop",
+  "version": "1.76.2",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
   "author": "Vincii <contato@vincii.com.br>",
@@ -78,7 +79,9 @@
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "icon": "build/icons",
+      "syncDesktopName": true
     }
   },
   "devDependencies": {
