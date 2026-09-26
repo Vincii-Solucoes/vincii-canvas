@@ -15,13 +15,19 @@ process.env.SSHC_DESKTOP = '1';
 // public/ porque essa pasta é embarcada no app empacotado — diferente de build/,
 // que só é usada em tempo de empacotamento para gerar o .icns/.ico do bundle.
 //
-// NO LINUX ISTO NÃO VALE. No Wayland (sessão única do Ubuntu 26.04) não existe
-// _NET_WM_ICON, e o Electron ainda não implementa o xdg_toplevel_icon_v1 — a
-// opção `icon:` da janela é simplesmente ignorada. Lá o ícone vem do
-// `Icon=vincii-canvas` do .desktop, que o sistema procura em
+// NO LINUX ISTO RESOLVE POUCO, e no GNOME não resolve nada. No Wayland não
+// existe _NET_WM_ICON: o ícone da janela depende do protocolo
+// xdg_toplevel_icon_v1. O Electron 41 fala esse protocolo (PR #49290, jan/2026,
+// que fez o `icon:` do construtor funcionar e não só o setIcon posterior), mas
+// quem precisa aceitá-lo é o compositor — KDE Plasma, labwc e Hyprland aceitam;
+// o mutter do GNOME não (issue 4100, ainda aberta no GNOME 50 do Ubuntu 26.04).
+//
+// E mesmo onde funciona, isto é o ícone DA JANELA (alt-tab). O ícone do dash e
+// da grade de aplicativos — onde aparecia a engrenagem — vem sempre do
+// `Icon=vincii-canvas` do .desktop, procurado em
 // /usr/share/icons/hicolor/<tamanho>/apps/. Quem cuida disso é build/icons/
-// (16…512, os tamanhos que o tema hicolor declara) — não mexa aqui achando que
-// resolve.
+// (16…512, os tamanhos que o tema hicolor declara): nenhuma mudança aqui
+// conserta aquilo.
 const APP_NAME = 'Vincii Canvas';
 const iconPath = path.join(__dirname, '..', 'public', 'app-icon.png');
 
