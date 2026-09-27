@@ -142,6 +142,19 @@ function nomeDesktopDoElectron(nome) {
     'o bloco claro vem antes, mas com seletor mais específico: quem escolheu claro continua claro');
   ok(!/:root,\s*:root\[data-theme="light"\]/.test(css),
     'o claro não pode mais responder pelo `:root` nu');
+
+  // v1.77.2: o tema só é GRAVADO quando a pessoa escolhe. Antes, todo
+  // carregamento regravava o tema em vigor — e um perfil que já tinha aberto o
+  // app ficava preso ao padrão da época, então mudar o padrão não alcançava
+  // ninguém. Sem escolha salva, vale o padrão a cada abertura.
+  const app = fs.readFileSync(path.join(raiz, 'public', 'app.js'), 'utf8');
+  ok(/function setTheme\(theme, escolhido\)/.test(app), 'setTheme sabe distinguir escolha de sincronização');
+  ok(/if \(escolhido\) prefSet\('theme', t\);/.test(app), 'e só grava quando foi escolha');
+  ok(!/^\s*prefSet\('theme', t\);/m.test(app), 'não sobrou gravação incondicional');
+  ok(/setTheme\(currentTheme\(\)\); \/\/ sincroniza/.test(app), 'o arranque só sincroniza a interface');
+  ok(/themeToggle'\)\.addEventListener\('click', \(\) => setTheme\(.*, true\)\)/.test(app),
+    'o botão do topo grava');
+  ok(/themeChoice, true\)\)/.test(app), 'e o seletor de Configurações também');
 }
 
 console.log(`\n${n} verificações passaram`);

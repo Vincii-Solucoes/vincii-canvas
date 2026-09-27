@@ -9094,10 +9094,15 @@ const THEME_ICONS = {
 function currentTheme() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
-function setTheme(theme) {
+// `escolhido` = a pessoa clicou no botão ou no seletor. Só ESSA escolha é
+// gravada: antes, cada carregamento regravava o tema em vigor, e com isso todo
+// perfil que já tinha aberto o app uma vez ficava preso ao padrão da época —
+// mudar o padrão (claro → escuro, v1.77.1) não alcançava ninguém. Sem escolha
+// salva, o tema vem do padrão a cada abertura.
+function setTheme(theme, escolhido) {
   const t = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = t;
-  prefSet('theme', t);
+  if (escolhido) prefSet('theme', t);
   // o botão do header mostra o ícone do tema para o qual vai alternar
   const tb = $('#themeToggle');
   if (tb) {
@@ -9109,9 +9114,9 @@ function setTheme(theme) {
   if ($('#tab-terminal') && $('#tab-terminal').classList.contains('active')) fitActive();
 }
 function initTheme() {
-  setTheme(currentTheme()); // sincroniza a UI com o que o script inline já aplicou
-  $('#themeToggle').addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
-  $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.themeChoice)));
+  setTheme(currentTheme()); // sincroniza a UI com o que o script inline já aplicou — sem gravar
+  $('#themeToggle').addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark', true));
+  $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.themeChoice, true)));
 }
 
 // ---------- aviso de atualização (verificar no GitHub, sem instalar sozinho) ----------
