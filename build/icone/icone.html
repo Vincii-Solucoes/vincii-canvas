@@ -1,0 +1,92 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ícone do Vincii Canvas</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  svg { display: block; width: 100vw; height: 100vh; }
+</style>
+<!--
+  Ícone do Vincii Canvas — mesma identidade visual do Vincii Anunciação:
+  telha escura arredondada com brilho turquesa, o "V" da VINCII em cima e um
+  selo circular no canto inferior direito com o símbolo do produto. No
+  Anunciação é um telefone (softphone); aqui é a TELA DE PINTURA num cavalete —
+  o app se chama Canvas e a família leva nome de obra do da Vinci.
+
+  A geometria é a mesma de Anunciacao/scripts/make-icons.mjs, só que escrita em
+  proporções de 1024: telha com raio de 22,5%, selo centrado em 69% com raio de
+  17,5% e anel de +2,2%, "V" com 60% da largura em 12%/20%.
+
+  Duas variantes na MESMA fonte:
+    (padrão)  telha a 80,5% com sombra — é o ícone do app (dock, barra, .deb).
+    #cheio    telha ocupando o quadrado inteiro, sem sombra — para favicon e
+              qualquer lugar pequeno onde a margem só atrapalha.
+
+  Render: npx --no-install electron render.js icone.html saida.png 512
+  (a tela é HiDPI: 512 CSS px saem 1024 px de verdade)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f1c1c"/><stop offset="1" stop-color="#040606"/>
+    </linearGradient>
+    <radialGradient id="brilhoFundo" cx="0.42" cy="0.22" r="0.8">
+      <stop offset="0" stop-color="#00C9B1" stop-opacity="0.30"/>
+      <stop offset="0.6" stop-color="#00C9B1" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#00C9B1" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="borda" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ff7ea" stop-opacity="0.45"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
+    </linearGradient>
+    <linearGradient id="selo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ff0d9"/><stop offset="1" stop-color="#00a590"/>
+    </linearGradient>
+    <filter id="fSombra" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="18"/></filter>
+    <filter id="fSelo" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="32.3"/></filter>
+    <filter id="fV" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="34.8"/></filter>
+  </defs>
+
+  <!-- sombra projetada da telha (só na variante com margem) -->
+  <rect id="sombra" x="100" y="120" width="824" height="824" rx="185" fill="#000" opacity="0.45" filter="url(#fSombra)"/>
+
+  <g id="arte" transform="translate(100 100) scale(0.804688)">
+    <!-- telha -->
+    <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
+    <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#brilhoFundo)"/>
+    <rect x="1.9" y="1.9" width="1020.2" height="1020.2" rx="228" fill="none" stroke="url(#borda)" stroke-width="3.7"/>
+
+    <!-- o V da VINCII, com brilho atrás -->
+    <g opacity="0.55" filter="url(#fV)">
+      <image xlink:href="marca-v@2x.png" x="122.9" y="204.8" width="614.4" height="438.4"/>
+    </g>
+    <image xlink:href="marca-v@2x.png" x="122.9" y="204.8" width="614.4" height="438.4"/>
+
+    <!-- selo do produto: a tela de terminal -->
+    <circle cx="706.6" cy="706.6" r="179.2" fill="#00C9B1" opacity="0.55" filter="url(#fSelo)"/>
+    <circle cx="706.6" cy="706.6" r="201.7" fill="#060d0d"/>
+    <circle cx="706.6" cy="706.6" r="179.2" fill="url(#selo)"/>
+    <!-- glifo em coordenadas 24x24, como o telefone do Anunciação:
+         aqui, a TELA DE PINTURA no cavalete (o app se chama Canvas, e a
+         família leva nome de obra do da Vinci, como o Anunciação). -->
+    <g transform="translate(572.8 572.8) scale(11.15)">
+      <!-- pernas e travessa do cavalete -->
+      <path d="M9.2 14.6 L6.2 21.8 M14.8 14.6 L17.8 21.8 M7.6 18.4 L16.4 18.4"
+            fill="none" stroke="#00211d" stroke-width="2.3" stroke-linecap="round"/>
+      <!-- a tela -->
+      <rect x="3.5" y="2.3" width="17" height="13.2" rx="1.6" fill="#00211d"/>
+      <!-- a pincelada: um traço largo e curvo, de baixo à esquerda para cima à
+           direita — pincel, não gráfico de linha -->
+      <path d="M6.4 12.6 C 8.8 12.9, 10.4 10.4, 12.4 8.4 C 14 6.8, 15.8 5.8, 17.6 5.6"
+            fill="none" stroke="#3ff0d9" stroke-width="3" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>
+<script>
+  // #cheio: sem margem e sem sombra (favicon e miniaturas)
+  if (location.hash === '#cheio') {
+    document.getElementById('sombra').remove();
+    document.getElementById('arte').removeAttribute('transform');
+  }
+</script>

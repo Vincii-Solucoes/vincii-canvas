@@ -92,4 +92,31 @@ function nomeDesktopDoElectron(nome) {
     'o executável no Linux vem do name — e o .desktop procura o ícone por esse nome (Icon=vincii-canvas)');
 }
 
+// ---------- 4. o ícone é o desenho novo, e vem todo da mesma fonte ----------
+//
+// v1.77.0: o ícone passou a seguir a identidade do Vincii Anunciação (telha
+// escura + o V + selo redondo com o símbolo do produto). A fonte é
+// build/icone/icone.html e `npm run icones` regenera tudo — se alguém trocar
+// um PNG na mão, isto aqui avisa que ele saiu do desenho.
+
+{
+  const fonte = path.join(raiz, 'build', 'icone', 'icone.html');
+  ok(fs.existsSync(fonte), 'a fonte do ícone (build/icone/icone.html) precisa estar versionada');
+  const html = fs.readFileSync(fonte, 'utf8');
+  ok(html.includes('marca-v@2x.png'), 'o desenho usa o V recortado do logotipo, não um V redesenhado');
+  ok(fs.existsSync(path.join(raiz, 'build', 'icone', 'marca-v@2x.png')), 'e esse recorte está junto');
+  ok(html.includes("location.hash === '#cheio'"), 'a mesma fonte gera a variante sem margem (favicon)');
+  ok(fs.existsSync(path.join(raiz, 'build', 'icone', 'gerar.js')), 'o gerador está versionado');
+  igual(JSON.parse(fs.readFileSync(path.join(raiz, 'package.json'), 'utf8')).scripts.icones,
+    'electron build/icone/gerar.js', 'e tem atalho: npm run icones');
+
+  // O ícone de tempo de execução e o favicon saem do mesmo desenho.
+  const app512 = fs.readFileSync(path.join(raiz, 'public', 'app-icon.png'));
+  igual([app512.readUInt32BE(16), app512.readUInt32BE(20)], [512, 512], 'public/app-icon.png é 512x512');
+  const brand = fs.readFileSync(path.join(raiz, 'public', 'brand.png'));
+  igual([brand.readUInt32BE(16), brand.readUInt32BE(20)], [256, 256], 'public/brand.png é 256x256');
+  const index = fs.readFileSync(path.join(raiz, 'public', 'index.html'), 'utf8');
+  ok(index.includes('<link rel="icon" href="/brand.png">'), 'o favicon aponta para o ícone do app');
+}
+
 console.log(`\n${n} verificações passaram`);

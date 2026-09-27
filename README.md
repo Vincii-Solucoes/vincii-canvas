@@ -162,10 +162,17 @@ public/            interface web (HTML/CSS/JS puro)
 public/soltar.js   contrato da janela solta (montar e ler os parâmetros)
 public/agenda.js   faixa de horário do host: validação e "está na janela agora?"
 desktop/main.js    processo principal do Electron (app desktop)
+build/icone/       a FONTE do ícone (icone.html) e o "V" recortado do logotipo;
+                   `npm run icones` redesenha tudo daqui — mesma identidade do
+                   Vincii Anunciação: telha escura, o V e um selo redondo com o
+                   símbolo do produto (lá um telefone; aqui a tela de pintura
+                   num cavalete)
 build/icon.png     ícone do aplicativo (origem do .icns do mac e do .ico do Windows)
 build/icons/       o MESMO ícone em NxN.png (16…1024) — o Linux precisa do
                    conjunto: com um .png só, o electron-builder instala um
                    tamanho único e o GNOME mostra engrenagem no lugar do logo
+public/app-icon.png  ícone em tempo de execução (dock/barra de tarefas)
+public/brand.png   o ícone sem margem, para o favicon
 test/sshd-local.js servidor SSH local de teste
 test/cofre-local.js  cofre de credenciais de teste (e implementação de referência)
 data.json          seus dados (gerado ao usar; não versionar)
