@@ -1,5 +1,6 @@
-/* Tema CLARO (padrão) — contraste alto: texto mais escuro, bordas mais firmes */
-:root, :root[data-theme="light"] {
+/* Tema CLARO — contraste alto: texto mais escuro, bordas mais firmes.
+   Só entra quando escolhido: o padrão é o ESCURO, no :root nu logo abaixo. */
+:root[data-theme="light"] {
   --bg: #f2f5f8;
   --panel: #ffffff;
   --panel2: #e9eef3;
@@ -18,8 +19,12 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* Tema ESCURO — mais profundo: quase-preto com o teal estourando */
-:root[data-theme="dark"] {
+/* Tema ESCURO (PADRÃO) — mais profundo: quase-preto com o teal estourando.
+   Está no `:root` nu de propósito: se o script do topo do index.html não rodar
+   (ou falhar antes de marcar data-theme), a tela abre escura em vez de piscar
+   branco. O bloco do claro vem ANTES com seletor mais específico, então quem
+   escolheu claro continua no claro. */
+:root, :root[data-theme="dark"] {
   --bg: #04070a;
   --panel: #0b1117;
   --panel2: #121c25;

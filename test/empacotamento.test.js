@@ -119,4 +119,29 @@ function nomeDesktopDoElectron(nome) {
   ok(index.includes('<link rel="icon" href="/brand.png">'), 'o favicon aponta para o ícone do app');
 }
 
+// ---------- 5. o tema padrão é o ESCURO (v1.77.1) ----------
+//
+// A interface nascia clara. Quem nunca escolheu tema passa a abrir no escuro,
+// e quem escolheu claro continua no claro. São dois lugares: o script do topo
+// do index.html (que marca data-theme antes do CSS carregar, para não piscar
+// branco) e o `:root` nu do style.css (a rede de segurança se esse script não
+// rodar).
+
+{
+  const index = fs.readFileSync(path.join(raiz, 'public', 'index.html'), 'utf8');
+  ok(/dataset\.theme\s*=\s*_p\.theme\s*\|\|\s*localStorage\.getItem\('vc-theme'\)\s*\|\|\s*'dark'/.test(index),
+    'sem preferência salva, o app abre no escuro');
+  ok(/catch \(e\) \{ document\.documentElement\.dataset\.theme = 'dark'; \}/.test(index),
+    'e no escuro também quando a leitura das preferências falha');
+
+  const css = fs.readFileSync(path.join(raiz, 'public', 'style.css'), 'utf8');
+  const iRootNu = css.indexOf(':root, :root[data-theme="dark"]');
+  const iClaro = css.indexOf(':root[data-theme="light"]');
+  ok(iRootNu > 0, 'o bloco escuro responde pelo `:root` nu — é o padrão do CSS');
+  ok(iClaro > 0 && iClaro < iRootNu,
+    'o bloco claro vem antes, mas com seletor mais específico: quem escolheu claro continua claro');
+  ok(!/:root,\s*:root\[data-theme="light"\]/.test(css),
+    'o claro não pode mais responder pelo `:root` nu');
+}
+
 console.log(`\n${n} verificações passaram`);
