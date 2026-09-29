@@ -526,9 +526,28 @@ if (!electronApp.requestSingleInstanceLock()) {
   // DevTools, fechar janela, sair) continua igual.
   function definirMenu() {
     const ehMac = process.platform === 'darwin';
+    // O menu Editar no Windows/Linux NÃO pode registrar Ctrl+Z, Ctrl+Y e
+    // Ctrl+A: num terminal essas teclas são do shell — Ctrl+Z suspende o
+    // processo (o `fg`/`bg` de todo dia), Ctrl+A vai para o começo da linha e é
+    // o prefixo do tmux/screen. Com o papel padrão, o Electron registra o
+    // acelerador e a tecla NUNCA chega ao terminal. Copiar/colar/recortar já
+    // vêm com `registerAccelerator: false` de fábrica, então esses ficam como
+    // estão. No macOS nada muda: lá os atalhos são com Cmd e o menu é quem faz
+    // o Cmd+C/Cmd+V funcionar.
+    const menuEditar = ehMac ? { role: 'editMenu' } : {
+      label: 'Editar',
+      submenu: [
+        { role: 'undo', registerAccelerator: false },
+        { role: 'redo', registerAccelerator: false },
+        { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' },
+        { type: 'separator' },
+        { role: 'selectAll', registerAccelerator: false },
+      ],
+    };
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       ...(ehMac ? [{ role: 'appMenu' }] : [{ role: 'fileMenu' }]),
-      { role: 'editMenu' },
+      menuEditar,
       { label: 'Ver',
         submenu: [
           { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },

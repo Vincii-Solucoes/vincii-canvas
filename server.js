@@ -1341,6 +1341,18 @@ let _clipboard = null;
 try { const e = require('electron'); if (e && e.clipboard && typeof e.clipboard.readText === 'function') _clipboard = e.clipboard; } catch { /* fora do Electron */ }
 app.get('/api/clipboard', (req, res) => res.json({ texto: _clipboard ? _clipboard.readText() : '' }));
 
+// Escrever no clipboard PELO PROCESSO do Electron. É o recuo de quando o
+// navigator.clipboard do renderer não escreve — permissão negada, janela sem
+// foco — e foi o que fazia o "copiar" do terminal falhar calado.
+app.post('/api/clipboard', (req, res) => {
+  if (!_clipboard) return fail(res, 501, 'Sem área de transferência fora do app desktop.');
+  const texto = (req.body || {}).texto;
+  if (typeof texto !== 'string') return fail(res, 400, 'Texto inválido.');
+  // Teto largo, só para não guardar um despejo inteiro por acidente.
+  _clipboard.writeText(texto.slice(0, 2 * 1024 * 1024));
+  res.json({ ok: true });
+});
+
 app.post('/api/serial/modo', (req, res) => {
   const b = req.body || {};
   serialbridge.definirModo(b.modo, b.portId);

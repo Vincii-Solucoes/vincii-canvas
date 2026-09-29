@@ -5258,7 +5258,7 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     // Só pega o que está VISÍVEL (device com eco, ou eco local), como sempre.
     captureTyped(session, d);
   });
-  habilitarBotaoDireito(session); // botão direito: copia/cola como os outros terminais
+  habilitarCopiarColar(session); // Ctrl+C/Ctrl+V e botão direito, como nos outros terminais
 
   // Leitura: um laço que joga o que chega da porta no xterm.
   (async () => {
@@ -5697,12 +5697,31 @@ function createDeskSession({ hostId, hostName, protocol }) {
 // bracketed-paste do shell. Diferente do "colar variável", aqui o clipboard é
 // do PRÓPRIO usuário e vai CRU — colar um bloco de config com várias linhas é
 // justamente o uso que se espera de um console.
-function copiarParaClipboard(texto) {
+async function copiarParaClipboard(texto) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(texto).catch(() => copiarPorTextarea(texto));
+    try { await navigator.clipboard.writeText(texto); return true; } catch { /* segue para os recuos */ }
   }
+  // Recuo 1: o clipboard do PROCESSO do Electron, pelo servidor. Não depende de
+  // permissão do Chromium nem de a janela estar em foco — no app instalado é o
+  // caminho que nunca falha.
+  try {
+    await api('/api/clipboard', { method: 'POST', body: { texto } });
+    return true;
+  } catch { /* modo web, ou servidor sem clipboard */ }
+  // Recuo 2: o truque do textarea (navegador comum).
   copiarPorTextarea(texto);
-  return Promise.resolve();
+  return true;
+}
+
+// Lê o clipboard do usuário: primeiro o do Chromium, depois o do Electron.
+async function lerClipboard() {
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const t = await navigator.clipboard.readText();
+      if (t) return t;
+    }
+  } catch { /* sem permissão ou sem foco */ }
+  try { return ((await api('/api/clipboard')) || {}).texto || ''; } catch { return ''; }
 }
 function copiarPorTextarea(texto) {
   try {
@@ -5716,28 +5735,47 @@ function copiarPorTextarea(texto) {
     document.body.removeChild(ta);
   } catch { /* sem clipboard: nada a fazer */ }
 }
-function habilitarBotaoDireito(session) {
+// No macOS o modificador é o Cmd; no Windows e no Linux, o Ctrl.
+const EH_MAC = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '');
+
+function habilitarCopiarColar(session) {
   const { term, container } = session;
   if (!term || !container) return;
-  container.addEventListener('contextmenu', async (e) => {
-    e.preventDefault();
-    if (term.hasSelection && term.hasSelection()) {
-      const sel = term.getSelection();
-      if (sel) { await copiarParaClipboard(sel); term.clearSelection(); }
-      return;
-    }
-    // sem seleção → cola o clipboard do usuário no terminal
-    let texto = '';
-    try {
-      if (navigator.clipboard && navigator.clipboard.readText) texto = await navigator.clipboard.readText();
-    } catch { texto = ''; }
-    // Fallback: se o navigator.clipboard foi barrado (ou veio vazio por
-    // permissão), lê pelo clipboard do Electron via servidor.
-    if (!texto) {
-      try { texto = ((await api('/api/clipboard')) || {}).texto || ''; } catch { texto = ''; }
-    }
+
+  const copiar = async () => {
+    if (!term.hasSelection || !term.hasSelection()) return false;
+    const sel = term.getSelection();
+    if (!sel) return false;
+    await copiarParaClipboard(sel);
+    term.clearSelection();
+    // A seleção some ao copiar, e sem aviso ninguém sabe se copiou — foi
+    // exatamente a queixa ("não está copiando"). Um toast curto resolve.
+    const linhas = sel.split('\n').length;
+    toast(linhas > 1 ? `${linhas} linhas copiadas.` : 'Copiado.');
+    return true;
+  };
+  const colar = async () => {
+    const texto = await lerClipboard();
     if (!texto) return;
     try { term.paste(texto); } catch { /* aba fechando */ }
+  };
+
+  // ----- teclado ----- (as regras e o porquê estão em public/atalhos.js)
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown' || !window.atalhosLib) return true;
+    const temSelecao = !!(term.hasSelection && term.hasSelection());
+    const acao = window.atalhosLib.decidirAtalhoDeTerminal(e, { ehMac: EH_MAC, temSelecao });
+    if (!acao) return true; // inclusive o Ctrl+C sem seleção, que é o SIGINT
+    e.preventDefault();
+    if (acao === 'copiar') copiar(); else colar();
+    return false; // o xterm não manda nada ao shell
+  });
+
+  // ----- botão direito: com seleção COPIA, sem seleção COLA (como no PuTTY) -----
+  container.addEventListener('contextmenu', async (e) => {
+    e.preventDefault();
+    if (await copiar()) return;
+    await colar();
   });
 }
 
@@ -5767,7 +5805,7 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
     captureTyped(session, d);
   });
   term.onResize(({ cols, rows }) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'r', cols, rows })); });
-  habilitarBotaoDireito(session);
+  habilitarCopiarColar(session);
   sessions.push(session);
   setActiveSession(id);
   // só conecta quando o xterm já tem tamanho real (senão o pty nasce estreito)
