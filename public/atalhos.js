@@ -16,9 +16,14 @@
 //     SIGINT.
 //   - Ctrl+Shift+C / Ctrl+Shift+V: convenção do GNOME Terminal, vale em todos.
 //   - Ctrl+Insert / Shift+Insert: o par clássico do Windows.
-//   - COLAR com Ctrl+V / Cmd+V devolve null de propósito: o Chromium já dispara
-//     o evento `paste` na textarea e o xterm entrega ao shell. Se tratássemos
-//     aqui também, o texto entraria DUAS vezes.
+//   - Ctrl+V / Cmd+V devolve 'colar', com uma regra de ouro para quem chama:
+//     NÃO chamar preventDefault nessa tecla. O Chromium também cola sozinho
+//     (dispara o evento `paste`, que o xterm entrega ao shell) — mas isso não
+//     acontece em todo lugar. Então quem chama deixa a colagem nativa seguir e
+//     só cola por conta própria se nenhum evento `paste` aparecer: funciona
+//     onde o nativo funciona e onde não funciona, sem colar duas vezes.
+//     Devolver false no handler já impede o ^V (0x16) de chegar ao shell — o
+//     xterm sai ANTES de qualquer preventDefault (conferido no código dele).
 (function () {
 
 function decidirAtalhoDeTerminal(ev, opcoes) {
@@ -42,7 +47,7 @@ function decidirAtalhoDeTerminal(ev, opcoes) {
   if (mod && !outroMod && !e.altKey && !e.shiftKey && k === 'c') {
     return temSelecao ? 'copiar' : null; // sem seleção: SIGINT segue o seu caminho
   }
-  // 'colar' pelo mod+V fica com o Chromium (veja o comentário no topo).
+  if (mod && !outroMod && !e.altKey && !e.shiftKey && k === 'v') return 'colar';
   return null;
 }
 

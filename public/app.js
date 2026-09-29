@@ -5786,15 +5786,34 @@ function habilitarCopiarColar(session) {
     try { term.paste(texto); } catch { /* aba fechando */ }
   };
 
+  // O Chromium também cola sozinho no Ctrl+V/Cmd+V — em alguns sistemas. Para
+  // não colar DUAS vezes onde ele funciona, nem ficar sem colar onde não
+  // funciona: espia o evento `paste` (fase de captura, antes do xterm) e só
+  // cola por conta própria se nada apareceu.
+  let colagemNativaEm = 0;
+  container.addEventListener('paste', () => { colagemNativaEm = Date.now(); }, true);
+  const colarSeNinguemColou = async () => {
+    const marca = Date.now();
+    await new Promise((r) => setTimeout(r, 200));
+    if (colagemNativaEm >= marca) return; // o Chromium deu conta
+    await colar();
+  };
+
   // ----- teclado ----- (as regras e o porquê estão em public/atalhos.js)
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown' || !window.atalhosLib) return true;
     const temSelecao = !!(term.hasSelection && term.hasSelection());
     const acao = window.atalhosLib.decidirAtalhoDeTerminal(e, { ehMac: EH_MAC, temSelecao });
     if (!acao) return true; // inclusive o Ctrl+C sem seleção, que é o SIGINT
-    e.preventDefault();
-    if (acao === 'copiar') copiar(); else colar();
-    return false; // o xterm não manda nada ao shell
+    if (acao === 'copiar') {
+      e.preventDefault();
+      copiar();
+    } else {
+      // SEM preventDefault de propósito: deixa a colagem nativa do Chromium
+      // acontecer; a nossa só entra se ela não vier (veja colarSeNinguemColou).
+      colarSeNinguemColou();
+    }
+    return false; // em todo caso, o xterm não manda a tecla ao shell (nada de ^V)
   });
 
   // ----- botão direito: com seleção COPIA, sem seleção COLA (como no PuTTY) -----

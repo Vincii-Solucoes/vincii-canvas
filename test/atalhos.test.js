@@ -8,9 +8,10 @@
 // vazia e não copia nada — quem tem de tratar o atalho é o app.
 //
 // O que estes testes protegem é o acordo com o shell: Ctrl+C sem seleção
-// PRECISA continuar sendo o SIGINT (é como se interrompe um comando), e o
-// Ctrl+V não pode ser tratado aqui, senão o texto entra duas vezes (o Chromium
-// já dispara o evento `paste`, que o xterm entrega ao shell).
+// PRECISA continuar sendo o SIGINT (é como se interrompe um comando). O 'colar'
+// tem uma regra que mora em quem chama: nada de preventDefault, porque o
+// Chromium também cola sozinho em alguns sistemas — a colagem própria só entra
+// se nenhum evento `paste` aparecer (public/app.js, colarSeNinguemColou).
 
 const assert = require('assert');
 const { decidirAtalhoDeTerminal } = require('../public/atalhos.js');
@@ -29,8 +30,7 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
   igual(win(tecla({ ctrlKey: true }), true), 'copiar', 'Ctrl+C com seleção copia');
   igual(win(tecla({ ctrlKey: true }), false), null,
     'Ctrl+C SEM seleção não é tratado — tem de chegar ao shell como SIGINT');
-  igual(win(tecla({ key: 'v', ctrlKey: true }), false), null,
-    'Ctrl+V fica com o Chromium: tratar aqui também colaria duas vezes');
+  igual(win(tecla({ key: 'v', ctrlKey: true }), false), 'colar', 'Ctrl+V cola');
   igual(win(tecla({ key: 'C', ctrlKey: true, shiftKey: true }), true), 'copiar', 'Ctrl+Shift+C copia');
   igual(win(tecla({ key: 'V', ctrlKey: true, shiftKey: true }), false), 'colar', 'Ctrl+Shift+V cola');
   igual(win(tecla({ key: 'C', ctrlKey: true, shiftKey: true }), false), null,
@@ -46,7 +46,9 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
   igual(mac(tecla({ metaKey: true }), false), null, 'Cmd+C sem seleção não faz nada');
   igual(mac(tecla({ ctrlKey: true }), true), null,
     'Ctrl+C no mac continua SIGINT mesmo com texto selecionado — lá quem copia é o Cmd');
-  igual(mac(tecla({ key: 'v', metaKey: true }), false), null, 'Cmd+V fica com o Chromium');
+  igual(mac(tecla({ key: 'v', metaKey: true }), false), 'colar', 'Cmd+V cola');
+  igual(mac(tecla({ key: 'v', ctrlKey: true }), false), null,
+    'Ctrl+V no mac NÃO é colar — é o ^V literal do readline');
   igual(mac(tecla({ key: 'C', ctrlKey: true, shiftKey: true }), true), 'copiar',
     'Ctrl+Shift+C também vale no mac (não conflita com nada)');
 }
