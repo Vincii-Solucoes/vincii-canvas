@@ -5163,8 +5163,24 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
   const container = el($('#termContainers'), 'div', 'term-instance');
   const term = new Terminal({
     cursorBlink: true, fontSize: termFontSize, fontFamily: termFont,
-    theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1' },
+    theme: {
+      background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1',
+      // A seleção vinha no cinza padrão do xterm, quase invisível sobre o fundo
+      // quase-preto: dava para selecionar e não ver que selecionou.
+      selectionBackground: 'rgba(0, 201, 177, 0.38)',
+      selectionInactiveBackground: 'rgba(0, 201, 177, 0.18)',
+    },
     scrollback: scrollbackDoXterm(),
+    // Botão direito com o MESMO significado nos três sistemas. O padrão do
+    // xterm é `rightClickSelectsWord: isMac` — e no mac isso selecionava a
+    // palavra sob o cursor ANTES do nosso handler, então o "sem seleção, cola"
+    // nunca acontecia ali.
+    rightClickSelectsWord: false,
+    // Quando o programa remoto liga o mouse (vim, htop, tmux, less, mc), o
+    // xterm desliga a seleção por arrasto. No Windows e no Linux o Shift+arrastar
+    // escapa disso; no mac não havia saída nenhuma — com isto, Option+arrastar
+    // seleciona do mesmo jeito.
+    macOptionClickForcesSelection: true,
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
@@ -5697,20 +5713,25 @@ function createDeskSession({ hostId, hostName, protocol }) {
 // bracketed-paste do shell. Diferente do "colar variável", aqui o clipboard é
 // do PRÓPRIO usuário e vai CRU — colar um bloco de config com várias linhas é
 // justamente o uso que se espera de um console.
+// Devolve se copiou DE VERDADE. Não é frescura: quem chama mostra "Copiado." —
+// e um aviso de sucesso em cima de uma falha é pior que não avisar nada.
 async function copiarParaClipboard(texto) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try { await navigator.clipboard.writeText(texto); return true; } catch { /* segue para os recuos */ }
+  // No app instalado, o clipboard do PROCESSO vem primeiro: não depende de
+  // permissão do Chromium nem de a janela estar em foco (o navigator.clipboard
+  // rejeita com "Document is not focused", e era uma das formas de o copiar
+  // falhar calado).
+  if (window.VC_DESKTOP) {
+    try { await api('/api/clipboard', { method: 'POST', body: { texto } }); return true; }
+    catch { /* segue para o navigator */ }
   }
-  // Recuo 1: o clipboard do PROCESSO do Electron, pelo servidor. Não depende de
-  // permissão do Chromium nem de a janela estar em foco — no app instalado é o
-  // caminho que nunca falha.
-  try {
-    await api('/api/clipboard', { method: 'POST', body: { texto } });
-    return true;
-  } catch { /* modo web, ou servidor sem clipboard */ }
-  // Recuo 2: o truque do textarea (navegador comum).
-  copiarPorTextarea(texto);
-  return true;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { await navigator.clipboard.writeText(texto); return true; } catch { /* segue */ }
+  }
+  if (!window.VC_DESKTOP) {
+    try { await api('/api/clipboard', { method: 'POST', body: { texto } }); return true; }
+    catch { /* modo web: o servidor não tem clipboard */ }
+  }
+  return copiarPorTextarea(texto); // último recuo, e ele diz se deu certo
 }
 
 // Lê o clipboard do usuário: primeiro o do Chromium, depois o do Electron.
@@ -5724,6 +5745,7 @@ async function lerClipboard() {
   try { return ((await api('/api/clipboard')) || {}).texto || ''; } catch { return ''; }
 }
 function copiarPorTextarea(texto) {
+  const focado = document.activeElement;
   try {
     const ta = document.createElement('textarea');
     ta.value = texto;
@@ -5731,9 +5753,12 @@ function copiarPorTextarea(texto) {
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand('copy');
+    const ok = document.execCommand('copy'); // o retorno importa: é o que diz se copiou
     document.body.removeChild(ta);
-  } catch { /* sem clipboard: nada a fazer */ }
+    // Devolve o foco a quem o tinha (senão o terminal fica surdo depois de copiar).
+    try { if (focado && focado.focus) focado.focus(); } catch { /* elemento já saiu */ }
+    return !!ok;
+  } catch { return false; }
 }
 // No macOS o modificador é o Cmd; no Windows e no Linux, o Ctrl.
 const EH_MAC = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '');
@@ -5746,7 +5771,8 @@ function habilitarCopiarColar(session) {
     if (!term.hasSelection || !term.hasSelection()) return false;
     const sel = term.getSelection();
     if (!sel) return false;
-    await copiarParaClipboard(sel);
+    const ok = await copiarParaClipboard(sel);
+    if (!ok) { toast('Não consegui copiar para a área de transferência.', 'erro'); return true; }
     term.clearSelection();
     // A seleção some ao copiar, e sem aviso ninguém sabe se copiou — foi
     // exatamente a queixa ("não está copiando"). Um toast curto resolve.
@@ -5786,8 +5812,24 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
     cursorBlink: true,
     fontSize: termFontSize,
     fontFamily: termFont,
-    theme: { background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1' },
+    theme: {
+      background: '#0a0d12', foreground: '#e6edf3', cursor: '#00c9b1',
+      // A seleção vinha no cinza padrão do xterm, quase invisível sobre o fundo
+      // quase-preto: dava para selecionar e não ver que selecionou.
+      selectionBackground: 'rgba(0, 201, 177, 0.38)',
+      selectionInactiveBackground: 'rgba(0, 201, 177, 0.18)',
+    },
     scrollback: scrollbackDoXterm(),
+    // Botão direito com o MESMO significado nos três sistemas. O padrão do
+    // xterm é `rightClickSelectsWord: isMac` — e no mac isso selecionava a
+    // palavra sob o cursor ANTES do nosso handler, então o "sem seleção, cola"
+    // nunca acontecia ali.
+    rightClickSelectsWord: false,
+    // Quando o programa remoto liga o mouse (vim, htop, tmux, less, mc), o
+    // xterm desliga a seleção por arrasto. No Windows e no Linux o Shift+arrastar
+    // escapa disso; no mac não havia saída nenhuma — com isto, Option+arrastar
+    // seleciona do mesmo jeito.
+    macOptionClickForcesSelection: true,
   });
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);

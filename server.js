@@ -151,6 +151,8 @@ app.use((req, res, next) => {
 // não restaurava no app, e a tela só dizia "Erro 413". O parser específico roda
 // primeiro e marca req._body; o global abaixo pula o que já foi lido.
 app.use('/api/import', express.json({ limit: '32mb' }));
+// Copiar uma saída inteira de terminal passa fácil de 1 MB.
+app.use('/api/clipboard', express.json({ limit: '8mb' }));
 app.use(express.json({ limit: '1mb' }));
 // Sem isto, um corpo grande demais ou um JSON malformado sai como a página de
 // erro HTML do Express, com caminho absoluto e stack dentro — e o `api()` do
@@ -195,7 +197,8 @@ function serveIndex(req, res) {
     .set('Referrer-Policy', 'no-referrer')
     .send(html
       .replace('/*__VC_PREFS__*/ null', () => json)
-      .replace('/*__VC_TOKEN__*/ ""', () => token));
+      .replace('/*__VC_TOKEN__*/ ""', () => token)
+      .replace('/*__VC_DESKTOP__*/ false', () => (process.env.SSHC_DESKTOP === '1' ? 'true' : 'false')));
 }
 app.get('/', serveIndex);
 app.get('/index.html', serveIndex);
