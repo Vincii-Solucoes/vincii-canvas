@@ -168,6 +168,7 @@ try {
           <!-- só aparece em janela solta, no lugar das abas -->
           <div id="soloTitulo" class="solo-titulo"></div>
           <button id="toggleGreet" class="panel-toggle" type="button" title="Mostrar/ocultar saudação">🖖</button>
+          <button id="ajudaTermBtn" class="panel-toggle ajuda-btn" type="button" title="Como copiar e colar neste terminal" aria-label="Ajuda: copiar e colar">!</button>
           <button id="capBtn" class="panel-toggle" type="button" title="Capturar a saída deste terminal (evidência antes/depois)">📸 Capturar</button>
           <div class="fav-wrap">
             <button id="favBtn" class="panel-toggle" type="button" title="Comandos favoritos">★ Favoritos</button>
@@ -798,6 +799,12 @@ try {
         <button type="button" data-theme-choice="dark">Escuro</button>
       </div>
       <div class="sub">Terminal</div>
+      <label class="inline"><input type="checkbox" id="cfgCopiarSel">
+        Copiar sozinho o que eu selecionar com o mouse</label>
+      <p class="hint">Como no PuTTY e no terminal do Linux: soltou o botão, o texto já está
+        na área de transferência (no Linux, o botão do meio cola). Desligado, use
+        <strong>Ctrl+C</strong> com texto selecionado, o botão direito ou
+        <strong>Ctrl+Shift+C</strong>. Vale para as abas abertas a partir de agora.</p>
       <label class="inline"><input type="checkbox" id="cfgAbrirLocal">
         Abrir o terminal da minha máquina quando não houver nenhuma conexão</label>
       <p class="hint">Desligado, a aba Terminal fica vazia até você escolher um host —

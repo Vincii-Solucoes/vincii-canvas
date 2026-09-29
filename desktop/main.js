@@ -545,8 +545,28 @@ if (!electronApp.requestSingleInstanceLock()) {
         { role: 'selectAll', registerAccelerator: false },
       ],
     };
+    // Mesma história nos menus Arquivo e Janela: fora do mac, os papéis prontos
+    // registram Ctrl+W (fechar), Ctrl+M (minimizar) e, no Linux, Ctrl+Q (sair)
+    // — e essas três são teclas do shell. Ctrl+W apaga a palavra anterior no
+    // readline (uso diário de quem edita um comando longo), Ctrl+M É o Enter
+    // (CR) e Ctrl+Q é o XON que destrava a tela depois de um Ctrl+S. Os itens
+    // continuam no menu, clicáveis; só deixam de sequestrar a tecla. Para
+    // fechar a janela pelo teclado sobra o Alt+F4 do próprio sistema.
+    const menuArquivo = ehMac ? { role: 'fileMenu' } : {
+      label: 'Arquivo',
+      submenu: [{ role: 'quit', registerAccelerator: false }],
+    };
+    const menuJanela = ehMac ? { role: 'windowMenu' } : {
+      label: 'Janela',
+      submenu: [
+        { role: 'minimize', registerAccelerator: false },
+        { role: 'zoom', registerAccelerator: false },
+        { type: 'separator' },
+        { role: 'close', registerAccelerator: false },
+      ],
+    };
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      ...(ehMac ? [{ role: 'appMenu' }] : [{ role: 'fileMenu' }]),
+      ...(ehMac ? [{ role: 'appMenu' }] : [menuArquivo]),
       menuEditar,
       { label: 'Ver',
         submenu: [
@@ -554,7 +574,7 @@ if (!electronApp.requestSingleInstanceLock()) {
           { type: 'separator' },
           { role: 'togglefullscreen' }, { role: 'toggleDevTools' },
         ] },
-      { role: 'windowMenu' },
+      menuJanela,
     ]));
   }
 

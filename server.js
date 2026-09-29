@@ -598,7 +598,7 @@ app.put('/api/prefs', (req, res) => {
   if (Array.isArray(b.pastasFechadas)) {
     ui.pastasFechadas = b.pastasFechadas.filter((x) => typeof x === 'string' && x.length < 300).slice(0, 500);
   }
-  for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
+  for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho', 'copiarAoSelecionar']) {
     if (typeof b[k] === 'boolean') ui[k] = b[k];
   }
   if (typeof b.updateDismissed === 'string') ui.updateDismissed = b.updateDismissed.slice(0, 40);
@@ -1737,7 +1737,7 @@ app.post('/api/import', (req, res) => {
       if (!d.settings.ui || typeof d.settings.ui !== 'object' || Array.isArray(d.settings.ui)) d.settings.ui = {};
       const ui = d.settings.ui;
       if (body.prefs.theme === 'light' || body.prefs.theme === 'dark') ui.theme = body.prefs.theme;
-      for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
+      for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho', 'copiarAoSelecionar']) {
         if (typeof body.prefs[k] === 'boolean') ui[k] = body.prefs[k];
       }
       // Gerador de senhas: mesma validação do PUT /api/prefs.

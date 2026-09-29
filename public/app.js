@@ -16,12 +16,14 @@ const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
   abrirLocalSozinho: null, senha: null, pastasFechadas: null, serial: null,
+  copiarAoSelecionar: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
   theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
   recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
+  copiarAoSelecionar: 'vc-copiar-ao-selecionar',
   pastasFechadas: 'vc-pastas-fechadas', serial: 'vc-serial',
 };
 
@@ -33,9 +35,11 @@ function lsSet(key, valor) {
 }
 
 // valor efetivo: servidor tem prioridade; localStorage cobre o modo web
-function prefBool(key) {
+function prefBool(key, padrao) {
   if (typeof prefs[key] === 'boolean') return prefs[key];
-  return lsGet(key) === '1';
+  const ls = lsGet(key);
+  if (ls === null && padrao !== undefined) return padrao;
+  return ls === '1';
 }
 function prefStr(key, dflt) {
   if (prefs[key]) return prefs[key];
@@ -247,6 +251,11 @@ function openModal(title, bodyHtml) {
   const submit = $('#modalForm button[type=submit]');
   submit.textContent = 'Salvar';
   submit.disabled = false;
+  // Quem abre um modal só de leitura esconde o "Salvar" e renomeia o
+  // "Cancelar"; o próximo modal precisa encontrar os dois como sempre.
+  submit.hidden = false;
+  const cancelarPadrao = $('#modalCancel');
+  if (cancelarPadrao) cancelarPadrao.textContent = 'Cancelar';
   $('#modalRoot').classList.add('open');
   // Foco no primeiro campo: sem isto o modal abria com o foco na página de trás,
   // e quem usa teclado precisava tabular até ele. Atraso 0 roda ANTES dos
@@ -3986,7 +3995,7 @@ function xmlToConfig(text) {
         if (!p) return null;
         const out = {};
         if (p.getAttribute('theme')) out.theme = p.getAttribute('theme');
-        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho']) {
+        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho', 'copiarAoSelecionar']) {
           const v = p.getAttribute(k);
           if (v === 'true' || v === 'false') out[k] = v === 'true';
         }
@@ -5763,6 +5772,46 @@ function copiarPorTextarea(texto) {
 // No macOS o modificador é o Cmd; no Windows e no Linux, o Ctrl.
 const EH_MAC = /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '');
 
+// A ajuda do "!" na barra do Terminal. Existe porque estes gestos são
+// invisíveis: ninguém descobre sozinho que o Ctrl+C só copia com seleção, nem
+// que dentro do vim é o Shift que libera a seleção. A tabela se adapta ao
+// sistema — mostrar Cmd para quem está no Windows só confunde.
+function abrirAjudaDoTerminal() {
+  const mod = EH_MAC ? 'Cmd' : 'Ctrl';
+  const k = (...teclas) => teclas.map((x) => `<kbd>${x}</kbd>`).join(' + ');
+  const linha = (gesto, oQueFaz) => `<tr><td>${gesto}</td><td>${oQueFaz}</td></tr>`;
+  const linhas = [
+    linha(k(mod, 'C'), 'Copia <strong>o texto selecionado</strong>. Sem nada selecionado, '
+      + (EH_MAC ? 'o <kbd>Ctrl</kbd>+<kbd>C</kbd> interrompe o comando (SIGINT), como sempre.'
+                : 'ele interrompe o comando (SIGINT), como sempre.')),
+    linha(k(mod, 'V'), 'Cola.'),
+    linha(k('Ctrl', 'Shift', 'C') + ' / ' + k('Ctrl', 'Shift', 'V'), 'Copia / cola — o par do terminal do Linux.'),
+    linha(k('Ctrl', 'Insert') + ' / ' + k('Shift', 'Insert'), 'Copia / cola — o par clássico do Windows.'),
+    linha('Botão direito', 'Com texto selecionado, <strong>copia</strong>. Sem seleção, <strong>cola</strong>.'),
+    linha('Selecionar com o mouse', prefBool('copiarAoSelecionar', true)
+      ? 'Já copia ao soltar o botão. (Dá para desligar em Configurações › Terminal.)'
+      : 'Não copia sozinho — está desligado em Configurações › Terminal.'),
+    linha(k(EH_MAC ? 'Option' : 'Shift') + ' + arrastar',
+      'Seleciona <strong>dentro de programas que usam o mouse</strong> (vim, htop, tmux, less, mc), '
+      + 'onde o arrasto normal é do próprio programa.'),
+    linha('Duplo clique / triplo clique', 'Seleciona a palavra / a linha.'),
+  ];
+  openModal('Copiar e colar neste terminal', `
+    <table class="atalhos-tabela">
+      <thead><tr><th>Gesto</th><th>O que faz</th></tr></thead>
+      <tbody>${linhas.join('')}</tbody>
+    </table>
+    <p class="hint">O texto colado vai <strong>cru</strong>, com quebras de linha e tudo —
+      é o que se espera de um console. O shell recebe a colagem marcada
+      (<em>bracketed paste</em>), então editores e o histórico sabem que veio de fora.</p>`);
+  // É ajuda: não há o que salvar.
+  const submit = $('#modalForm button[type=submit]');
+  if (submit) submit.hidden = true;
+  const cancelar = $('#modalCancel');
+  if (cancelar) cancelar.textContent = 'Fechar';
+  $('#modalForm').onsubmit = (e) => { e.preventDefault(); closeModal(); };
+}
+
 function habilitarCopiarColar(session) {
   const { term, container } = session;
   if (!term || !container) return;
@@ -5822,6 +5871,32 @@ function habilitarCopiarColar(session) {
     if (await copiar()) return;
     await colar();
   });
+
+  // ----- "selecionou, já copiou" (PuTTY, xterm do X11, SecureCRT) -----
+  //
+  // Copia ao SOLTAR o botão, não a cada mudança da seleção: onSelectionChange
+  // dispara a cada pixel arrastado, e a seleção feita por código
+  // (term.selectAll, busca) não é gesto de ninguém. Sem toast: seria um aviso
+  // a cada arrasto. A seleção FICA na tela — quem some com ela é o copiar
+  // explícito (Ctrl+C, botão direito), para dar o retorno visual.
+  container.addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return;
+    if (!prefBool('copiarAoSelecionar', true)) return;
+    if (!term.hasSelection || !term.hasSelection()) return;
+    const sel = term.getSelection();
+    if (sel) copiarParaClipboard(sel);
+  });
+
+  // Botão do MEIO cola — a outra metade da convenção do X11. Só no Linux, que é
+  // onde ela existe: no Windows o botão do meio é rolagem automática, e no mac
+  // não há convenção nenhuma.
+  if (/linux/i.test(navigator.platform || navigator.userAgent || '') && !EH_MAC) {
+    container.addEventListener('auxclick', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      colar();
+    });
+  }
 }
 
 function createSession({ hostId, hostName, isLocal, reatarId }) {
@@ -7484,6 +7559,8 @@ async function loadConfigTab() {
   // ela mora nas prefs de interface, como o tema e a barra recolhida.
   const cxLocal = $('#cfgAbrirLocal');
   if (cxLocal) cxLocal.checked = prefBool('abrirLocalSozinho');
+  const cxSelTela = $('#cfgCopiarSel');
+  if (cxSelTela) cxSelTela.checked = prefBool('copiarAoSelecionar', true);
   updateFontPreview();
   loadBackupCard();
 }
@@ -9357,8 +9434,20 @@ function init() {
     });
     ro.observe(painelTerm);
   }
+  const btnAjuda = $('#ajudaTermBtn');
+  if (btnAjuda) btnAjuda.addEventListener('click', abrirAjudaDoTerminal);
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
+  const cxSel = $('#cfgCopiarSel');
+  if (cxSel) {
+    cxSel.checked = prefBool('copiarAoSelecionar', true);
+    cxSel.addEventListener('change', () => {
+      prefSet('copiarAoSelecionar', cxSel.checked);
+      toast(cxSel.checked
+        ? 'O que você selecionar com o mouse já vai para a área de transferência.'
+        : 'Selecionar não copia mais sozinho — use Ctrl+C, Ctrl+Shift+C ou o botão direito.');
+    });
+  }
   const cxLocal = $('#cfgAbrirLocal');
   if (cxLocal) {
     cxLocal.checked = prefBool('abrirLocalSozinho');
