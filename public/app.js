@@ -4717,6 +4717,9 @@ function renderHostSidebar() {
   if (q) {
     // BUSCA: mostra todos os hosts que casam, agrupados — para conectar a qualquer um
     let shown = 0;
+    // O atalho do Claude também responde à busca: sem isto, digitar "claude"
+    // escondia justamente o que a pessoa estava procurando.
+    if ('claude code terminal ia'.includes(q) && itemDoClaude(list)) shown++;
     for (const [groupName, hosts] of groupedHosts()) {
       // O rótulo ("Produção › Web") entra no casamento: buscar pelo nome do
       // grupo ou do subgrupo acha os hosts dele — igual à aba Executar. Sem
@@ -4749,21 +4752,7 @@ function renderHostSidebar() {
   // Atalho do Claude Code, logo abaixo de "Meu computador". Só aparece se o
   // `claude` existir NA MÁQUINA (o servidor pergunta ao shell de login, porque
   // o app de GUI não herda o PATH do ~/.zshrc).
-  if (localInfo && localInfo.claude) {
-    const claudeItem = el(list, 'div', 'host-item local-item');
-    const claudeAberto = sessions.some((s) => s.marca === 'claude' && s.status === 'conectado');
-    if (claudeAberto) claudeItem.classList.add('connected');
-    const at = activeSession();
-    if (at && at.marca === 'claude') claudeItem.classList.add('active');
-    makeAvatar(claudeItem, { name: 'Claude Code', icon: 'ia', color: 'violet' });
-    const cinfo = el(claudeItem, 'div', 'info');
-    el(cinfo, 'div', 'hname', 'Claude Code');
-    el(cinfo, 'div', 'haddr', 'terminal com IA · nesta máquina');
-    el(claudeItem, 'span', 'dot');
-    claudeItem.title = 'Abrir o Claude Code num terminal desta máquina'
-      + '\n(segure Shift para continuar a última conversa)';
-    claudeItem.addEventListener('click', (e) => abrirClaude({ continuar: e.shiftKey }));
-  }
+  itemDoClaude(list);
 
   const recents = getRecents();
   const lbl = el(list, 'div', 'host-group-label');
@@ -5321,7 +5310,8 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
   habilitarCopiarColar(session);
   // O sino do terminal (BEL) vira aviso: som, marca na aba e, com a janela
   // fora de foco, notificação do sistema.
-  try { term.onBell(() => aoTocarSino(session)); } catch { /* xterm antigo: sem sino */ } // Ctrl+C/Ctrl+V e botão direito, como nos outros terminais
+  try { term.onBell(() => aoTocarSino(session)); } catch { /* xterm antigo: sem sino */ }
+  escutarEstadoDoClaude(session); // Ctrl+C/Ctrl+V e botão direito, como nos outros terminais
 
   // Leitura: um laço que joga o que chega da porta no xterm.
   (async () => {
@@ -5833,9 +5823,10 @@ function abrirAjudaDoTerminal() {
       'Seleciona <strong>dentro de programas que usam o mouse</strong> (vim, htop, tmux, less, mc), '
       + 'onde o arrasto normal é do próprio programa.'),
     linha('Duplo clique / triplo clique', 'Seleciona a palavra / a linha.'),
-    linha('Sino do terminal', prefBool('avisarSino', true)
-      ? 'Quando o programa apita (o <strong>Claude Code</strong> ao terminar, um comando longo que acaba), '
-        + 'o Canvas toca um aviso curto, marca a aba e — se estiver atrás de outra janela — notifica o sistema.'
+    linha('Quando o trabalho acaba', prefBool('avisarSino', true)
+      ? 'O <strong>Claude Code</strong> avisa que terminou de responder (e a aba mostra um anel girando enquanto '
+        + 'ele trabalha); qualquer programa que toque o sino do terminal também conta. O Canvas dá um aviso curto, '
+        + 'marca a aba e — se estiver atrás de outra janela — notifica o sistema.'
       : 'Está desligado em Configurações › Terminal.'),
   ];
   openModal('Copiar e colar neste terminal', `
@@ -5992,6 +5983,7 @@ function createSession({ hostId, hostName, isLocal, reatarId, comandoInicial, ma
   // O sino do terminal (BEL) vira aviso: som, marca na aba e, com a janela
   // fora de foco, notificação do sistema.
   try { term.onBell(() => aoTocarSino(session)); } catch { /* xterm antigo: sem sino */ }
+  escutarEstadoDoClaude(session);
   sessions.push(session);
   setActiveSession(id);
   // só conecta quando o xterm já tem tamanho real (senão o pty nasce estreito)
@@ -6018,6 +6010,27 @@ function ensureLocalTerminal() {
   if (!xtermReady() || !terminalTabActive() || localDismissed) return;
   if (sessions.length === 0) openLocalSession();
 }
+// O atalho do Claude Code na barra lateral. Fica numa função porque aparece em
+// DOIS lugares: na lista normal, logo abaixo de "Meu computador", e no
+// resultado da busca quando a pessoa digita "claude" (quem procura pelo nome
+// espera achar).
+function itemDoClaude(list) {
+  if (!(localInfo && localInfo.claude)) return false;
+  const item = el(list, 'div', 'host-item local-item');
+  if (sessions.some((s) => s.marca === 'claude' && s.status === 'conectado')) item.classList.add('connected');
+  const at = activeSession();
+  if (at && at.marca === 'claude') item.classList.add('active');
+  makeAvatar(item, { name: 'Claude Code', icon: 'ia', color: 'violet' });
+  const info = el(item, 'div', 'info');
+  el(info, 'div', 'hname', 'Claude Code');
+  el(info, 'div', 'haddr', 'terminal com IA · nesta máquina');
+  el(item, 'span', 'dot');
+  item.title = 'Abrir o Claude Code num terminal desta máquina'
+    + '\n(segure Shift para continuar a última conversa)';
+  item.addEventListener('click', (e) => abrirClaude({ continuar: e.shiftKey }));
+  return true;
+}
+
 function localOsIcon() {
   const p = String((localInfo && localInfo.platform) || navigator.platform || navigator.userAgent || '').toLowerCase();
   if (p.includes('darwin') || p.includes('mac')) return 'apple';
@@ -6709,9 +6722,13 @@ function renderTermTabs() {
   for (const s of sessions) {
     const tab = el(bar, 'div', 'term-tab' + (s.id === activeSessionId ? ' active' : '') + (s.avisou ? ' avisou' : ''));
     el(tab, 'span', 'tab-dot ' + s.status);
+    if (s.trabalhando) {
+      const tr = el(tab, 'span', 'tab-trabalhando');
+      tr.title = 'O Claude está trabalhando nesta aba';
+    }
     if (s.avisou) {
       const sino = el(tab, 'span', 'tab-sino', '●');
-      sino.title = 'Esta aba chamou você (o programa tocou o sino do terminal)';
+      sino.title = 'Esta aba chamou você — o programa terminou';
     }
 
     if (s.id === renamingId) {
@@ -8053,8 +8070,9 @@ function notificarSistema(titulo, corpo) {
   } catch { /* sem notificação: o resto do aviso continua */ }
 }
 
-// O sino tocou nesta sessão.
-function aoTocarSino(session) {
+// Uma aba chamou por você. Dois caminhos chegam aqui: o sino do terminal (BEL)
+// e o fim de turno do Claude Code (OSC 9;4 — veja escutarEstadoDoClaude).
+function avisarNaAba(session, corpo) {
   if (!prefBool('avisarSino', true)) return;
   const emFoco = document.hasFocus() && activeSessionId === session.id;
   // Marca na aba: fica até você olhar a aba. É o que resolve "saí para o café e
@@ -8062,8 +8080,44 @@ function aoTocarSino(session) {
   if (!emFoco) { session.avisou = true; renderTermTabs(); }
   tocarAvisoCurto();
   if (!document.hasFocus()) {
-    notificarSistema(session.hostName || 'Terminal', 'Terminou e chamou você.');
+    notificarSistema(session.hostName || 'Terminal', corpo || 'Terminou e chamou você.');
   }
+}
+function aoTocarSino(session) { avisarNaAba(session, 'Terminou e chamou você.'); }
+
+// O Claude Code diz quando COMEÇA e quando PARA de trabalhar — e de graça.
+//
+// Ele acende a barra de progresso do terminal (a sequência OSC 9;4 do ConEmu /
+// Windows Terminal): `ESC ] 9 ; 4 ; 3 ; BEL` ao começar (indeterminada) e
+// `ESC ] 9 ; 4 ; 0 ; BEL` ao parar. Isso vem LIGADO de fábrica
+// (terminalProgressBarEnabled), então não depende de configurar nada — ao
+// contrário do aviso por sino dele, que no padrão `auto` simplesmente não sai
+// dentro do Canvas (o Claude não reconhece este terminal e escolhe "nenhum
+// método").
+//
+// O BEL que fecha a sequência NÃO dispara o onBell: na tabela do xterm, 0x07
+// dentro de OSC é fim-de-OSC, não "execute". Os dois avisos convivem.
+function escutarEstadoDoClaude(session) {
+  const term = session.term;
+  if (!term || !term.parser || !term.parser.registerOscHandler) return;
+  try {
+    term.parser.registerOscHandler(9, (dados) => {
+      const p = String(dados || '').split(';');
+      // OSC 9 também é a notificação do iTerm2 ("9;texto"): aquela não é nossa.
+      if (p[0] !== '4') return false;
+      const estado = p[1];
+      if (estado === '1' || estado === '2' || estado === '3' || estado === '4') {
+        if (!session.trabalhando) { session.trabalhando = true; renderTermTabs(); }
+      } else if (estado === '0') {
+        if (session.trabalhando) {
+          session.trabalhando = false;
+          renderTermTabs();
+          avisarNaAba(session, 'O Claude terminou de responder.');
+        }
+      }
+      return true; // consumido: nada disso deve virar texto na tela
+    });
+  } catch { /* xterm sem parser exposto: fica só o sino */ }
 }
 
 function pararSirene() {

@@ -2,7 +2,7 @@
   "name": "vincii-canvas",
   "productName": "Vincii Canvas",
   "desktopName": "vincii-canvas.desktop",
-  "version": "1.79.0",
+  "version": "1.79.1",
   "private": true,
   "description": "Vincii Canvas — SSH em lote, terminal interativo e automação com IA",
   "author": "Vincii <contato@vincii.com.br>",

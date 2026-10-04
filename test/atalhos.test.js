@@ -98,9 +98,24 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
   ok(/if \(!document\.hasFocus\(\)\) \{\s*notificarSistema/.test(app),
     'notificação do sistema SÓ com a janela fora de foco');
 
+  // O sinal de "o Claude terminou" não é o sino: no padrão `auto` ele não sai
+  // dentro do Canvas. É a barra de progresso (OSC 9;4), que vem ligada de
+  // fábrica no Claude Code — 9;4;3 ao começar, 9;4;0 ao parar.
+  ok(/registerOscHandler\(9,/.test(app), 'o app escuta a sequência OSC 9 do terminal');
+  ok(/if \(p\[0\] !== '4'\) return false;/.test(app),
+    'OSC 9 que não é barra de progresso (notificação do iTerm2) não é engolida');
+  ok(/avisarNaAba\(session, 'O Claude terminou de responder\.'\)/.test(app),
+    'o fim de turno avisa com corpo próprio');
+  ok(/session\.trabalhando = true/.test(app) && /session\.trabalhando = false/.test(app),
+    'a aba sabe quando ele está trabalhando e quando parou');
+  ok(/itemDoClaude\(list\)/.test(app) && /'claude code terminal ia'\.includes\(q\)/.test(app),
+    'a busca da barra lateral também acha o atalho do Claude');
+
   const servidor = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   ok(/'-lc', 'command -v claude'/.test(servidor),
     'a procura pelo claude passa pelo shell de LOGIN (um app de GUI não herda o PATH do ~/.zshrc)');
+  ok(/if \(process\.platform === 'win32'\) \{ _claudeDisponivel = false;/.test(servidor),
+    'no Windows nem procura: sem PTY, o TUI do Claude não roda lá');
 
   const main = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'main.js'), 'utf8');
   ok(/'clipboard-sanitized-write', 'notifications'/.test(main),

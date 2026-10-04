@@ -296,13 +296,15 @@ app.get('/api/update-check', async (req, res) => {
 let _claudeDisponivel = null;
 function acharClaude() {
   if (_claudeDisponivel !== null) return Promise.resolve(_claudeDisponivel);
+  // No Windows o terminal local é por PIPES, sem PTY (lib/localterm.js), e o
+  // Claude Code é um TUI: ele precisa de terminal de verdade. Oferecer o
+  // atalho ali seria entregar uma aba quebrada — então nem procuramos.
+  if (process.platform === 'win32') { _claudeDisponivel = false; return Promise.resolve(false); }
   return new Promise((resolve) => {
     const pronto = (v) => { _claudeDisponivel = v; resolve(v); };
     try {
-      const ehWin = process.platform === 'win32';
-      const shell = ehWin ? (process.env.COMSPEC || 'powershell.exe') : (process.env.SHELL || '/bin/zsh');
-      const args = ehWin ? ['-NoProfile', '-Command', 'Get-Command claude -ErrorAction SilentlyContinue']
-        : ['-lc', 'command -v claude'];
+      const shell = process.env.SHELL || '/bin/zsh';
+      const args = ['-lc', 'command -v claude'];
       const p = require('child_process').spawn(shell, args, { stdio: ['ignore', 'pipe', 'ignore'] });
       let saida = '';
       p.stdout.on('data', (d) => { saida += d.toString(); });
