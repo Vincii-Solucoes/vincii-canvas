@@ -293,6 +293,25 @@ app.get('/api/update-check', async (req, res) => {
 // terminal local roda, então a resposta bate com a realidade da aba.
 //
 // Feito UMA vez e guardado: é pergunta de instalação, não muda durante o uso.
+// Caminhos onde o `claude` costuma cair. É a primeira tentativa porque custa
+// microssegundos e não depende de abrir shell nenhum.
+function claudeNosCaminhosConhecidos() {
+  const lar = process.env.HOME || os.homedir() || '';
+  const candidatos = [
+    path.join(lar, '.local', 'bin', 'claude'),
+    path.join(lar, '.claude', 'local', 'claude'),
+    path.join(lar, '.bun', 'bin', 'claude'),
+    path.join(lar, '.npm-global', 'bin', 'claude'),
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+  ];
+  for (const c of candidatos) {
+    try { fs.accessSync(c, fs.constants.X_OK); return true; } catch { /* próximo */ }
+  }
+  return false;
+}
+
 let _claudeDisponivel = null;
 function acharClaude() {
   if (_claudeDisponivel !== null) return Promise.resolve(_claudeDisponivel);
@@ -300,18 +319,27 @@ function acharClaude() {
   // Claude Code é um TUI: ele precisa de terminal de verdade. Oferecer o
   // atalho ali seria entregar uma aba quebrada — então nem procuramos.
   if (process.platform === 'win32') { _claudeDisponivel = false; return Promise.resolve(false); }
+  if (claudeNosCaminhosConhecidos()) { _claudeDisponivel = true; return Promise.resolve(true); }
   return new Promise((resolve) => {
-    const pronto = (v) => { _claudeDisponivel = v; resolve(v); };
+    // IMPORTANTE: só o "achei" e o "o shell respondeu que não tem" viram cache.
+    // Prazo estourado ou erro NÃO viram: num arranque disputado, o shell de
+    // login pode demorar (nvm, oh-my-zsh), e gravar "não existe" deixaria o
+    // atalho sumido até o app reiniciar — foi o que aconteceu.
+    const responder = (v, guardar) => { if (guardar) _claudeDisponivel = v; resolve(v); };
     try {
       const shell = process.env.SHELL || '/bin/zsh';
       const args = ['-lc', 'command -v claude'];
       const p = require('child_process').spawn(shell, args, { stdio: ['ignore', 'pipe', 'ignore'] });
       let saida = '';
       p.stdout.on('data', (d) => { saida += d.toString(); });
-      const prazo = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} pronto(false); }, 4000);
-      p.on('error', () => { clearTimeout(prazo); pronto(false); });
-      p.on('close', (code) => { clearTimeout(prazo); pronto(code === 0 && saida.trim().length > 0); });
-    } catch { pronto(false); }
+      const prazo = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} responder(false, false); }, 10000);
+      p.on('error', () => { clearTimeout(prazo); responder(false, false); });
+      p.on('close', (code) => {
+        clearTimeout(prazo);
+        const achou = code === 0 && saida.trim().length > 0;
+        responder(achou, true);
+      });
+    } catch { responder(false, false); }
   });
 }
 

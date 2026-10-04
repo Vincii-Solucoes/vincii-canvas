@@ -4611,8 +4611,21 @@ let termSelectedHost = null; // host da sessão ativa (usado por IA/agente)
 let localDismissed = false;  // usuário fechou o terminal local; não reabrir sozinho até reentrar na aba
 let localInfo = null;        // { user, host, shell, platform } da própria máquina
 
-async function loadLocalInfo() {
-  try { localInfo = await api('/api/local-info'); renderHostSidebar(); renderGreeting(); } catch {}
+async function loadLocalInfo(tentativa) {
+  try {
+    const novo = await api('/api/local-info');
+    const mudou = !localInfo || localInfo.claude !== novo.claude;
+    localInfo = novo;
+    if (mudou || !tentativa) { renderHostSidebar(); renderGreeting(); }
+  } catch { /* o app funciona sem isso; tenta de novo abaixo */ }
+  // Procurar o `claude` passa por um shell de login, que num arranque disputado
+  // pode demorar — e a primeira resposta pode vir "não tem" sem ser verdade.
+  // Duas tentativas espaçadas depois, e paramos: é pergunta de instalação,
+  // não de estado.
+  const n = tentativa || 0;
+  if (n < 2 && !(localInfo && localInfo.claude)) {
+    setTimeout(() => loadLocalInfo(n + 1), n === 0 ? 3000 : 9000);
+  }
 }
 
 const DEFAULT_TERM_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
@@ -7257,7 +7270,13 @@ function ajustaModoEstreito() {
 }
 
 function updateTermLayout() {
-  const desk = semTerminal(activeSession());
+  const atual = activeSession();
+  const desk = semTerminal(atual);
+  // Na aba do Claude Code a IA do app sai de cena: a pessoa JÁ está conversando
+  // com uma IA dentro do terminal, e o painel ao lado só repetiria o papel
+  // roubando largura de um TUI que precisa de colunas. Nas outras abas nada
+  // muda — a preferência de quem recolheu/abriu o painel continua valendo.
+  const ehAbaDoClaude = !!(atual && atual.marca === 'claude');
   // o botão de favoritos insere comando no terminal: some na área de trabalho
   const fav = document.querySelector('.fav-wrap');
   if (fav) fav.hidden = desk;
@@ -7267,7 +7286,7 @@ function updateTermLayout() {
   const grid = document.querySelector('.term-grid');
   const pane = document.querySelector('.ai-pane');
   const sidebar = document.querySelector('.host-sidebar');
-  const mostraIa = aiEnabled && !aiCollapsed;
+  const mostraIa = aiEnabled && !aiCollapsed && !ehAbaDoClaude;
   if (pane) pane.hidden = !mostraIa;
   if (sidebar) sidebar.hidden = sidebarCollapsed;
   if (grid) {
@@ -7278,7 +7297,7 @@ function updateTermLayout() {
     grid.classList.toggle('no-sidebar', sidebarCollapsed);
   }
   const bAi = $('#toggleAiPane');
-  if (bAi) { bAi.hidden = !aiEnabled; bAi.classList.toggle('active', mostraIa); }
+  if (bAi) { bAi.hidden = !aiEnabled || ehAbaDoClaude; bAi.classList.toggle('active', mostraIa); }
   // Na área de trabalho a IA só tira dúvida: não há terminal para ela assistir,
   // nem onde inserir comando. O agente autônomo fica indisponível.
   const modos = document.querySelector('.ai-modes');
