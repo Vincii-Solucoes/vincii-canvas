@@ -188,6 +188,17 @@ const HOST_ICONS = {
       <rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7 9.5 10 12l-3 2.5M12.5 15h4.5"/>
     </svg>`,
   },
+  ia: {
+    label: 'Terminal com IA', cat: 'Outros',
+    // Um terminal com uma faísca: é o atalho do Claude Code na barra lateral.
+    // Forma própria de propósito — nada de logotipo de terceiro num avatar.
+    svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2.5" y="5" width="19" height="14" rx="2.4"/>
+      <path d="M6.6 10 9 12.2l-2.4 2.2"/>
+      <path d="M16.6 8.3l.75 1.95 1.95.75-1.95.75-.75 1.95-.75-1.95-1.95-.75 1.95-.75.75-1.95Z" fill="currentColor" stroke-width="1.2"/>
+      <path d="M11.5 15.4h3.2"/>
+    </svg>`,
+  },
   shield: {
     label: 'Segurança', cat: 'Outros',
     svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

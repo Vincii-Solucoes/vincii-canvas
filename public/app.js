@@ -16,14 +16,14 @@ const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
   abrirLocalSozinho: null, senha: null, pastasFechadas: null, serial: null,
-  copiarAoSelecionar: null,
+  copiarAoSelecionar: null, avisarSino: null,
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
   theme: 'vc-theme', greetHidden: 'vc-greet-hidden', aiCollapsed: 'vc-ai-collapsed',
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
   recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
-  copiarAoSelecionar: 'vc-copiar-ao-selecionar',
+  copiarAoSelecionar: 'vc-copiar-ao-selecionar', avisarSino: 'vc-avisar-sino',
   pastasFechadas: 'vc-pastas-fechadas', serial: 'vc-serial',
 };
 
@@ -3995,7 +3995,7 @@ function xmlToConfig(text) {
         if (!p) return null;
         const out = {};
         if (p.getAttribute('theme')) out.theme = p.getAttribute('theme');
-        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho', 'copiarAoSelecionar']) {
+        for (const k of ['greetHidden', 'aiCollapsed', 'sidebarCollapsed', 'abrirLocalSozinho', 'copiarAoSelecionar', 'avisarSino']) {
           const v = p.getAttribute(k);
           if (v === 'true' || v === 'false') out[k] = v === 'true';
         }
@@ -4746,6 +4746,25 @@ function renderHostSidebar() {
   localItem.title = 'Abrir um terminal na sua própria máquina';
   localItem.addEventListener('click', () => openLocalSession());
 
+  // Atalho do Claude Code, logo abaixo de "Meu computador". Só aparece se o
+  // `claude` existir NA MÁQUINA (o servidor pergunta ao shell de login, porque
+  // o app de GUI não herda o PATH do ~/.zshrc).
+  if (localInfo && localInfo.claude) {
+    const claudeItem = el(list, 'div', 'host-item local-item');
+    const claudeAberto = sessions.some((s) => s.marca === 'claude' && s.status === 'conectado');
+    if (claudeAberto) claudeItem.classList.add('connected');
+    const at = activeSession();
+    if (at && at.marca === 'claude') claudeItem.classList.add('active');
+    makeAvatar(claudeItem, { name: 'Claude Code', icon: 'ia', color: 'violet' });
+    const cinfo = el(claudeItem, 'div', 'info');
+    el(cinfo, 'div', 'hname', 'Claude Code');
+    el(cinfo, 'div', 'haddr', 'terminal com IA · nesta máquina');
+    el(claudeItem, 'span', 'dot');
+    claudeItem.title = 'Abrir o Claude Code num terminal desta máquina'
+      + '\n(segure Shift para continuar a última conversa)';
+    claudeItem.addEventListener('click', (e) => abrirClaude({ continuar: e.shiftKey }));
+  }
+
   const recents = getRecents();
   const lbl = el(list, 'div', 'host-group-label');
   el(lbl, 'span', null, 'Recentes');
@@ -4839,6 +4858,22 @@ function openLocalSession() {
   if (!xtermReady()) return;
   localDismissed = false;
   createSession({ hostId: null, hostName: 'Meu computador', isLocal: true });
+}
+
+// Abre o Claude Code numa aba de terminal desta máquina. É um terminal local
+// como qualquer outro — o comando é digitado no shell assim que ele abre, e
+// quando o Claude sai você fica no shell, sem a aba morrer junto.
+function abrirClaude(opts) {
+  if (!xtermReady()) return;
+  localDismissed = false;
+  const continuar = !!(opts && opts.continuar);
+  createSession({
+    hostId: null,
+    hostName: continuar ? 'Claude Code (continuar)' : 'Claude Code',
+    isLocal: true,
+    marca: 'claude',
+    comandoInicial: continuar ? 'claude --continue' : 'claude',
+  });
 }
 
 // Abre uma sessão para um host AVULSO (conexão rápida, não salvo). Não entra em
@@ -5283,7 +5318,10 @@ function abrirSessaoSerial(port, cfg, rotuloAba) {
     // Só pega o que está VISÍVEL (device com eco, ou eco local), como sempre.
     captureTyped(session, d);
   });
-  habilitarCopiarColar(session); // Ctrl+C/Ctrl+V e botão direito, como nos outros terminais
+  habilitarCopiarColar(session);
+  // O sino do terminal (BEL) vira aviso: som, marca na aba e, com a janela
+  // fora de foco, notificação do sistema.
+  try { term.onBell(() => aoTocarSino(session)); } catch { /* xterm antigo: sem sino */ } // Ctrl+C/Ctrl+V e botão direito, como nos outros terminais
 
   // Leitura: um laço que joga o que chega da porta no xterm.
   (async () => {
@@ -5795,6 +5833,10 @@ function abrirAjudaDoTerminal() {
       'Seleciona <strong>dentro de programas que usam o mouse</strong> (vim, htop, tmux, less, mc), '
       + 'onde o arrasto normal é do próprio programa.'),
     linha('Duplo clique / triplo clique', 'Seleciona a palavra / a linha.'),
+    linha('Sino do terminal', prefBool('avisarSino', true)
+      ? 'Quando o programa apita (o <strong>Claude Code</strong> ao terminar, um comando longo que acaba), '
+        + 'o Canvas toca um aviso curto, marca a aba e — se estiver atrás de outra janela — notifica o sistema.'
+      : 'Está desligado em Configurações › Terminal.'),
   ];
   openModal('Copiar e colar neste terminal', `
     <table class="atalhos-tabela">
@@ -5899,7 +5941,7 @@ function habilitarCopiarColar(session) {
   }
 }
 
-function createSession({ hostId, hostName, isLocal, reatarId }) {
+function createSession({ hostId, hostName, isLocal, reatarId, comandoInicial, marca }) {
   const id = ++sessionSeq;
   const container = el($('#termContainers'), 'div', 'term-instance');
   const term = new Terminal({
@@ -5929,6 +5971,11 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
   term.loadAddon(fitAddon);
   term.open(container);
   const session = { id, hostId, hostName, isLocal: !!isLocal, kind: 'term', reatarId: reatarId || null, term, fitAddon, ws: null, container, status: 'conectando' };
+  // `comandoInicial` é digitado no shell assim que ele abre (é assim que o
+  // atalho do Claude Code funciona); `marca` é só um rótulo para a aba saber
+  // que tipo de sessão ela é.
+  if (comandoInicial) session.comandoInicial = comandoInicial;
+  if (marca) session.marca = marca;
   // estado de IA POR SESSÃO: cada aba tem seu assistente e agente independentes
   session.ai = { history: [], aiBusy: false, mode: 'assist', goal: '', agent: null, messagesEl: buildAiMessages(), feedEl: buildAgentFeed() };
   term.onData((d) => {
@@ -5942,6 +5989,9 @@ function createSession({ hostId, hostName, isLocal, reatarId }) {
   });
   term.onResize(({ cols, rows }) => { if (session.ws && session.ws.readyState === WebSocket.OPEN) session.ws.send(JSON.stringify({ t: 'r', cols, rows })); });
   habilitarCopiarColar(session);
+  // O sino do terminal (BEL) vira aviso: som, marca na aba e, com a janela
+  // fora de foco, notificação do sistema.
+  try { term.onBell(() => aoTocarSino(session)); } catch { /* xterm antigo: sem sino */ }
   sessions.push(session);
   setActiveSession(id);
   // só conecta quando o xterm já tem tamanho real (senão o pty nasce estreito)
@@ -6017,6 +6067,17 @@ function connectSession(session) {
       renderTermTabs();
       renderHostSidebar();
       if (activeSessionId === session.id) { setTimeout(() => { sendResize(session); focusActive(); }, 30); }
+      // Comando de abertura (o atalho do Claude Code). Vai UMA vez, e depois do
+      // redimensionar: um TUI que nasce com 80 colunas e só depois recebe o
+      // tamanho real redesenha torto. O shell de login ainda está imprimindo o
+      // prompt, daí o respiro.
+      if (session.comandoInicial && !session.comandoInicialEnviado) {
+        session.comandoInicialEnviado = true;
+        const cmd = session.comandoInicial;
+        setTimeout(() => {
+          try { ws.send(JSON.stringify({ t: 'i', d: cmd + '\r' })); } catch { /* fechou antes */ }
+        }, 450);
+      }
     } else if (m.t === 'e') {
       session.term.write(`\r\n\x1b[33m${m.d}\x1b[0m`);
       if (m.cofre) anotarRecusaDoCofre(session.hostId, m.cofre);
@@ -6116,6 +6177,9 @@ async function reconectarSessao(id) {
 }
 
 function setActiveSession(id) {
+  // Olhou a aba, o aviso cumpriu o papel.
+  const alvo = sessions.find((s) => s.id === id);
+  if (alvo && alvo.avisou) alvo.avisou = false;
   activeSessionId = id;
   for (const s of sessions) s.container.hidden = s.id !== id;
   const s = activeSession();
@@ -6643,8 +6707,12 @@ function renderTermTabs() {
   if (renamingId !== null && bar.querySelector('.tab-rename') === document.activeElement) return;
   bar.innerHTML = '';
   for (const s of sessions) {
-    const tab = el(bar, 'div', 'term-tab' + (s.id === activeSessionId ? ' active' : ''));
+    const tab = el(bar, 'div', 'term-tab' + (s.id === activeSessionId ? ' active' : '') + (s.avisou ? ' avisou' : ''));
     el(tab, 'span', 'tab-dot ' + s.status);
+    if (s.avisou) {
+      const sino = el(tab, 'span', 'tab-sino', '●');
+      sino.title = 'Esta aba chamou você (o programa tocou o sino do terminal)';
+    }
 
     if (s.id === renamingId) {
       buildRenameInput(tab, s);
@@ -7561,6 +7629,8 @@ async function loadConfigTab() {
   if (cxLocal) cxLocal.checked = prefBool('abrirLocalSozinho');
   const cxSelTela = $('#cfgCopiarSel');
   if (cxSelTela) cxSelTela.checked = prefBool('copiarAoSelecionar', true);
+  const cxSinoTela = $('#cfgAvisarSino');
+  if (cxSinoTela) cxSinoTela.checked = prefBool('avisarSino', true);
   updateFontPreview();
   loadBackupCard();
 }
@@ -7938,6 +8008,64 @@ function tocarSirene() {
     monVarredura = setInterval(() => { alto = !alto; try { osc.frequency.value = alto ? 990 : 620; } catch {} }, 380);
   } catch { /* ignora: alarme visual segue */ }
 }
+// ---- aviso curto: o sino do terminal (BEL) ----
+//
+// Quem toca o sino é o programa do outro lado: o Claude Code quando termina de
+// responder (com o aviso por sino ligado), um `make` que acaba, um alerta do
+// equipamento. O terminal emite 0x07 e o xterm nos entrega em onBell — então o
+// mesmo aviso serve para "a IA terminou" e para "aquele comando longo acabou".
+//
+// Dois toques curtos e agudos, de propósito diferentes da sirene do Monitor
+// (que é alarme, em laço). Este é um "pronto", e cala sozinho.
+function tocarAvisoCurto() {
+  try {
+    destravarAudio();
+    if (!monAudioCtx) return;
+    const ctx = monAudioCtx;
+    const agora = ctx.currentTime;
+    [0, 0.17].forEach((atraso, i) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = i === 0 ? 880 : 1180;
+      g.gain.setValueAtTime(0.0001, agora + atraso);
+      g.gain.exponentialRampToValueAtTime(0.12, agora + atraso + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, agora + atraso + 0.13);
+      osc.connect(g); g.connect(ctx.destination);
+      osc.start(agora + atraso);
+      osc.stop(agora + atraso + 0.15);
+    });
+  } catch { /* sem áudio: sobram a marca na aba e a notificação */ }
+}
+
+// Notificação do sistema — só quando a janela NÃO está em foco. Com a janela na
+// frente, o som e a marca na aba já dizem tudo; uma notificação aí seria
+// duplicada e irritante.
+function notificarSistema(titulo, corpo) {
+  try {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted') { new Notification(titulo, { body: corpo, silent: true }); return; }
+    if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((p) => {
+        if (p === 'granted') { try { new Notification(titulo, { body: corpo, silent: true }); } catch {} }
+      }).catch(() => {});
+    }
+  } catch { /* sem notificação: o resto do aviso continua */ }
+}
+
+// O sino tocou nesta sessão.
+function aoTocarSino(session) {
+  if (!prefBool('avisarSino', true)) return;
+  const emFoco = document.hasFocus() && activeSessionId === session.id;
+  // Marca na aba: fica até você olhar a aba. É o que resolve "saí para o café e
+  // não sei qual das seis abas me chamou".
+  if (!emFoco) { session.avisou = true; renderTermTabs(); }
+  tocarAvisoCurto();
+  if (!document.hasFocus()) {
+    notificarSistema(session.hostName || 'Terminal', 'Terminou e chamou você.');
+  }
+}
+
 function pararSirene() {
   if (monVarredura) { clearInterval(monVarredura); monVarredura = null; }
   if (monOsc) { try { monOsc.osc.stop(); } catch {} try { monOsc.osc.disconnect(); monOsc.g.disconnect(); } catch {} monOsc = null; }
@@ -9438,6 +9566,15 @@ function init() {
   if (btnAjuda) btnAjuda.addEventListener('click', abrirAjudaDoTerminal);
   $('#cfgSaveAi').addEventListener('click', saveConfigAi);
   $('#cfgClearKey').addEventListener('click', clearConfigAi);
+  const cxSino = $('#cfgAvisarSino');
+  if (cxSino) {
+    cxSino.checked = prefBool('avisarSino', true);
+    cxSino.addEventListener('change', () => {
+      prefSet('avisarSino', cxSino.checked);
+      if (cxSino.checked) { tocarAvisoCurto(); toast('É este o aviso. Vale para todas as abas de terminal.'); }
+      else toast('O sino do terminal passa a ser ignorado.');
+    });
+  }
   const cxSel = $('#cfgCopiarSel');
   if (cxSel) {
     cxSel.checked = prefBool('copiarAoSelecionar', true);

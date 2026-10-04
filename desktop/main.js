@@ -241,7 +241,12 @@ if (!electronApp.requestSingleInstanceLock()) {
         // O clipboard é para o copiar/colar do terminal com o botão direito
         // (ler para colar, escrever ao copiar) — ação do próprio usuário, na UI
         // do app; um webview remoto continua sem tocar a área de transferência.
-        const PERMITIDAS = new Set(['serial', 'clipboard-read', 'clipboard-sanitized-write']);
+        // 'notifications' entrou com o aviso do sino do terminal: quando o
+        // Canvas está atrás de outra janela, o jeito de avisar que o Claude
+        // Code (ou um comando longo) terminou é a notificação do sistema. Vale
+        // a MESMA regra das outras: só a janela do app, nunca um <webview> de
+        // página remota.
+        const PERMITIDAS = new Set(['serial', 'clipboard-read', 'clipboard-sanitized-write', 'notifications']);
         const ehAppPrincipal = (wc) => {
           try { return wc && typeof wc.getType === 'function' && wc.getType() !== 'webview'; }
           catch { return false; }

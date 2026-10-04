@@ -18,6 +18,7 @@ const { decidirAtalhoDeTerminal } = require('../public/atalhos.js');
 
 let n = 0;
 const igual = (a, b, m) => { assert.deepStrictEqual(a, b, m); n += 1; };
+const ok = (c, m) => { assert.ok(c, m); n += 1; };
 
 const tecla = (o) => Object.assign(
   { key: 'c', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, o);
@@ -67,6 +68,43 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
   igual(decidirAtalhoDeTerminal(null, null), null, 'sem evento e sem opções, não decide nada');
   igual(decidirAtalhoDeTerminal(tecla({ ctrlKey: true }), undefined), null,
     'sem opções, trata como se não houvesse seleção (deixa o SIGINT passar)');
+}
+
+// ---------- 4. o atalho do Claude Code e o aviso do sino (v1.79.0) ----------
+//
+// Estes dois moram na interface (public/app.js) e dependem do xterm, então o
+// que dá para travar aqui é o CONTRATO: o item só aparece quando o `claude`
+// existe na máquina, o comando vai UMA vez, e o sino respeita a preferência.
+
+{
+  const fs = require('fs');
+  const path = require('path');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+
+  ok(/localInfo && localInfo\.claude/.test(app),
+    'o item do Claude só entra na barra quando o servidor diz que o binário existe');
+  ok(/comandoInicial: continuar \? 'claude --continue' : 'claude'/.test(app),
+    'o atalho abre o claude, e com Shift continua a última conversa');
+  ok(/if \(session\.comandoInicial && !session\.comandoInicialEnviado\)/.test(app),
+    'o comando de abertura vai UMA vez só (reatar não pode digitar de novo)');
+  ok(/term\.onBell\(\(\) => aoTocarSino\(session\)\)/.test(app),
+    'o sino do terminal está ligado ao aviso');
+  ok((app.match(/term\.onBell\(/g) || []).length === 2,
+    'nos DOIS terminais: o de texto (SSH/local) e o serial');
+  ok(/if \(!prefBool\('avisarSino', true\)\) return;/.test(app),
+    'o aviso respeita a preferência, e nasce ligado');
+  ok(/const emFoco = document\.hasFocus\(\) && activeSessionId === session\.id;/.test(app),
+    'com a aba na frente e a janela em foco, não marca a aba — o som já basta');
+  ok(/if \(!document\.hasFocus\(\)\) \{\s*notificarSistema/.test(app),
+    'notificação do sistema SÓ com a janela fora de foco');
+
+  const servidor = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  ok(/'-lc', 'command -v claude'/.test(servidor),
+    'a procura pelo claude passa pelo shell de LOGIN (um app de GUI não herda o PATH do ~/.zshrc)');
+
+  const main = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'main.js'), 'utf8');
+  ok(/'clipboard-sanitized-write', 'notifications'/.test(main),
+    'a permissão de notificação foi liberada — e só para a janela do app');
 }
 
 console.log(`\n${n} verificações passaram`);
