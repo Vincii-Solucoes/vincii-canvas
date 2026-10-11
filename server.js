@@ -295,53 +295,135 @@ app.get('/api/update-check', async (req, res) => {
 // Feito UMA vez e guardado: é pergunta de instalação, não muda durante o uso.
 // Caminhos onde o `claude` costuma cair. É a primeira tentativa porque custa
 // microssegundos e não depende de abrir shell nenhum.
-function claudeNosCaminhosConhecidos() {
-  const lar = process.env.HOME || os.homedir() || '';
-  const candidatos = [
-    path.join(lar, '.local', 'bin', 'claude'),
-    path.join(lar, '.claude', 'local', 'claude'),
-    path.join(lar, '.bun', 'bin', 'claude'),
-    path.join(lar, '.npm-global', 'bin', 'claude'),
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-    '/usr/bin/claude',
-  ];
-  for (const c of candidatos) {
-    try { fs.accessSync(c, fs.constants.X_OK); return true; } catch { /* próximo */ }
-  }
-  return false;
+// ---------- achar o Claude Code (o atalho da barra lateral) ----------
+//
+// Achar um binário instalado pelo usuário é mais chato do que parece: o app de
+// GUI não herda o PATH do shell interativo (no macOS e no Linux), e cada
+// gerenciador de versão põe o executável num canto diferente. Então a busca
+// tem três camadas, da mais barata para a mais cara, e o resultado diz POR
+// ONDE veio — é o que permite explicar na tela em vez de só sumir com o botão.
+
+function diretoriosDeVersao(base) {
+  // nvm/fnm guardam um diretório por versão do Node; o binário fica dentro.
+  const out = [];
+  try {
+    for (const v of fs.readdirSync(base)) out.push(path.join(base, v, 'bin', 'claude'));
+  } catch { /* não existe: tudo bem */ }
+  return out;
 }
 
-let _claudeDisponivel = null;
-function acharClaude() {
-  if (_claudeDisponivel !== null) return Promise.resolve(_claudeDisponivel);
+function caminhosDoClaude() {
+  const lar = process.env.HOME || os.homedir() || '';
+  const dados = process.env.XDG_DATA_HOME || path.join(lar, '.local', 'share');
+  const lista = [
+    path.join(lar, '.local', 'bin', 'claude'),       // instalador oficial
+    path.join(lar, '.claude', 'local', 'claude'),    // instalação local do próprio Claude
+    path.join(lar, 'bin', 'claude'),
+    path.join(lar, '.bun', 'bin', 'claude'),
+    path.join(lar, '.npm-global', 'bin', 'claude'),
+    path.join(lar, '.yarn', 'bin', 'claude'),
+    path.join(lar, '.volta', 'bin', 'claude'),
+    path.join(dados, 'pnpm', 'claude'),
+    path.join(lar, '.asdf', 'shims', 'claude'),
+    '/opt/homebrew/bin/claude',                      // macOS (Apple Silicon)
+    '/home/linuxbrew/.linuxbrew/bin/claude',         // Homebrew no Linux
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+    '/snap/bin/claude',
+  ];
+  // nvm e fnm: um diretório por versão do Node.
+  lista.push(...diretoriosDeVersao(path.join(lar, '.nvm', 'versions', 'node')));
+  lista.push(...diretoriosDeVersao(path.join(dados, 'fnm', 'node-versions')));
+  lista.push(...diretoriosDeVersao(path.join(lar, '.local', 'share', 'fnm', 'node-versions')));
+  return lista;
+}
+
+function claudeEmArquivo() {
+  for (const c of caminhosDoClaude()) {
+    try { fs.accessSync(c, fs.constants.X_OK); return c; } catch { /* próximo */ }
+  }
+  return null;
+}
+
+// Os shells a tentar, em ordem, sem repetir e só os que existem. O padrão
+// antigo era `/bin/zsh`, que num Ubuntu comum NEM ESTÁ INSTALADO — o spawn
+// falhava e o atalho nunca aparecia no Linux.
+function shellsParaTentar() {
+  const fora = [process.env.SHELL, '/bin/bash', '/bin/zsh', '/bin/sh'];
+  const vistos = new Set();
+  return fora.filter((s) => {
+    if (!s || vistos.has(s)) return false;
+    vistos.add(s);
+    try { fs.accessSync(s, fs.constants.X_OK); return true; } catch { return false; }
+  });
+}
+
+function perguntarAoShell(shell) {
+  return new Promise((resolve) => {
+    let respondeu = false;
+    const pronto = (v) => { if (!respondeu) { respondeu = true; resolve(v); } };
+    try {
+      // -l (login) porque é lá que nvm, asdf e o instalador do Claude põem o PATH.
+      const p = require('child_process').spawn(shell, ['-lc', 'command -v claude'],
+        { stdio: ['ignore', 'pipe', 'ignore'] });
+      let saida = '';
+      p.stdout.on('data', (d) => { saida += d.toString(); });
+      const prazo = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} pronto({ erro: 'prazo' }); }, 10000);
+      p.on('error', () => { clearTimeout(prazo); pronto({ erro: 'spawn' }); });
+      p.on('close', (code) => {
+        clearTimeout(prazo);
+        const achado = saida.trim().split('\n').pop().trim();
+        pronto(code === 0 && achado ? { caminho: achado } : { naoTem: true });
+      });
+    } catch { pronto({ erro: 'spawn' }); }
+  });
+}
+
+// { tem, onde, caminho } — `onde` é 'manual' | 'arquivo' | 'shell' | 'nao' | 'indefinido'
+let _claude = null;
+async function acharClaude() {
+  // Caminho informado à mão na tela ganha de tudo (e some do cache se mudar).
+  const manual = String(((uiPrefs() || {}).claudeCaminho) || '').trim();
+  if (manual) {
+    try { fs.accessSync(manual, fs.constants.X_OK); return { tem: true, onde: 'manual', caminho: manual }; }
+    catch { return { tem: false, onde: 'manual-invalido', caminho: manual }; }
+  }
+  if (_claude) return _claude;
   // No Windows o terminal local é por PIPES, sem PTY (lib/localterm.js), e o
   // Claude Code é um TUI: ele precisa de terminal de verdade. Oferecer o
   // atalho ali seria entregar uma aba quebrada — então nem procuramos.
-  if (process.platform === 'win32') { _claudeDisponivel = false; return Promise.resolve(false); }
-  if (claudeNosCaminhosConhecidos()) { _claudeDisponivel = true; return Promise.resolve(true); }
-  return new Promise((resolve) => {
-    // IMPORTANTE: só o "achei" e o "o shell respondeu que não tem" viram cache.
-    // Prazo estourado ou erro NÃO viram: num arranque disputado, o shell de
-    // login pode demorar (nvm, oh-my-zsh), e gravar "não existe" deixaria o
-    // atalho sumido até o app reiniciar — foi o que aconteceu.
-    const responder = (v, guardar) => { if (guardar) _claudeDisponivel = v; resolve(v); };
-    try {
-      const shell = process.env.SHELL || '/bin/zsh';
-      const args = ['-lc', 'command -v claude'];
-      const p = require('child_process').spawn(shell, args, { stdio: ['ignore', 'pipe', 'ignore'] });
-      let saida = '';
-      p.stdout.on('data', (d) => { saida += d.toString(); });
-      const prazo = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} responder(false, false); }, 10000);
-      p.on('error', () => { clearTimeout(prazo); responder(false, false); });
-      p.on('close', (code) => {
-        clearTimeout(prazo);
-        const achou = code === 0 && saida.trim().length > 0;
-        responder(achou, true);
-      });
-    } catch { responder(false, false); }
-  });
+  if (process.platform === 'win32') {
+    _claude = { tem: false, onde: 'windows' };
+    return _claude;
+  }
+  const arquivo = claudeEmArquivo();
+  if (arquivo) { _claude = { tem: true, onde: 'arquivo', caminho: arquivo }; return _claude; }
+
+  let houveErro = false;
+  for (const shell of shellsParaTentar()) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await perguntarAoShell(shell);
+    if (r.caminho) { _claude = { tem: true, onde: 'shell', caminho: r.caminho }; return _claude; }
+    if (r.erro) houveErro = true;
+  }
+  // Só guardamos "não tem" quando algum shell RESPONDEU que não tem. Prazo
+  // estourado ou falha de spawn não viram cache: a próxima pergunta tenta de
+  // novo (num arranque disputado o shell de login demora, e gravar "não
+  // existe" deixaria o atalho sumido até reiniciar o app).
+  if (!houveErro) { _claude = { tem: false, onde: 'nao' }; return _claude; }
+  return { tem: false, onde: 'indefinido' };
 }
+
+function esquecerClaude() { _claude = null; }
+
+// "Procurar de novo": joga fora o cache e refaz a busca. É o botão de quem
+// acabou de instalar o Claude e não quer reabrir o app.
+app.post('/api/local-info/reprocurar', async (req, res) => {
+  esquecerClaude();
+  let c = { tem: false, onde: 'erro' };
+  try { c = await acharClaude(); } catch { /* fica 'erro' */ }
+  res.json({ claude: !!c.tem, claudeOnde: c.onde, claudeCaminho: c.caminho || '' });
+});
 
 app.get('/api/local-info', async (req, res) => {
   let user = '';
@@ -350,9 +432,12 @@ app.get('/api/local-info', async (req, res) => {
   const shell = process.platform === 'win32'
     ? path.basename(process.env.COMSPEC || 'powershell.exe')
     : path.basename(process.env.SHELL || 'shell');
-  let claude = false;
-  try { claude = await acharClaude(); } catch { claude = false; }
-  res.json({ user, host, shell, platform: process.platform, claude });
+  let c = { tem: false, onde: 'erro' };
+  try { c = await acharClaude(); } catch { /* fica 'erro' */ }
+  res.json({
+    user, host, shell, platform: process.platform,
+    claude: !!c.tem, claudeOnde: c.onde, claudeCaminho: c.caminho || '',
+  });
 });
 
 // ---------- coordenação entre janelas (agenda de hosts) ----------
@@ -663,6 +748,14 @@ app.put('/api/prefs', (req, res) => {
     if (typeof b[k] === 'boolean') ui[k] = b[k];
   }
   if (typeof b.updateDismissed === 'string') ui.updateDismissed = b.updateDismissed.slice(0, 40);
+  // Caminho do `claude` informado à mão (quando a busca automática não acha).
+  // Guardamos o CAMINHO, nunca uma linha de comando: ele vai ser digitado no
+  // shell da sessão, e aceitar comando aqui seria aceitar injeção.
+  if (typeof b.claudeCaminho === 'string') {
+    const v = b.claudeCaminho.trim().slice(0, 500);
+    ui.claudeCaminho = v;
+    esquecerClaude(); // a próxima pergunta refaz a busca
+  }
   // Última configuração da porta serial (baud, fim de linha, Backspace, eco):
   // normalizada pela mesma lib da tela — nunca guarda valor fora da lista.
   if (b.serial && typeof b.serial === 'object' && !Array.isArray(b.serial)) ui.serial = serialLib.normalizarConfig(b.serial);

@@ -16,7 +16,7 @@ const prefs = Object.assign({
   theme: '', recentHosts: null, greetHidden: null,
   aiCollapsed: null, sidebarCollapsed: null, updateDismissed: '',
   abrirLocalSozinho: null, senha: null, pastasFechadas: null, serial: null,
-  copiarAoSelecionar: null, avisarSino: null,
+  copiarAoSelecionar: null, avisarSino: null, claudeCaminho: '',
 }, (typeof window !== 'undefined' && window.VC_PREFS) || {});
 
 const PREF_LS = {
@@ -24,6 +24,7 @@ const PREF_LS = {
   sidebarCollapsed: 'vc-sidebar-collapsed', updateDismissed: 'vc-update-dismissed',
   recentHosts: 'vc-recent-hosts', abrirLocalSozinho: 'vc-abrir-local',
   copiarAoSelecionar: 'vc-copiar-ao-selecionar', avisarSino: 'vc-avisar-sino',
+  claudeCaminho: 'vc-claude-caminho',
   pastasFechadas: 'vc-pastas-fechadas', serial: 'vc-serial',
 };
 
@@ -4865,16 +4866,27 @@ function openLocalSession() {
 // Abre o Claude Code numa aba de terminal desta máquina. É um terminal local
 // como qualquer outro — o comando é digitado no shell assim que ele abre, e
 // quando o Claude sai você fica no shell, sem a aba morrer junto.
+// Entre aspas simples, com a própria aspa escapada: o caminho vai ser DIGITADO
+// no shell, e um espaço ou um apóstrofo no meio quebraria a linha.
+function aspasDeShell(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
 function abrirClaude(opts) {
   if (!xtermReady()) return;
   localDismissed = false;
   const continuar = !!(opts && opts.continuar);
+  // Usa o caminho ABSOLUTO que a busca encontrou. Digitar só "claude" dependeria
+  // de o PATH do shell da sessão ter o binário — e é justamente aí que a conta
+  // não fecha em quem instalou por nvm, asdf ou pelo instalador do Claude.
+  const caminho = (localInfo && localInfo.claudeCaminho) || '';
+  const exe = caminho ? aspasDeShell(caminho) : 'claude';
   createSession({
     hostId: null,
     hostName: continuar ? 'Claude Code (continuar)' : 'Claude Code',
     isLocal: true,
     marca: 'claude',
-    comandoInicial: continuar ? 'claude --continue' : 'claude',
+    comandoInicial: continuar ? `${exe} --continue` : exe,
   });
 }
 
@@ -6023,6 +6035,37 @@ function ensureLocalTerminal() {
   if (!xtermReady() || !terminalTabActive() || localDismissed) return;
   if (sessions.length === 0) openLocalSession();
 }
+// O que a tela de Configurações diz sobre a procura do `claude`. Sem isto, não
+// encontrar virava SILÊNCIO: o botão simplesmente não existia e ninguém sabia
+// se o app tinha procurado. Mesma ideia da dica de "nenhuma porta serial".
+function mostrarEstadoDoClaude() {
+  const alvo = $('#cfgClaudeStatus');
+  if (!alvo) return;
+  const campo = $('#cfgClaudeCaminho');
+  if (campo && document.activeElement !== campo) campo.value = prefStr('claudeCaminho', '');
+  const onde = (localInfo && localInfo.claudeOnde) || '';
+  const caminho = (localInfo && localInfo.claudeCaminho) || '';
+  const achou = !!(localInfo && localInfo.claude);
+  alvo.classList.toggle('achou', achou);
+  alvo.classList.toggle('nao-achou', !achou);
+  if (achou) {
+    const comoAchou = onde === 'manual' ? 'caminho informado aqui'
+      : onde === 'shell' ? 'pelo seu shell de login' : 'instalado nesta máquina';
+    // Sem innerHTML com dado de fora: o caminho vem do disco, mas montar HTML
+    // com ele seria abrir uma porta à toa.
+    alvo.textContent = `Encontrado (${comoAchou}): `;
+    el(alvo, 'code', null, caminho || 'claude');
+    return;
+  }
+  const texto = {
+    windows: 'No Windows o terminal do app não tem PTY, e o Claude Code precisa de um terminal de verdade — por isso o atalho não aparece aqui.',
+    'manual-invalido': 'O caminho informado não existe ou não é executável. Corrija ou apague o campo para voltar à procura automática.',
+    nao: 'Não encontrei o `claude` nesta máquina. Instale o Claude Code e clique em Procurar de novo — ou informe o caminho.',
+    indefinido: 'A procura não terminou (o shell demorou a responder). Clique em Procurar de novo.',
+  }[onde] || 'Ainda procurando…';
+  alvo.textContent = texto;
+}
+
 // O atalho do Claude Code na barra lateral. Fica numa função porque aparece em
 // DOIS lugares: na lista normal, logo abaixo de "Meu computador", e no
 // resultado da busca quando a pessoa digita "claude" (quem procura pelo nome
@@ -7667,6 +7710,7 @@ async function loadConfigTab() {
   if (cxSelTela) cxSelTela.checked = prefBool('copiarAoSelecionar', true);
   const cxSinoTela = $('#cfgAvisarSino');
   if (cxSinoTela) cxSinoTela.checked = prefBool('avisarSino', true);
+  mostrarEstadoDoClaude();
   updateFontPreview();
   loadBackupCard();
 }
@@ -9634,6 +9678,28 @@ function init() {
       pendente = setTimeout(() => { if ($('#tab-terminal').classList.contains('active')) fitActive(); }, 80);
     });
     ro.observe(painelTerm);
+  }
+  const btnClaude = $('#cfgClaudeProcurar');
+  if (btnClaude) {
+    btnClaude.addEventListener('click', async () => {
+      btnClaude.disabled = true;
+      const campo = $('#cfgClaudeCaminho');
+      const informado = campo ? campo.value.trim() : '';
+      try {
+        // Grava o caminho informado ANTES de procurar: a busca o respeita.
+        if (informado !== prefStr('claudeCaminho', '')) {
+          prefSet('claudeCaminho', informado);
+          await api('/api/prefs', { method: 'PUT', body: { claudeCaminho: informado } });
+        }
+        const r = await api('/api/local-info/reprocurar', { method: 'POST' });
+        localInfo = Object.assign({}, localInfo, r);
+        mostrarEstadoDoClaude();
+        renderHostSidebar();
+        toast(r.claude ? 'Claude Code encontrado — o atalho está na barra lateral.'
+          : 'Ainda não encontrei o claude nesta máquina.', r.claude ? 'ok' : 'aviso');
+      } catch (e) { toast(e.message, 'erro'); }
+      finally { btnClaude.disabled = false; }
+    });
   }
   const btnAjuda = $('#ajudaTermBtn');
   if (btnAjuda) btnAjuda.addEventListener('click', abrirAjudaDoTerminal);

@@ -799,6 +799,17 @@ try {
         <button type="button" data-theme-choice="dark">Escuro</button>
       </div>
       <div class="sub">Terminal</div>
+      <div class="campo-claude">
+        <strong>Atalho do Claude Code</strong>
+        <p class="hint" id="cfgClaudeStatus">Procurando…</p>
+        <div class="input-row">
+          <input id="cfgClaudeCaminho" placeholder="/caminho/para/claude (só se não for encontrado)" spellcheck="false">
+          <button id="cfgClaudeProcurar" class="btn" type="button">Procurar de novo</button>
+        </div>
+        <p class="hint">O atalho aparece na barra lateral do Terminal quando o <code>claude</code>
+          está instalado nesta máquina. Instalou agora? Clique em <strong>Procurar de novo</strong>.
+          Está num lugar fora do comum? Informe o caminho — ele vale só nesta máquina e não vai para o backup.</p>
+      </div>
       <label class="inline"><input type="checkbox" id="cfgAvisarSino">
         Avisar quando o trabalho terminar na aba</label>
       <p class="hint">Um toque curto, marca na aba e — se o Canvas estiver atrás de outra janela —

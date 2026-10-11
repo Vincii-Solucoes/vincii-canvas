@@ -83,8 +83,12 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
 
   ok(/localInfo && localInfo\.claude/.test(app),
     'o item do Claude só entra na barra quando o servidor diz que o binário existe');
-  ok(/comandoInicial: continuar \? 'claude --continue' : 'claude'/.test(app),
+  ok(/comandoInicial: continuar \? `\$\{exe\} --continue` : exe/.test(app),
     'o atalho abre o claude, e com Shift continua a última conversa');
+  ok(/const exe = caminho \? aspasDeShell\(caminho\) : 'claude';/.test(app),
+    'e usa o CAMINHO ABSOLUTO achado — digitar só "claude" dependeria do PATH do shell da sessão');
+  ok(/function aspasDeShell/.test(app),
+    'o caminho vai entre aspas: espaço ou apóstrofo no meio quebraria a linha digitada');
   ok(/if \(session\.comandoInicial && !session\.comandoInicialEnviado\)/.test(app),
     'o comando de abertura vai UMA vez só (reatar não pode digitar de novo)');
   ok(/term\.onBell\(\(\) => aoTocarSino\(session\)\)/.test(app),
@@ -114,8 +118,18 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
   const servidor = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   ok(/'-lc', 'command -v claude'/.test(servidor),
     'a procura pelo claude passa pelo shell de LOGIN (um app de GUI não herda o PATH do ~/.zshrc)');
-  ok(/if \(process\.platform === 'win32'\) \{ _claudeDisponivel = false;/.test(servidor),
+  ok(/if \(process\.platform === 'win32'\) \{\s*_claude = \{ tem: false, onde: 'windows' \};/.test(servidor),
     'no Windows nem procura: sem PTY, o TUI do Claude não roda lá');
+  // O padrão antigo era cair em /bin/zsh — que num Ubuntu comum NEM EXISTE, e
+  // foi por isso que o atalho não apareceu no Linux.
+  ok(/\['\/bin\/bash', '\/bin\/zsh', '\/bin\/sh'\]|'\/bin\/bash', '\/bin\/zsh', '\/bin\/sh'/.test(servidor),
+    'a procura tenta bash, zsh e sh — e só os que existem na máquina');
+  ok(/fs\.accessSync\(s, fs\.constants\.X_OK\)/.test(servidor),
+    'o shell só é tentado se o arquivo dele existir (nada de spawn fadado ao erro)');
+  ok(/\.nvm', 'versions', 'node'/.test(servidor) && /linuxbrew/.test(servidor) && /snap/.test(servidor),
+    'a lista de caminhos cobre nvm, linuxbrew e snap — típicos do Linux');
+  ok(/if \(!houveErro\) \{ _claude = \{ tem: false, onde: 'nao' \}/.test(servidor),
+    '"não tem" só vira cache quando um shell REALMENTE respondeu que não tem');
 
   const main = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'main.js'), 'utf8');
   ok(/'clipboard-sanitized-write', 'notifications'/.test(main),

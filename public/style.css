@@ -875,6 +875,13 @@ legend { color: var(--muted); font-size: 12.5px; padding: 0 6px; }
 }
 .ajuda-btn:hover { color: var(--accent-text); border-color: var(--accent); }
 
+/* Bloco do atalho do Claude em Configurações › Terminal */
+.campo-claude { margin: 10px 0 6px; }
+.campo-claude .input-row { margin-top: 4px; }
+.campo-claude input { font-family: var(--mono); font-size: 12px; }
+.campo-claude .achou { color: var(--accent-text); }
+.campo-claude .nao-achou { color: var(--yellow); }
+
 /* Aba que chamou: o ponto pulsa até você olhar a aba. */
 .term-tab.avisou { border-color: var(--accent); }
 .tab-sino {
