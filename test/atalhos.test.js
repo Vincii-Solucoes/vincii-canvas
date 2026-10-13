@@ -83,8 +83,13 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
 
   ok(/localInfo && localInfo\.claude/.test(app),
     'o item do Claude só entra na barra quando o servidor diz que o binário existe');
-  ok(/comandoInicial: continuar \? `\$\{exe\} --continue` : exe/.test(app),
+  ok(/const args = continuar \? `\$\{exe\} --continue` : exe;/.test(app),
     'o atalho abre o claude, e com Shift continua a última conversa');
+  ok(/command -v claude >\/dev\/null 2>&1 && \$\{args\}/.test(app),
+    'sem caminho conhecido, o comando TENTA e explica se não houver — nada de "command not found" seco');
+  ok(/function devoMostrarClaude/.test(app)
+    && /\['nao', 'windows', 'manual-invalido'\]\.includes\(localInfo\.claudeOnde\)/.test(app),
+    'o atalho só some quando se SABE que não há claude; na incerteza, aparece');
   ok(/const exe = caminho \? aspasDeShell\(caminho\) : 'claude';/.test(app),
     'e usa o CAMINHO ABSOLUTO achado — digitar só "claude" dependeria do PATH do shell da sessão');
   ok(/function aspasDeShell/.test(app),
@@ -128,8 +133,10 @@ const mac = (ev, temSelecao) => decidirAtalhoDeTerminal(ev, { ehMac: true, temSe
     'o shell só é tentado se o arquivo dele existir (nada de spawn fadado ao erro)');
   ok(/\.nvm', 'versions', 'node'/.test(servidor) && /linuxbrew/.test(servidor) && /snap/.test(servidor),
     'a lista de caminhos cobre nvm, linuxbrew e snap — típicos do Linux');
-  ok(/if \(!houveErro\) \{ _claude = \{ tem: false, onde: 'nao' \}/.test(servidor),
+  ok(/if \(!houveErro\) \{ _claude = \{ tem: false, onde: 'nao', tentativas \}/.test(servidor),
     '"não tem" só vira cache quando um shell REALMENTE respondeu que não tem');
+  ok(/claudeTentativas: c\.tentativas \|\| null, versao: pkg\.version/.test(servidor),
+    'a rota conta a versão e o que foi tentado — é o que permite resolver à distância');
 
   const main = fs.readFileSync(path.join(__dirname, '..', 'desktop', 'main.js'), 'utf8');
   ok(/'clipboard-sanitized-write', 'notifications'/.test(main),

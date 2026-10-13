@@ -4881,12 +4881,18 @@ function abrirClaude(opts) {
   // não fecha em quem instalou por nvm, asdf ou pelo instalador do Claude.
   const caminho = (localInfo && localInfo.claudeCaminho) || '';
   const exe = caminho ? aspasDeShell(caminho) : 'claude';
+  const args = continuar ? `${exe} --continue` : exe;
+  // Sem caminho conhecido, o comando tenta e — se não houver — DIZ o que houve,
+  // em vez de deixar um "command not found" seco na tela.
+  const comandoInicial = caminho ? args
+    : `command -v claude >/dev/null 2>&1 && ${args} `
+      + `|| echo 'Claude Code nao encontrado neste shell. Instale e use "Procurar de novo" em Configuracoes > Terminal.'`;
   createSession({
     hostId: null,
     hostName: continuar ? 'Claude Code (continuar)' : 'Claude Code',
     isLocal: true,
     marca: 'claude',
-    comandoInicial: continuar ? `${exe} --continue` : exe,
+    comandoInicial,
   });
 }
 
@@ -6060,18 +6066,37 @@ function mostrarEstadoDoClaude() {
   const texto = {
     windows: 'No Windows o terminal do app não tem PTY, e o Claude Code precisa de um terminal de verdade — por isso o atalho não aparece aqui.',
     'manual-invalido': 'O caminho informado não existe ou não é executável. Corrija ou apague o campo para voltar à procura automática.',
-    nao: 'Não encontrei o `claude` nesta máquina. Instale o Claude Code e clique em Procurar de novo — ou informe o caminho.',
-    indefinido: 'A procura não terminou (o shell demorou a responder). Clique em Procurar de novo.',
+    nao: 'Não encontrei o claude nesta máquina. Instale o Claude Code e clique em Procurar de novo — ou informe o caminho acima.',
+    indefinido: 'A procura não terminou (o shell não respondeu). O atalho continua na barra lateral e tenta assim mesmo.',
+    erro: 'A procura falhou. O atalho continua na barra lateral e tenta assim mesmo.',
   }[onde] || 'Ainda procurando…';
   alvo.textContent = texto;
+  // O que foi tentado — é isso que resolve um caso à distância.
+  const t = (localInfo && localInfo.claudeTentativas) || null;
+  if (t && (t.shells || []).length) {
+    el(alvo, 'br');
+    el(alvo, 'span', null, `Shells tentados: ${t.shells.join(' · ')}`);
+  }
 }
 
 // O atalho do Claude Code na barra lateral. Fica numa função porque aparece em
 // DOIS lugares: na lista normal, logo abaixo de "Meu computador", e no
 // resultado da busca quando a pessoa digita "claude" (quem procura pelo nome
 // espera achar).
+// Quando mostrar o atalho. Achou → mostra. Um shell RESPONDEU que não tem →
+// esconde (quem não usa Claude não precisa do botão). Qualquer outro caso é
+// INCERTEZA (a procura não terminou, o spawn falhou, o ambiente é estranho) —
+// e aí mostrar é melhor que esconder: o botão abre o terminal, tenta, e se não
+// houver mesmo o binário a própria aba explica. Esconder por incerteza foi o
+// que deixou o Linux sem o atalho e sem explicação.
+function devoMostrarClaude() {
+  if (!localInfo) return false;
+  if (localInfo.claude) return true;
+  return !['nao', 'windows', 'manual-invalido'].includes(localInfo.claudeOnde);
+}
+
 function itemDoClaude(list) {
-  if (!(localInfo && localInfo.claude)) return false;
+  if (!devoMostrarClaude()) return false;
   const item = el(list, 'div', 'host-item local-item');
   if (sessions.some((s) => s.marca === 'claude' && s.status === 'conectado')) item.classList.add('connected');
   const at = activeSession();
@@ -9678,6 +9703,23 @@ function init() {
       pendente = setTimeout(() => { if ($('#tab-terminal').classList.contains('active')) fitActive(); }, 80);
     });
     ro.observe(painelTerm);
+  }
+  const btnDiag = $('#cfgClaudeDiag');
+  if (btnDiag) {
+    btnDiag.addEventListener('click', async () => {
+      const i = localInfo || {};
+      const t = i.claudeTentativas || {};
+      const linhas = [
+        `Vincii Canvas ${i.versao || '?'} · ${i.platform || '?'} · shell ${i.shell || '?'}`,
+        `claude: ${i.claude ? 'encontrado' : 'NÃO encontrado'} (${i.claudeOnde || '?'})`,
+        i.claudeCaminho ? `caminho: ${i.claudeCaminho}` : null,
+        t.lar ? `HOME: ${t.lar}` : null,
+        t.shellEnv !== undefined ? `SHELL do app: ${t.shellEnv || '(vazio)'}` : null,
+        (t.shells && t.shells.length) ? `shells tentados: ${t.shells.join(' | ')}` : null,
+      ].filter(Boolean);
+      const ok = await copiarParaClipboard(linhas.join('\n'));
+      toast(ok ? 'Diagnóstico copiado — é só colar.' : 'Não consegui copiar.', ok ? 'ok' : 'erro');
+    });
   }
   const btnClaude = $('#cfgClaudeProcurar');
   if (btnClaude) {

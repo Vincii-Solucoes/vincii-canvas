@@ -399,19 +399,25 @@ async function acharClaude() {
   const arquivo = claudeEmArquivo();
   if (arquivo) { _claude = { tem: true, onde: 'arquivo', caminho: arquivo }; return _claude; }
 
+  // O que foi tentado, para a tela poder CONTAR em vez de só dizer "não achei".
+  // Sem isto, resolver à distância vira adivinhação.
+  const tentativas = { lar: process.env.HOME || os.homedir() || '', shells: [], shellEnv: process.env.SHELL || '' };
   let houveErro = false;
-  for (const shell of shellsParaTentar()) {
+  const shells = shellsParaTentar();
+  for (const shell of shells) {
     // eslint-disable-next-line no-await-in-loop
     const r = await perguntarAoShell(shell);
+    tentativas.shells.push(`${shell}: ${r.caminho ? 'achou' : r.erro || 'não tem'}`);
     if (r.caminho) { _claude = { tem: true, onde: 'shell', caminho: r.caminho }; return _claude; }
     if (r.erro) houveErro = true;
   }
+  if (!shells.length) tentativas.shells.push('nenhum shell utilizável encontrado');
   // Só guardamos "não tem" quando algum shell RESPONDEU que não tem. Prazo
   // estourado ou falha de spawn não viram cache: a próxima pergunta tenta de
   // novo (num arranque disputado o shell de login demora, e gravar "não
   // existe" deixaria o atalho sumido até reiniciar o app).
-  if (!houveErro) { _claude = { tem: false, onde: 'nao' }; return _claude; }
-  return { tem: false, onde: 'indefinido' };
+  if (!houveErro) { _claude = { tem: false, onde: 'nao', tentativas }; return _claude; }
+  return { tem: false, onde: 'indefinido', tentativas };
 }
 
 function esquecerClaude() { _claude = null; }
@@ -422,7 +428,10 @@ app.post('/api/local-info/reprocurar', async (req, res) => {
   esquecerClaude();
   let c = { tem: false, onde: 'erro' };
   try { c = await acharClaude(); } catch { /* fica 'erro' */ }
-  res.json({ claude: !!c.tem, claudeOnde: c.onde, claudeCaminho: c.caminho || '' });
+  res.json({
+    claude: !!c.tem, claudeOnde: c.onde, claudeCaminho: c.caminho || '',
+    claudeTentativas: c.tentativas || null,
+  });
 });
 
 app.get('/api/local-info', async (req, res) => {
@@ -437,6 +446,7 @@ app.get('/api/local-info', async (req, res) => {
   res.json({
     user, host, shell, platform: process.platform,
     claude: !!c.tem, claudeOnde: c.onde, claudeCaminho: c.caminho || '',
+    claudeTentativas: c.tentativas || null, versao: pkg.version,
   });
 });
 
